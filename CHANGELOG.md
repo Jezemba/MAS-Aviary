@@ -1,5 +1,44 @@
 ## [Unreleased]
 
+### 2026-05-06
+- Security: rotated leaked credentials and rewrote git history. Removed
+  ANTHROPIC_API_KEY and WANDB_API_KEY hardcoded in run_batch.sh; replaced
+  with .env loading. Added .env.example template. .env is gitignored.
+- Changed: run_batch.sh now sources secrets from .env via `set -a; source .env`
+  rather than hardcoding values, so contributors can keep their own keys
+  out of the repo.
+- Tested: ran one repeat of mdo_f25_sequential_iterative_feedback against
+  Claude Sonnet 4 (LiteLLM), all 5 MCPs live. ~55 steps before manual stop.
+  Wandb run: stat_1x1_1778069719 (mts2jmnb), project mas-aviary-stat.
+- Confirmed working from this run:
+  - Multi-MCP session handoff (each MCP gets its own session, IDs flow
+    correctly between agents)
+  - UPSTREAM_ERROR propagation in iterative_feedback handler (when SU2
+    failed, downstream agents saw an error string instead of fabricating
+    inputs)
+  - Type coercion middleware (no "null"-as-string or JSON-as-string errors)
+  - Data plane intercepts base64 mesh payloads from tigl as designed
+  - All 6 agents executed: geometry_engineer, aerodynamics_analyst,
+    structures_analyst, propulsion_analyst, mission_architect,
+    simulation_executor
+- Found bugs:
+  - TiGL→SU2 mesh handoff: tigl-mcp `export_component_mesh` produces a
+    surface-only mesh (0 volume elements per SU2 log: "17737 grid points,
+    0 volume elements, 35470 boundary elements"). SU2 fails
+    DistributeColoring, returns SOLVER_CONVERGED=false, RESIDUAL_DROP=0.
+    Likely needs gmsh volume meshing step that was reverted in tigl-mcp
+    commit 43e205e. Fix targeted next.
+  - mass-mcp OAS solver: "array must not contain infs or NaNs" in
+    SolveMatrix — cascade from bad upstream geometry. Fallback to
+    flops_only works (OEM=35,725 kg, wing=7,677 kg, plausible).
+  - numpy truth-value ambiguity ValueError in update_config_entries
+    (su2-mcp side) — array-vs-scalar handling.
+  - Data plane gap for large numeric payloads: 60-point trajectory dict
+    (~6KB JSON) was not intercepted; only base64 patterns are. Step 8
+    input tokens hit 249K, exceeding Sonnet 4.0's 200K context. Need to
+    extend data_plane.py to also intercept large dict payloads, not only
+    base64 binary.
+
 ### 2026-04-02
 - Added: Data plane middleware (src/tools/data_plane.py) — intercepts large binary payloads
   (base64 meshes, STEP files) in tool responses, stores them in DesignState.data_store,
