@@ -138,13 +138,30 @@ class TestMCPConnector:
         assert tools == []
 
     @patch("src.tools.mcp_connector.ToolCollection.from_mcp")
-    def test_connection_error_propagates(self, mock_from_mcp):
+    def test_connection_error_graceful_degradation(self, mock_from_mcp):
+        """Failed servers are logged and skipped; tools from working servers returned."""
         mock_from_mcp.side_effect = _fake_from_mcp
         config = _make_config(("http://fail/mcp", "streamable-http"))
 
         connector = MCPConnector(config)
-        with pytest.raises(ConnectionError, match="Cannot connect"):
-            connector.connect()
+        tools = connector.connect()
+        assert tools == []
+        assert len(connector.failed_servers) == 1
+
+    @patch("src.tools.mcp_connector.ToolCollection.from_mcp")
+    def test_partial_failure_returns_available_tools(self, mock_from_mcp):
+        """If one server fails, tools from other servers are still returned."""
+        mock_from_mcp.side_effect = _fake_from_mcp
+        config = _make_config(
+            ("http://server1/mcp", "streamable-http"),
+            ("http://fail/mcp", "streamable-http"),
+        )
+
+        connector = MCPConnector(config)
+        tools = connector.connect()
+        assert len(tools) == 2  # server1's tools
+        assert len(connector.failed_servers) == 1
+        assert len(connector.connected_servers) == 1
 
 
 # ---- tool_loader real mode -------------------------------------------------

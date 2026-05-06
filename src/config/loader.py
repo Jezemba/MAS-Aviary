@@ -26,12 +26,19 @@ class LLMConfig:
 class MCPServerConfig:
     url: str = ""
     transport: str = "streamable-http"
+    name: str = ""  # Optional server name for multi-MCP routing
 
 
 @dataclass
 class MCPConfig:
     mode: str = "mock"
     servers: list[MCPServerConfig] = field(default_factory=list)
+
+
+@dataclass
+class SkillsConfig:
+    path: str = ""  # Path to skill folder (e.g. "skills/aircraft-design-mdo")
+    mode: str = "auto"  # "auto", "native" (Claude API), "inject" (prompt injection)
 
 
 @dataclass
@@ -51,6 +58,7 @@ class UIConfig:
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     agents_config: str = "config/agents.yaml"
     coordination_config: str = "config/coordination.yaml"
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -61,6 +69,7 @@ class AppConfig:
 _NESTED_TYPES = {
     "llm": LLMConfig,
     "mcp": MCPConfig,
+    "skills": SkillsConfig,
     "logging": LoggingConfig,
     "ui": UIConfig,
 }
@@ -92,6 +101,11 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         MAS_AVIARY_MCP_MODE — overrides mcp.mode ("mock" or "real")
         MAS_AVIARY_MODEL_ID — overrides llm.model_id
         MAS_AVIARY_API_BASE — overrides llm.api_base (for vLLM)
+        MAS_AVIARY_TIGL_URL — overrides URL for server named "tigl"
+        MAS_AVIARY_SU2_URL  — overrides URL for server named "su2"
+        MAS_AVIARY_MASS_URL — overrides URL for server named "mass"
+        MAS_AVIARY_PYCYCLE_URL — overrides URL for server named "pycycle"
+        MAS_AVIARY_AVIARY_URL — overrides URL for server named "aviary"
     """
     mcp_url = os.environ.get("MAS_AVIARY_MCP_URL")
     if mcp_url:
@@ -111,6 +125,19 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     api_base = os.environ.get("MAS_AVIARY_API_BASE")
     if api_base:
         config.llm.api_base = api_base
+
+    # Per-server URL overrides (multi-MCP support).
+    server_by_name = {s.name: s for s in config.mcp.servers if s.name}
+    for env_suffix, server_name in [
+        ("TIGL", "tigl"),
+        ("SU2", "su2"),
+        ("MASS", "mass"),
+        ("PYCYCLE", "pycycle"),
+        ("AVIARY", "aviary"),
+    ]:
+        env_url = os.environ.get(f"MAS_AVIARY_{env_suffix}_URL")
+        if env_url and server_name in server_by_name:
+            server_by_name[server_name].url = env_url
 
     return config
 
