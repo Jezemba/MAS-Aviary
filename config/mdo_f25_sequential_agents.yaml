@@ -100,9 +100,14 @@ templates:
              Only change parameters explicitly requested or justified by the
              MDO objective.
 
-          5. Call export_component_mesh(session_id, component_uid="Wing",
-             format="su2") to produce a mesh for SU2 CFD. Capture the
-             base64-encoded mesh content from the response.
+          5. Call generate_volume_mesh(session_id, component_uid="Wing")
+             to produce a 3D volume mesh for SU2 CFD. This tool internally
+             exports the wing as STL, embeds it in a far-field box with
+             gmsh, and writes a complete SU2 volume mesh with boundary
+             markers ("aircraft" wall + "farfield"). DO NOT use
+             export_component_mesh(format="su2") for CFD — that is a
+             surface-only mesh and SU2 will fail DistributeColoring with
+             0 volume elements. Capture the base64 mesh from the response.
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 
@@ -126,7 +131,8 @@ templates:
           - get_configuration_summary
           - list_geometric_components
           - export_component_mesh
-        interface_output: "CPACS session ID, geometry parameters set, mesh exported for SU2 CFD"
+          - generate_volume_mesh
+        interface_output: "CPACS session ID, geometry parameters set, volume mesh exported for SU2 CFD"
 
       # ══════════════════════════════════════════════════════════════════
       # STAGE 2: AERODYNAMICS ANALYST — SU2 CFD

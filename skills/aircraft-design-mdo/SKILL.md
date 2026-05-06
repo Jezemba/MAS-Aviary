@@ -81,7 +81,8 @@ open_cpacs(source_type, source)          → session_id
 get_configuration_summary(session_id)    → component list, bbox
 get_wing_summary / get_fuselage_summary  → geometry metrics
 set_high_level_parameters(session_id, component_uid, updates)
-export_component_mesh(session_id, component_uid, format="su2")  → mesh_base64
+generate_volume_mesh(session_id, component_uid)  → mesh_base64  (volume mesh, SU2-ready, REQUIRED for CFD)
+export_component_mesh(session_id, component_uid, format="stl")  → mesh_base64  (surface only, NOT solveable by SU2)
 close_cpacs(session_id)
 ```
 
@@ -126,7 +127,7 @@ check_constraints(session_id, constraints)  → pass/fail per constraint
 ### 3.2 Cross-MCP Sequences
 
 **Geometry to CFD (drag polar):**
-1. tigl: `open_cpacs` -- modify wing -- `export_component_mesh(format="su2")` -- get `mesh_base64`
+1. tigl: `open_cpacs` -- modify wing -- `generate_volume_mesh(component_uid="Wing")` -- get `mesh_base64` (volume mesh; do NOT use `export_component_mesh(format="su2")` — surface-only meshes fail SU2 DistributeColoring)
 2. su2: `create_su2_session` -- `set_mesh(mesh_base64)` -- `update_config_entries({MACH_NUMBER, AoA, ...})`
 3. su2: `run_su2_solver` -- `read_history_csv` -- extract converged CL, CD
 4. Repeat step 2-3 at multiple AoA to build full drag polar

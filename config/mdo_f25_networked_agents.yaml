@@ -19,8 +19,8 @@ peer_template:
        Modify: set_high_level_parameters(session_id, component_uid, updates={...})
                Wing: span (45m), root_chord, tip_chord, sweep (25deg), dihedral, twist_tip
                Fuselage: length (37.79m), section_radius (~1.88m)
-       Export: export_component_mesh(session_id, component_uid, format="su2")
-               export_configuration_cad(session_id, format="step")
+       CFD mesh: generate_volume_mesh(session_id, component_uid="Wing") (REQUIRED for SU2 — produces volume mesh; export_component_mesh produces surface-only and SU2 cannot solve it)
+       Surface/CAD: export_component_mesh(session_id, component_uid, format="stl"), export_configuration_cad(session_id, format="step")
        Geometry: sample_component_surface, intersect_with_plane, intersect_components
 
     2. SU2 (Aerodynamics CFD — port 8200, 17 tools):
@@ -149,7 +149,7 @@ peer_template:
 
 workflow_phases:
   - name: "geometry_setup"
-    tools: ["open_cpacs", "close_cpacs", "set_high_level_parameters", "get_high_level_parameters", "get_wing_summary", "get_fuselage_summary", "get_configuration_summary", "list_geometric_components", "export_component_mesh"]
+    tools: ["open_cpacs", "close_cpacs", "set_high_level_parameters", "get_high_level_parameters", "get_wing_summary", "get_fuselage_summary", "get_configuration_summary", "list_geometric_components", "export_component_mesh", "generate_volume_mesh"]
     board_key: "phase_geometry_setup"
   - name: "aerodynamic_analysis"
     tools: ["create_su2_session", "close_su2_session", "set_mesh", "update_config_entries", "run_su2_solver", "read_history_csv", "sample_surface_solution", "list_result_files", "get_su2_status"]

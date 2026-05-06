@@ -38,12 +38,12 @@ meshes, STEP files, etc.) between MCP tools without passing through the LLM cont
    a data store key), the framework's request middleware resolves it to the actual
    payload before sending to the MCP server.
 
-**Example:** TiGL exports a wing mesh (176KB base64). The LLM sees:
+**Example:** TiGL generates a volume mesh (~1-10MB base64). The LLM sees:
 ```json
-{"format": "su2", "mesh_base64": {"ref": "export_component_mesh__mesh_base64", "size_bytes": 176616}}
+{"format": "su2", "mesh_base64": {"ref": "generate_volume_mesh__mesh_base64", "size_bytes": 1234567}}
 ```
-When the aero stage calls `set_mesh(mesh_base64={"ref": "export_component_mesh__mesh_base64"})`,
-the framework resolves the ref and sends the full 176KB payload to SU2.
+When the aero stage calls `set_mesh(mesh_base64={"ref": "generate_volume_mesh__mesh_base64"})`,
+the framework resolves the ref and sends the full payload to SU2.
 
 ### Field Details
 
@@ -61,18 +61,19 @@ the framework resolves the ref and sends the full 176KB payload to SU2.
 
 ## Inter-MCP Data Transfers
 
-### 1. tigl-mcp --> su2-mcp: Component Mesh
+### 1. tigl-mcp --> su2-mcp: Volume Mesh for CFD
 
 | Property | Value |
 |----------|-------|
-| **Source tool** | `tigl:export_component_mesh(session_id, component_uid, format="su2")` |
+| **Source tool** | `tigl:generate_volume_mesh(session_id, component_uid)` (uses gmsh internally to embed the STL surface in a far-field box and produce a complete 3D volume mesh with "aircraft" wall + "farfield" markers) |
 | **Target tool** | `su2:set_mesh(session_id, mesh_base64)` |
-| **Data format** | Base64-encoded SU2 mesh string |
-| **Transformation** | None — the base64 blob returned by tigl is passed directly to su2 `set_mesh`. The orchestrator does not decode or modify the mesh content. |
+| **Data format** | Base64-encoded SU2 volume mesh string |
+| **Transformation** | None — the base64 blob returned by tigl is passed directly to su2 `set_mesh`. |
 | **Typical size** | 1-50 MB (base64), depending on mesh density |
+| **Why not `export_component_mesh(format="su2")`?** | That tool produces a *surface-only* mesh (zero volume elements). SU2's `DistributeColoring` check rejects it and the solver immediately fails. `generate_volume_mesh` is the only tigl-mcp tool that produces a CFD-solveable mesh. |
 
 ```
-tigl:export_component_mesh  --(mesh_base64: str)-->  su2:set_mesh
+tigl:generate_volume_mesh  --(mesh_base64: str)-->  su2:set_mesh
 ```
 
 ### 2. tigl-mcp --> mass-mcp: CPACS File on Disk

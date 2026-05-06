@@ -36,15 +36,17 @@ mdo_f25_graph:
         DLR-F25 aircraft geometry from the CPACS file.
 
         TOOLS: open_cpacs, get_configuration_summary, get_wing_summary,
-        get_fuselage_summary, set_high_level_parameters, export_component_mesh
+        get_fuselage_summary, set_high_level_parameters, generate_volume_mesh, export_component_mesh
 
         1. Call open_cpacs(source_type="path", source="<CPACS_FILE>") → session_id.
         2. Call get_wing_summary(session_id, wing_uid="Wing") to inspect baseline.
         3. Call set_high_level_parameters(session_id, component_uid="Wing",
            updates={...}) with geometry values from the task.
            Wing params: span (F25: 45m), sweep (25 deg), root_chord, tip_chord, dihedral, twist_tip.
-        4. Call export_component_mesh(session_id, component_uid="Wing", format="su2")
-           to produce a mesh for downstream SU2 CFD.
+        4. Call generate_volume_mesh(session_id, component_uid="Wing") to
+           produce a 3D volume mesh for downstream SU2 CFD. (Do NOT use
+           export_component_mesh(format="su2") — that is surface-only and
+           SU2 will fail DistributeColoring with 0 volume elements.)
 
         F25 BASELINE: span 45m, AR 15.6, area 130.1m², sweep 25 deg, taper 0.278.
         COUPLING: span exceeds 36m gate limit (Code D assumed). AR=15.6 creates flutter risk.

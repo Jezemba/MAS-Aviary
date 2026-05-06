@@ -1,6 +1,18 @@
 ## [Unreleased]
 
 ### 2026-05-06
+- Fixed: TiGL→SU2 mesh handoff. Updated SKILL.md, data_flow.md,
+  tool_catalog.md, and all four mdo_f25 pipeline configs to call
+  `generate_volume_mesh(session_id, component_uid)` instead of
+  `export_component_mesh(format="su2")` for the geometry→CFD step.
+  `generate_volume_mesh` already existed in tigl-mcp (uses gmsh to embed
+  the STL surface in a far-field box and emit a complete SU2 volume
+  mesh with "aircraft" wall + "farfield" markers); the framework was
+  simply never telling agents to call it. `export_component_mesh`
+  produces a surface-only mesh (0 volume cells) which causes SU2's
+  `DistributeColoring` to fail immediately. Tool list of geometry agent
+  now includes both tools — surface mesh kept for visualization /
+  non-CFD use, volume mesh required for CFD.
 - Security: rotated leaked credentials and rewrote git history. Removed
   ANTHROPIC_API_KEY and WANDB_API_KEY hardcoded in run_batch.sh; replaced
   with .env loading. Added .env.example template. .env is gitignored.

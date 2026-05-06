@@ -5,7 +5,7 @@ required_tool_phases:
   geometry_setup:
     - open_cpacs
     - set_high_level_parameters
-    - export_component_mesh
+    - generate_volume_mesh
   aerodynamic_analysis:
     - create_su2_session
     - set_mesh
@@ -64,7 +64,8 @@ agents:
          Modify: set_high_level_parameters(session_id, component_uid, updates={param: value})
                  Wing params: span (45m), root_chord, tip_chord, sweep (25deg), dihedral, twist_tip
                  Fuselage params: length (37.79m), section_radius (~1.88m)
-         Export: export_component_mesh(session_id, component_uid, format="su2") → base64 mesh
+         CFD mesh: generate_volume_mesh(session_id, component_uid="Wing") → base64 SU2 volume mesh (REQUIRED for SU2 — surface-only meshes from export_component_mesh fail DistributeColoring)
+         Surface only: export_component_mesh(session_id, component_uid, format="stl") → STL surface (visualization, NOT solveable)
                  export_configuration_cad(session_id, format="step") → base64 STEP file
          Geometry: sample_component_surface, intersect_with_plane, intersect_components
 
@@ -121,7 +122,7 @@ agents:
 
       AGENT ROLE → TOOL MAPPING:
       - geometry_engineer: open_cpacs, close_cpacs, set_high_level_parameters, get_high_level_parameters,
-        get_wing_summary, get_fuselage_summary, get_configuration_summary, list_geometric_components, export_component_mesh
+        get_wing_summary, get_fuselage_summary, get_configuration_summary, list_geometric_components, export_component_mesh, generate_volume_mesh
       - aerodynamics_analyst: create_su2_session, close_su2_session, set_mesh, update_config_entries,
         run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status
       - structures_analyst: validate_cpacs_inputs, estimate_mass, get_cpacs_mass_breakdown
