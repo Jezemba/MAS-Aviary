@@ -49,6 +49,11 @@ _STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
     "networked": ("config/aviary_networked_agents.yaml", "config/aviary_networked.yaml"),
 }
 
+# MDO F25 uses different config files from the aviary-only pipeline.
+_MDO_F25_STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
+    "sequential": ("config/mdo_f25_sequential_agents.yaml", "config/aviary_mdo_f25_sequential.yaml"),
+}
+
 
 # ---------------------------------------------------------------------------
 # Combination definition
@@ -141,7 +146,17 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         strategy_config={"networked": {"workflow_phases": []}},
         handler_config={"predefined_graph": "aviary"},
     ),
+    # ── MDO F25 combinations (5-MCP pipeline) ──
+    CombinationConfig(
+        "mdo_f25_sequential_iterative_feedback",
+        "sequential",
+        "iterative_feedback",
+        strategy_config={"pipeline_template": "mdo_f25"},
+    ),
 ]
+
+# Backward-compatible alias used by stat_batch_runner.
+AVIARY_COMBINATIONS = ALL_COMBINATIONS
 
 
 # ---------------------------------------------------------------------------
@@ -893,7 +908,12 @@ def _execute_combination(
     original_agents = config.agents_config
     original_coord = config.coordination_config
     try:
-        if combo.org_structure in _STRATEGY_CONFIGS:
+        # MDO F25 combos use different config files from aviary-only.
+        if combo.name.startswith("mdo_f25_") and combo.org_structure in _MDO_F25_STRATEGY_CONFIGS:
+            agents_path, coord_path = _MDO_F25_STRATEGY_CONFIGS[combo.org_structure]
+            config.agents_config = agents_path
+            config.coordination_config = coord_path
+        elif combo.org_structure in _STRATEGY_CONFIGS:
             agents_path, coord_path = _STRATEGY_CONFIGS[combo.org_structure]
             config.agents_config = agents_path
             config.coordination_config = coord_path

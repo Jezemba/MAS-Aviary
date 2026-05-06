@@ -291,6 +291,14 @@ _DEFAULT_AVIARY_TASK = (
     "fuel burn. Constraints: fuel_burned_kg <= 8500, gtow_kg <= 72000."
 )
 
+_DEFAULT_MDO_F25_TASK = (
+    "Design a DLR-F25 class aircraft for minimum fuel burn. "
+    "Use CPACS file at /home/aipexws3/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml. "
+    "Target: 2500 nmi range, 239 passengers, Mach 0.78 cruise, 33000 ft altitude. "
+    "Constraints: fuel_burned_kg <= 15000, gtow_kg <= 90000. "
+    "Report the optimality gap versus the F25 reference (MTOM 85700 kg, fuel 12100 kg)."
+)
+
 _DEFAULT_TIMEOUT_MINUTES = 20
 
 
@@ -354,7 +362,6 @@ def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=N
                 combo,
                 task,
                 config,
-                domain=domain,
                 session_id=session_id,
             )
         except Exception as e:
@@ -541,7 +548,8 @@ def run_stat_batch(
                     )
                 continue
 
-            task = build_task_with_session(_DEFAULT_AVIARY_TASK, session_id, params)
+            base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+            task = build_task_with_session(base_task, session_id, params)
 
             # Retry loop
             timeout_sec = timeout_minutes * 60
@@ -583,7 +591,8 @@ def run_stat_batch(
                             try:
                                 setup = setup_session_with_params(tool_map, params)
                                 session_id = setup["session_id"]
-                                task = build_task_with_session(_DEFAULT_AVIARY_TASK, session_id, params)
+                                base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+                                task = build_task_with_session(base_task, session_id, params)
                             except Exception as e:
                                 last_error = f"pre-hook retry: {e}"
                                 print(f"  pre-hook retry failed: {e}")
@@ -678,7 +687,8 @@ def run_stat_batch(
                         try:
                             setup = setup_session_with_params(tool_map, params)
                             session_id = setup["session_id"]
-                            task = build_task_with_session(_DEFAULT_AVIARY_TASK, session_id, params)
+                            base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+                            task = build_task_with_session(base_task, session_id, params)
                         except Exception as re_e:
                             print(f"  pre-hook retry failed: {re_e}")
 

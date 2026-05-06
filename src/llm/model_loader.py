@@ -1,11 +1,15 @@
 """LLM model loader — creates a model from config.
 
-Supports two backends:
+Supports three backends:
 - ``transformers``: Local ThinkingModel (TransformersModel subclass) with
   think-block stripping, robust JSON parsing, and reliability retry loop.
 - ``vllm``: OpenAIServerModel connecting to a vLLM server. Tool calls
   arrive as structured objects — no parsing needed.
+- ``litellm``: LiteLLMModel for cloud API providers (Anthropic Claude,
+  OpenAI GPT, etc.) via the litellm library.
 """
+
+import os
 
 from smolagents.models import Model
 
@@ -21,8 +25,18 @@ def load_model(config: LLMConfig) -> Model:
         config: LLMConfig with model_id, backend, and generation params.
 
     Returns:
-        A ready-to-use Model instance (ThinkingModel or OpenAIServerModel).
+        A ready-to-use Model instance.
     """
+    if config.backend == "litellm":
+        from smolagents import LiteLLMModel
+
+        return LiteLLMModel(
+            model_id=config.model_id,
+            api_key=config.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            max_tokens=config.max_new_tokens,
+            temperature=config.temperature,
+        )
+
     if config.backend == "vllm":
         from smolagents import OpenAIServerModel
 

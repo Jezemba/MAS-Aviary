@@ -1,0 +1,40 @@
+llm:
+  model_id: "anthropic/claude-sonnet-4-20250514"
+  backend: "litellm"
+  max_new_tokens: 4096
+  temperature: 0.3
+
+mcp:
+  mode: "real"
+  servers:
+    - name: "tigl"
+      url: "http://127.0.0.1:8500/mcp"
+      transport: "streamable-http"
+    - name: "su2"
+      url: "http://127.0.0.1:8200/mcp"
+      transport: "streamable-http"
+    - name: "mass"
+      url: "http://127.0.0.1:8700/mcp"
+      transport: "streamable-http"
+    - name: "pycycle"
+      url: "http://127.0.0.1:8400/mcp"
+      transport: "streamable-http"
+    - name: "aviary"
+      url: "http://127.0.0.1:8600/mcp"
+      transport: "streamable-http"
+
+skills:
+  path: "skills/aircraft-design-mdo"
+  mode: "auto"
+
+agents_config: "config/mdo_f25_sequential_agents.yaml"
+coordination_config: "config/aviary_mdo_f25_sequential.yaml"
+
+logging:
+  level: "INFO"
+  output_dir: "logs/"
+  save_full_history: true
+
+ui:
+  enabled: false
+  port: 8501
