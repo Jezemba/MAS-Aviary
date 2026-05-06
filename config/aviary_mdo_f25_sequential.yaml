@@ -1,0 +1,18 @@
+strategy: "sequential"
+
+sequential:
+  decomposition_mode: "human"
+  pipeline_template: "mdo_f25"
+  validate_interfaces: false
+  stage_max_steps: 12
+
+execution_handler: "iterative_feedback"
+
+termination:
+  keyword: "TASK_COMPLETE"
+  max_turns: 50
+  max_consecutive_errors: 3
+
+context:
+  max_recent_messages: 15
+  max_context_tokens: 4000

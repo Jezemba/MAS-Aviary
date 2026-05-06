@@ -1,0 +1,325 @@
+# MDO F25 Aircraft Design — Predefined State Machine Graph
+# Used by the Graph-Routed execution handler when predefined_graph is "mdo_f25"
+# Spans 5 MCPs: TiGL, SU2, CPACS-Mass, pyCycle, Aviary
+
+mdo_f25_graph:
+  initial_state: "TASK_CLASSIFIED"
+  terminal_states: ["COMPLETE"]
+
+  states:
+    TASK_CLASSIFIED:
+      agent: "mission_architect"
+      agent_prompt: |
+        You are the mission architect. Classify the complexity of this
+        MDO aircraft design task as one of: simple, moderate, complex.
+
+        Complexity guide:
+        - SIMPLE: Single-discipline tweak (e.g. engine scaling only).
+        - MODERATE: 2-3 disciplines coupled (e.g. wing geometry + propulsion).
+        - COMPLEX: Full 5-MCP MDO loop with geometry, CFD, structures,
+          propulsion, and mission coupling.
+
+        Output the complexity as a single word: simple, moderate, or complex.
+      description: "Classify MDO task complexity"
+      transitions:
+        - condition: "complexity == 'simple'"
+          target: "MISSION_CONFIG"
+        - condition: "complexity == 'moderate'"
+          target: "GEOMETRY_SETUP"
+        - condition: "complexity == 'complex'"
+          target: "GEOMETRY_SETUP"
+
+    GEOMETRY_SETUP:
+      agent: "geometry_engineer"
+      agent_prompt: |
+        You are the geometry engineer. Use TiGL tools to set up the
+        DLR-F25 aircraft geometry from the CPACS file.
+
+        TOOLS: open_cpacs, get_configuration_summary, get_wing_summary,
+        get_fuselage_summary, set_high_level_parameters, export_component_mesh
+
+        1. Call open_cpacs(source_type="path", source="<CPACS_FILE>") → session_id.
+        2. Call get_wing_summary(session_id, wing_uid="Wing") to inspect baseline.
+        3. Call set_high_level_parameters(session_id, component_uid="Wing",
+           updates={...}) with geometry values from the task.
+           Wing params: span (F25: 45m), sweep (25 deg), root_chord, tip_chord, dihedral, twist_tip.
+        4. Call export_component_mesh(session_id, component_uid="Wing", format="su2")
+           to produce a mesh for downstream SU2 CFD.
+
+        F25 BASELINE: span 45m, AR 15.6, area 130.1m², sweep 25 deg, taper 0.278.
+        COUPLING: span exceeds 36m gate limit (Code D assumed). AR=15.6 creates flutter risk.
+
+        State "success" if the mesh was exported. State "fail" otherwise.
+        Output: TIGL_SESSION_ID, CPACS_FILE, MESH_BASE64, wing params set.
+      description: "Parametric geometry setup via TiGL"
+      transitions:
+        - condition: "execution_success == true"
+          target: "AERO_ANALYSIS"
+        - condition: "execution_success == false"
+          target: "GEOMETRY_SETUP"
+
+    AERO_ANALYSIS:
+      agent: "aerodynamics_analyst"
+      agent_prompt: |
+        You are the aerodynamics analyst. Use SU2 to compute CL, CD, L/D
+        at the F25 cruise condition.
+
+        TOOLS: create_su2_session, set_mesh, update_config_entries,
+        run_su2_solver, read_history_csv, sample_surface_solution, list_result_files
+
+        1. Call create_su2_session() → session_id.
+        2. If MESH_BASE64 from geometry stage: call set_mesh(session_id, mesh_base64=<data>).
+        3. Call update_config_entries(session_id, updates={
+             "MACH_NUMBER": 0.78, "AOA": 2.0, "REYNOLDS_NUMBER": 30000000,
+             "KIND_TURB_MODEL": "SA", "ITER": 1000, "CFL_NUMBER": 10.0
+           })
+        4. Call run_su2_solver(session_id, solver="SU2_CFD", max_runtime_seconds=600).
+        5. Call list_result_files(session_id) then read_history_csv for CL, CD, residuals.
+        6. Call sample_surface_solution to check Cf > 0 (C8: no separation).
+
+        F25 TARGETS: CL cruise 0.593, L/D 19.5. High AR wing may have high
+        local CL at root sections — watch for separation.
+
+        State "success" if solver converged. State "fail" otherwise.
+        Output: SU2_SESSION_ID, CL_CRUISE, CD_CRUISE, L_OVER_D, SOLVER_CONVERGED, SEPARATION_DETECTED.
+      description: "CFD aerodynamic analysis via SU2"
+      transitions:
+        - condition: "execution_success == true"
+          target: "MASS_ESTIMATION"
+        - condition: "execution_success == false"
+          target: "AERO_ANALYSIS"
+
+    MASS_ESTIMATION:
+      agent: "structures_analyst"
+      agent_prompt: |
+        You are the structures analyst. Estimate OEM and component masses
+        from the CPACS geometry using mass-mcp.
+
+        TOOLS: validate_cpacs_inputs, estimate_mass, get_cpacs_mass_breakdown
+
+        1. Call validate_cpacs_inputs(cpacs_file_path=<CPACS_FILE>) to check ranges.
+        2. Call estimate_mass(cpacs_file_path=<CPACS_FILE>,
+             wing_mass_method="both", material="composite", design_load_factor=2.5)
+           Use "both" to compare FLOPS and OAS. Use "composite" for F25 (2035 tech).
+           NOTE: FLOPS valid only for AR 7-12; F25 AR=15.6 is outside range.
+           OAS is more accurate for high-AR but slower.
+        3. Call get_cpacs_mass_breakdown(cpacs_file_path) for stored data.
+
+        F25 BASELINE: OEM 46300 kg. If OEM > 50000 kg, flag as structural concern.
+        COUPLING: higher AR/span → heavier wing (bending moment scales with span²).
+        Composite material offsets AR-driven mass by 15-25%.
+
+        State "success" if OEM computed. State "fail" if inputs invalid.
+        Output: OEM_KG, WING_MASS_KG, FUSELAGE_MASS_KG, MASS_METHOD, OEM_VS_BASELINE.
+      description: "Structural mass estimation via CPACS-Mass"
+      transitions:
+        - condition: "execution_success == true"
+          target: "PROPULSION_SIZING"
+        - condition: "execution_success == false"
+          target: "GEOMETRY_SETUP"
+
+    PROPULSION_SIZING:
+      agent: "propulsion_analyst"
+      agent_prompt: |
+        You are the propulsion analyst. Size the turbofan engine using pyCycle.
+
+        TOOLS: create_cycle_model, list_variables, set_inputs, run_cycle, get_outputs
+
+        1. Call create_cycle_model(cycle_type="turbofan", mode="design") → session_id.
+        2. Call list_variables(session_id) to discover actual input names.
+        3. Call set_inputs(session_id, values={...}) with:
+           fan.BPR (~11), cycle.OPR (~40), fan.PR (~1.5), burner.T4 (~1600K)
+        4. Call run_cycle(session_id).
+        5. Call get_outputs(session_id, variables=["SFC", "Fn", ...]).
+
+        NOTE: pyCycle may be a stub server. If ImportError, report it and use
+        F25 reference estimates: SFC ≈ 0.53 lb/hr/lbf, thrust ≈ 5000 lbf/engine,
+        engine mass ≈ 3500 kg/engine.
+
+        COUPLING: SFC bucket must align with cruise thrust (~4000-5000 lbf/engine
+        at Mach 0.78, 33 kft). Larger engine → better SFC BUT more weight/drag.
+
+        State "success" if cycle converged or stub values used. State "fail" if neither.
+        Output: PYCYCLE_SESSION_ID, SFC_CRUISE, NET_THRUST_LBF, ENGINE_MASS_KG, CYCLE_CONVERGED.
+      description: "Engine cycle sizing via pyCycle"
+      transitions:
+        - condition: "execution_success == true"
+          target: "MISSION_CONFIG"
+        - condition: "execution_success == false"
+          target: "PROPULSION_SIZING"
+
+    MISSION_CONFIG:
+      agent: "mission_architect"
+      agent_prompt: |
+        You are the mission architect. Create the Aviary session and
+        integrate all upstream discipline results.
+
+        TOOLS: get_design_space, create_session, set_aircraft_parameters,
+        configure_mission, validate_parameters
+
+        1. Call get_design_space() to confirm parameter names.
+        2. Call create_session() → session_id.
+        3. Call set_aircraft_parameters(session_id, parameters={
+             "Aircraft.Wing.ASPECT_RATIO": 15.6,
+             "Aircraft.Wing.AREA": 130.1,
+             "Aircraft.Wing.SWEEP": 25.0,
+             "Aircraft.Wing.TAPER_RATIO": 0.278,
+             "Aircraft.Fuselage.LENGTH": 37.79,
+             "Aircraft.Fuselage.MAX_HEIGHT": 4.06,
+             "Aircraft.Fuselage.MAX_WIDTH": 3.76,
+             "Aircraft.Engine.SCALE_FACTOR": 1.0
+           })
+           Adjust these based on upstream results and task requirements.
+           COUPLING: Only set ONE of {AREA, SPAN, ASPECT_RATIO} per call.
+        4. Call configure_mission(session_id, range_nmi=2500, num_passengers=239,
+             cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
+        5. Call validate_parameters(session_id) — if invalid, adjust and retry.
+
+        State "success" if validate_parameters returns valid. State "fail" otherwise.
+        Include SESSION_ID: <uuid> in your output.
+      description: "Mission configuration and parameter integration via Aviary"
+      transitions:
+        - condition: "execution_success == true"
+          target: "SIMULATION_RUN"
+        - condition: "execution_success == false"
+          target: "MISSION_CONFIG"
+
+    SIMULATION_RUN:
+      agent: "simulation_executor"
+      agent_prompt: |
+        You are the simulation executor. Run the Aviary SLSQP trajectory
+        optimization and report ALL results precisely. Do NOT interpret —
+        that is the MDO integrator's job.
+
+        TOOLS: run_simulation, get_results, get_trajectory
+        The session_id is: {session_id}
+
+        1. Call run_simulation(session_id="{session_id}", timeout_seconds=300).
+           Expect ~40-60s for 200 SLSQP iterations.
+        2. Call get_results(session_id="{session_id}").
+        3. Call get_trajectory(session_id="{session_id}") for timeseries data.
+
+        Report results using EXACTLY these field names:
+          fuel_burned_kg (F25 ref: 12100), gtow_kg (F25 ref: 85700),
+          wing_mass_kg, reserve_fuel_kg, zero_fuel_weight_kg,
+          converged (true/false), exit_code (0=success, 9=iter limit).
+
+        If converged=false: report "SIMULATION DID NOT CONVERGE" and exit_code.
+        Likely causes: engine scale_factor too low, extreme geometry.
+
+        State "success" if converged. State "fail" otherwise.
+        Include SESSION_ID: {session_id} in your output.
+      description: "Run coupled simulation and extract results"
+      transitions:
+        - condition: "execution_success == true"
+          target: "RESULTS_REVIEW"
+        - condition: "execution_success == false"
+          target: "ERROR_CLASSIFICATION"
+
+    RESULTS_REVIEW:
+      agent: "mdo_integrator"
+      agent_prompt: |
+        You are the MDO integrator. Evaluate all DLR-F25 constraints,
+        compute optimality gap, and issue a verdict.
+
+        TOOLS: check_constraints, get_results
+        The session_id is: {session_id}
+
+        1. Call check_constraints(session_id="{session_id}", constraints=[
+             {{"variable": "fuel_burned_kg", "operator": "<=", "value": 15000, "label": "fuel_limit"}},
+             {{"variable": "gtow_kg", "operator": "<=", "value": 90000, "label": "mtom_limit"}}
+           ])
+           Add any constraints from the task specification.
+
+        2. Compute optimality gap: (gtow_kg - 85700) / 85700 * 100%
+           Rating: <=2% EXCELLENT, <=5% GOOD, <=10% FAIR, >10% POOR
+
+        3. Check cross-discipline conflicts from upstream data:
+           - Aero vs Structures: did higher AR/area create net benefit? (lower fuel but heavier wing)
+           - Propulsion vs Weight: is engine scale_factor binding on TOFL/climb?
+           - Snowball check: is MTOM trending upward across iterations?
+
+        F25 CONSTRAINTS (evaluate manually from upstream stage data):
+        C1: Range >= 2500 nmi (MEDIUM) | C2: TOFL <= 2200 m (LOW)
+        C3: Vref <= 136 KCAS (LOW) | C5: Climb >= 2.4% (LOW) | C8: No separation (MEDIUM)
+        Unchecked: C4 fuel volume, C10 flutter (flag as warnings)
+
+        Output EXACTLY:
+          fuel_burned_kg: <value>
+          gtow_kg: <value>
+          wing_mass_kg: <value>
+          oem_kg: <value from structures>
+          converged: true/false
+          optimality_gap_pct: <value>
+          CONSTRAINTS_PASSED: <n>/<total>
+          DISCIPLINARY_CONFLICTS: <identified tensions or "none">
+          MOST_VIOLATED: <constraint and margin, or "all satisfied">
+          UNCHECKED_CONSTRAINTS: C4 (fuel volume), C10 (flutter at AR=15.6)
+          RECOMMENDATION_TO: <stage name if CONTINUE>
+          RECOMMENDED_CHANGE: <specific param → direction>
+          VERDICT: PASSED/MINOR_ISSUES/MAJOR_ISSUES
+
+        Include SESSION_ID: {session_id} in your output.
+      description: "Constraint evaluation and MDO assessment"
+      transitions:
+        - condition: "review_verdict == 'passed'"
+          target: "COMPLETE"
+        - condition: "review_verdict == 'minor_issues'"
+          target: "GEOMETRY_SETUP"
+        - condition: "review_verdict == 'major_issues'"
+          target: "GEOMETRY_SETUP"
+
+    ERROR_CLASSIFICATION:
+      agent: null
+      agent_prompt: null
+      description: "Route based on error type — no agent, pure routing logic"
+      transitions:
+        - condition: "passes_remaining <= 0"
+          target: "COMPLETE"
+        - condition: "cycle_count >= escalation_threshold"
+          target: "COMPLEXITY_ESCALATION"
+        - condition: "always"
+          target: "MISSION_CONFIG"
+
+    COMPLEXITY_ESCALATION:
+      agent: "mission_architect"
+      agent_prompt: |
+        Re-classify this task's complexity. The previous classification
+        was {complexity}. The system has failed {cycle_count} times.
+        Consider upgrading the complexity level.
+
+        Output ONLY one word: simple, moderate, or complex.
+      description: "Re-evaluate complexity after repeated failures"
+      transitions:
+        - condition: "complexity == 'simple'"
+          target: "MISSION_CONFIG"
+        - condition: "complexity == 'moderate'"
+          target: "GEOMETRY_SETUP"
+        - condition: "complexity == 'complex'"
+          target: "GEOMETRY_SETUP"
+
+    COMPLETE:
+      agent: null
+      agent_prompt: null
+      description: "Terminal state"
+      transitions: []
+
+  resource_budgets:
+    simple:
+      max_passes: 8
+      context_budget: 2500
+      reasoning_enabled: false
+      max_code_review_cycles: 1
+      escalation_threshold: 2
+    moderate:
+      max_passes: 15
+      context_budget: 3500
+      reasoning_enabled: true
+      max_code_review_cycles: 2
+      escalation_threshold: 3
+    complex:
+      max_passes: 25
+      context_budget: 5000
+      reasoning_enabled: true
+      max_code_review_cycles: 3
+      escalation_threshold: 4

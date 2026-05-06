@@ -373,22 +373,36 @@ class SequentialStrategy(CoordinationStrategy):
     def _extract_shared_state(self, content: str) -> None:
         """Extract declared shared state keys from a stage's output.
 
-        Primary mechanism: look for ``KEY: value`` lines in the output
-        matching keys declared in the template's ``shared_state_keys``.
-        Fallback for SESSION_ID: extract the first UUID if the structured
-        ``SESSION_ID: <value>`` line was not found.
+        For DESIGN_STATE: pulls the live DesignState from the data plane
+        middleware (sessions, data_store, results are captured automatically
+        by the tool call middleware — no regex needed).
 
-        Values are captured once — the first stage to produce a key is
-        authoritative and later stages cannot overwrite it.
+        For SESSION_ID (legacy): regex extraction with UUID fallback.
+
+        For other keys: regex ``KEY: value`` extraction from agent output.
         """
         if not self._template:
             return
 
         for key in self._template.shared_state_keys:
+            # DESIGN_STATE is managed by the data plane middleware —
+            # sessions, binary data, and results are captured automatically
+            # from tool responses.  We always refresh it (not "capture once")
+            # because each stage adds new data.
+            if key == "DESIGN_STATE":
+                try:
+                    from src.tools.data_plane import get_design_state
+                    ds = get_design_state()
+                    if ds is not None:
+                        self._shared_state["DESIGN_STATE"] = ds.to_context_string()
+                except Exception:
+                    pass
+                continue
+
             if key in self._shared_state:
                 continue  # Already captured from an earlier stage.
 
-            # Primary: structured ``KEY: value`` line.
+            # Structured ``KEY: value`` line.
             pattern = re.compile(
                 rf"^\s*{re.escape(key)}\s*:\s*(.+)",
                 re.MULTILINE,
@@ -408,8 +422,16 @@ class SequentialStrategy(CoordinationStrategy):
         """Format shared state as a header block, or None if empty."""
         if not self._shared_state:
             return None
-        lines = [f"  {k}: {v}" for k, v in sorted(self._shared_state.items())]
-        return "SHARED STATE (from earlier stages):\n" + "\n".join(lines)
+
+        parts = []
+        for k, v in sorted(self._shared_state.items()):
+            if k == "DESIGN_STATE":
+                # DesignState is already formatted as a multi-line block.
+                parts.append(v)
+            else:
+                parts.append(f"  {k}: {v}")
+
+        return "SHARED STATE (from earlier stages):\n" + "\n".join(parts)
 
     # -- Context building ------------------------------------------------------
 

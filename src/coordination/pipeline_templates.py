@@ -250,13 +250,15 @@ def resolve_tools(
     Args:
         allowed_tools: The stage's allowed_tools list.
             ["*"] = all domain tools, [] = none, ["name"] = specific.
+            Supports server-scoped patterns: ["tigl.*", "su2.run_su2_solver"].
         all_domain_tools: Dict of tool_name -> Tool instance.
 
     Returns:
         List of Tool instances.
 
     Raises:
-        ValueError: If a named tool is not in all_domain_tools.
+        ValueError: If a named tool is not in all_domain_tools and
+            it is not a server-scoped pattern.
     """
     if not allowed_tools:
         return []
@@ -264,11 +266,31 @@ def resolve_tools(
     if allowed_tools == ["*"]:
         return list(all_domain_tools.values())
 
+    # Check if any patterns use server-scoped syntax (e.g. "tigl.*").
+    # If so, try to resolve via the MCPConnector attached to tools.
     resolved = []
+    seen = set()
     for name in allowed_tools:
-        if name not in all_domain_tools:
+        if "." in name:
+            # Server-scoped pattern: "server.*" or "server.tool_name".
+            # Look up via connector's tool_server_map if available,
+            # otherwise fall back to matching against tool metadata.
+            server_part, tool_part = name.split(".", 1)
+            for tool_name, tool in all_domain_tools.items():
+                if tool_name in seen:
+                    continue
+                # Check if tool belongs to the named server.
+                server = getattr(tool, "_mcp_server_name", None)
+                if server == server_part:
+                    if tool_part == "*" or tool_part == tool_name:
+                        resolved.append(tool)
+                        seen.add(tool_name)
+        elif name in all_domain_tools:
+            if name not in seen:
+                resolved.append(all_domain_tools[name])
+                seen.add(name)
+        else:
             raise ValueError(f"Tool '{name}' not found in domain tools. Available: {sorted(all_domain_tools.keys())}")
-        resolved.append(all_domain_tools[name])
     return resolved
 
 
