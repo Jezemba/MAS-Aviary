@@ -100,14 +100,23 @@ templates:
              Only change parameters explicitly requested or justified by the
              MDO objective.
 
-          5. Call generate_volume_mesh(session_id, component_uid="Wing")
-             to produce a 3D volume mesh for SU2 CFD. This tool internally
-             exports the wing as STL, embeds it in a far-field box with
-             gmsh, and writes a complete SU2 volume mesh with boundary
-             markers ("aircraft" wall + "farfield"). DO NOT use
-             export_component_mesh(format="su2") for CFD — that is a
-             surface-only mesh and SU2 will fail DistributeColoring with
-             0 volume elements. Capture the base64 mesh from the response.
+          5. Call generate_volume_mesh(session_id, component_uid="Wing",
+             surface_mesh_size=1.0, mesh_size_min=0.3, mesh_size_max=8.0,
+             boundary_layer_enabled=false) to produce a 3D volume mesh
+             for SU2 CFD. This tool internally exports the wing as STL,
+             embeds it in a far-field box with gmsh, and writes a complete
+             SU2 volume mesh with boundary markers ("aircraft" wall +
+             "farfield"). DO NOT use export_component_mesh(format="su2")
+             for CFD — that is a surface-only mesh and SU2 will fail
+             DistributeColoring with 0 volume elements. Capture the
+             base64 mesh from the response.
+
+             FIDELITY NOTE: the coarse mesh parameters above target an
+             Euler CFD solve that completes in <5 minutes (~50-200k
+             cells). For a refined design pass, lower surface_mesh_size
+             to 0.5 and enable boundary_layer_enabled=true, but be aware
+             this will produce a 1M+ cell mesh that takes 15-30 min to
+             solve.
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 
@@ -152,8 +161,10 @@ templates:
                              Sweep multiple AoA values to build a drag polar.
           REYNOLDS_NUMBER    Based on MAC and altitude. Cruise at 33 kft: ~30e6
           KIND_TURB_MODEL    "SA" (Spalart-Allmaras, faster) or "SST" (Menter k-ω, better for separation)
-          ITER               Solver iterations. Default: 1000 | Range: 100–10000
-                             More iterations = tighter convergence. 1000 is typical.
+          ITER               Solver iterations. Default: 200 | Range: 100–10000
+                             More iterations = tighter convergence. 200 is
+                             enough for Euler on a coarse mesh; bump to
+                             1000+ only for refined RANS runs.
           CFL_NUMBER         Courant number. Default: 10.0 | Range: 1–100
                              Lower values for difficult cases (high AoA, separated flow).
 
@@ -196,9 +207,13 @@ templates:
                "AOA": 2.0,
                "REYNOLDS_NUMBER": 30000000,
                "KIND_TURB_MODEL": "SA",
-               "ITER": 1000,
+               "ITER": 200,
                "CFL_NUMBER": 10.0
              })
+             Use ITER=200 by default — that is enough for Euler on the
+             coarse mesh generate_volume_mesh produces by default and
+             keeps the solve under ~5 minutes. Only raise it for refined
+             RANS passes on dense meshes.
 
           4. Call get_su2_status() to check if SU2 binaries are installed.
              If SU2 is NOT installed (installed: false), SKIP steps 5-7 and
@@ -211,7 +226,7 @@ templates:
              Proceed to the output format section.
 
           5. Call run_su2_solver(session_id, solver="SU2_CFD",
-             max_runtime_seconds=600).
+             max_runtime_seconds=300).
              If this fails or returns an error, use the F25 reference values
              above as fallback. Do NOT stop the pipeline.
 

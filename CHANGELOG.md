@@ -1,6 +1,16 @@
 ## [Unreleased]
 
 ### 2026-05-06
+- Changed: Coarser default fidelity for sequential mdo_f25 SU2 stage to fit
+  the per-repeat timeout. generate_volume_mesh call in geometry_engineer
+  now passes surface_mesh_size=1.0, mesh_size_min=0.3, mesh_size_max=8.0,
+  boundary_layer_enabled=false (targets ~50–200k cells solveable in
+  <5 min for Euler). Aerodynamics_analyst default ITER lowered from 1000
+  to 200 and max_runtime_seconds from 600 to 300. Refined RANS settings
+  remain documented for later refined passes.
+  Reason: 2026-05-06 12:15 verification run produced a 1.4M-cell mesh
+  and hit the 20-min per-repeat wall during SU2 solve; the mesh fix
+  itself worked correctly (volume cells present, no DistributeColoring).
 - Fixed: TiGL→SU2 mesh handoff. Updated SKILL.md, data_flow.md,
   tool_catalog.md, and all four mdo_f25 pipeline configs to call
   `generate_volume_mesh(session_id, component_uid)` instead of
