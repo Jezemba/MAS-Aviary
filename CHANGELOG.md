@@ -1,5 +1,47 @@
 ## [Unreleased]
 
+### 2026-05-11 (Phase E — ROOT CAUSE: aviary-mcp unit bug)
+
+The AVIARY_SETUP_ERROR ("Newton solver residuals contain inf/NaN after
+0 iterations") that defeated runs #3, #4, and #5 was ALL caused by a
+single bug in aviary-mcp's aviary_runner.py:
+
+  prob.aviary_inputs.set_val(aviary_var, float(value))   # ← no units=
+
+For aircraft parameters, aviary-mcp was passing values WITHOUT a units
+kwarg. Aviary defaults the variable's units to whatever its internal
+metadata says — for the bench A320 file those defaults are Imperial.
+So when the agent sent Aircraft.Wing.AREA=130.1 (intended m**2),
+Aviary interpreted it as 130.1 ft**2 ≈ 12 m**2 — a tiny wing that
+fails the climb-phase aero buildup and NaN's Newton at iter 0.
+
+The mission-level params (RANGE, CRUISE_ALTITUDE) were already passing
+units correctly. ONLY aircraft params were unit-less.
+
+Empirical confirmation:
+- AREA=130.1 (intended m**2, no units) → NaN/setup
+- AREA=1400 (= ~130 m**2 if Aviary reads as ft**2) → VALID
+
+Fix shipped in Jezemba/aviary-mcp branch fix/ar-reliable-range
+(commit ddbc7e1): pull units from design_space.py metadata, translate
+'m^2' → 'm**2', pass to set_val explicitly.
+
+After fix, validate_parameters returns VALID for:
+- Full F25 override set (AR=15.6, AREA=130.1 m**2, SCALE_FACTOR=1.3,
+  FUSELAGE_LENGTH=37.79 m, MAX_HEIGHT=4.06, MAX_WIDTH=3.76)
+- AR sweep 12 → 17 all pass
+
+Implications for Phase B/C/D work on this branch:
+- The "AR > 12 cliff" theory (Phase D) was wrong — it was units.
+  The reliable_range warning in aviary-mcp and the AR=11 cap in the
+  mission prompt are now unnecessary; both can be revisited in
+  follow-up commits to allow the agent to target the actual F25 AR
+  again.
+- The simulator no-loop instruction (Phase D) remains useful even
+  though it should fire less often now.
+- The Phase A drop-key, type coercion, data plane, and Phase B
+  prompt updates all remain correct.
+
 ### 2026-05-11 (Phase D — AR feasibility cliff + simulator no-loop on setup error)
 
 Run #4 reached simulation_executor for the first time, then hit a new
