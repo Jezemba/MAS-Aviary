@@ -96,34 +96,43 @@ templates:
              inspect baseline values.
 
           4. Call set_high_level_parameters(session_id, component_uid="Wing",
-             updates={...}) ONCE to modify wing geometry as specified by
-             the task. Only change parameters explicitly requested or
-             justified by the MDO objective.
+             updates={...}) ONCE to RECORD your design intent.
+
+             IMPORTANT — DESIGN-INTENT SEMANTICS (not what you might expect):
+             In this framework, set_high_level_parameters writes to a
+             per-session "design intent" record. It does NOT modify the
+             CPACS XML, does NOT re-mesh, and does NOT change what
+             get_wing_summary returns. TiGL geometry is loaded once at
+             open_cpacs and is immutable for the session. So:
+                 - The mesh you generate in step 6 reflects the BASELINE
+                   CPACS geometry, not your intended values.
+                 - Downstream stages (mass, aviary) consume your intended
+                   values via the DESIGN_STATE you emit (GEOMETRY_CHANGES,
+                   WING_AREA_M2, etc.), NOT via re-reading the CPACS.
+                 - Only change parameters explicitly requested or
+                   justified by the MDO objective.
 
              — If the response includes a "warnings" field that is not
                null/empty, copy those warnings verbatim into
-               COUPLING_NOTES in your final answer so downstream stages
-               can react. Do NOT silently swallow warnings.
+               COUPLING_NOTES. Do NOT silently swallow warnings.
              — Do NOT call set_high_level_parameters a second time for
-               the same component. If a previous call returned warnings
-               or partial success, record them and proceed — re-calling
-               will not improve the outcome and burns context.
+               the same component. The state is local and updates are
+               last-write-wins; a second call just burns context.
 
           5. Call get_wing_summary(session_id, wing_uid="Wing") AGAIN
-             to verify the parameter values that actually took effect.
-             Compare to the values you set in step 4.
+             to read the BASELINE wing geometry (this is what the
+             downstream mesh will actually be of). Use these values to
+             populate WING_SPAN_M, WING_SWEEP_DEG, WING_AREA_M2 in
+             your DESIGN_STATE — they ARE the geometric truth for
+             this session, regardless of what you set in step 4.
 
-             — If any of {span, sweep, root_chord, area} comes back as
-               null OR differs by more than 5% from what you set in
-               step 4, the geometry update did not stick cleanly. In
-               that case STOP the pipeline: set MESH_BASE64 to
-               "skipped — geometry invalid" and report the specific
-               null/mismatched parameters in COUPLING_NOTES. Do NOT
-               proceed to the mesh step — meshing a partial geometry
-               produces a useless mesh and wastes downstream time.
+             If get_wing_summary returns null for span/sweep/area, that
+             is a real D150-fixture issue (some fields like sweep_deg
+             genuinely come back null for this fixture). Record what
+             IS available; report missing fields in COUPLING_NOTES.
+             Do NOT halt on null — proceed to mesh.
 
-          6. Only when step 5's values look sane, call
-             generate_volume_mesh(session_id, component_uid="Wing",
+          6. Always call generate_volume_mesh(session_id, component_uid="Wing",
              surface_mesh_size=1.0, mesh_size_min=0.3, mesh_size_max=8.0,
              boundary_layer_enabled=false) to produce a 3D volume mesh
              for SU2 CFD. This tool internally exports the wing as STL,
@@ -154,14 +163,22 @@ templates:
           DESIGN_STATE:
             TIGL_SESSION_ID: <uuid>
             CPACS_FILE: <path>
-            MESH_BASE64: <base64 string, "exported", or "skipped — <reason>">
-            WING_SPAN_M: <value, or null with reason in COUPLING_NOTES>
-            WING_SWEEP_DEG: <value or null>
-            WING_AREA_M2: <computed or estimated, or null>
+            MESH_BASE64: <base64 string or "exported">
+            WING_SPAN_M: <BASELINE value from step-5 get_wing_summary>
+            WING_SWEEP_DEG: <value or null if D150 returns null>
+            WING_AREA_M2: <BASELINE value from step-5 get_wing_summary>
             FUSELAGE_LENGTH_M: <value or null>
-            GEOMETRY_CHANGES: <list of parameters changed and why>
-            COUPLING_NOTES: <warnings from set_high_level_parameters
-                              + any param mismatches detected in step 5>
+            GEOMETRY_CHANGES: <list of INTENT values you set in step 4,
+                              what you would have liked the geometry
+                              to be — downstream uses this>
+            DESIGN_INTENT: <YAML mapping of param → intended value,
+                            useful for mission_architect to plug into
+                            set_aircraft_parameters>
+            COUPLING_NOTES: <warnings from set_high_level_parameters,
+                              null fields from D150, and an explicit
+                              note that BASELINE geometry was meshed
+                              while DESIGN_INTENT carries the agent's
+                              intended values>
         allowed_tools:
           - open_cpacs
           - close_cpacs

@@ -395,24 +395,28 @@ def test_aviary_set_aircraft_parameters_passes_dict():
 
 @pytest.mark.live_mcp_llm
 def test_geometry_set_then_verify_then_close():
-    """Phase B-1 regression for the geometry stage prompt updates.
+    """Phase B-1 + C regression for the geometry stage prompt updates.
 
-    Run #3 P2 observations against the geometry agent:
-      - called set_high_level_parameters twice (redundant retry)
-      - did not verify whether values took before meshing
-      - did not close the CPACS session, leaving mass-mcp to read stale data
-      - emitted the same DESIGN_STATE final-answer up to 3 times
+    Run #3 observations:
+      - set_high_level_parameters called twice (redundant retry)
+      - no verify between set and mesh
+      - no close_cpacs
+      - 3x repeated DESIGN_STATE final answer
 
-    The updated prompt (config/mdo_f25_sequential_agents.yaml) now
-    instructs:
-      step 4: set ONCE, surface warnings into COUPLING_NOTES
-      step 5: re-call get_wing_summary, halt on null/mismatch (don't mesh)
-      step 6: mesh only if step 5 looked sane
-      step 7: close_cpacs at end
-      output: ONE final_answer block
+    Phase C finding (2026-05-11): set_high_level_parameters is
+    annotation-only in tigl-mcp — it writes to an in-memory dict and
+    does NOT modify the CPACS XML or TiGL model. So get_wing_summary
+    will always return baseline values, never the agent's intended
+    values. Phase B-1 prompt was updated to be honest about this:
+    mesh the baseline, propagate intent via DESIGN_INTENT / GEOMETRY_CHANGES.
 
-    This test runs the geometry agent against the D150 fixture with a
-    small valid wing edit and asserts the new structural behavior.
+    Updated assertions:
+      - set_high_level_parameters called at most once
+      - final_answer at most once
+      - SOME inspection call happens after set (verify step)
+      - close_cpacs called when mesh succeeded
+      - agent did NOT halt on the baseline/intent mismatch (i.e. mesh
+        was attempted) — earlier prompt would have halted, that was wrong
     """
     # Use the mass-mcp fixture as the CPACS file (lives on disk).
     cpacs_path = (
@@ -483,19 +487,35 @@ def test_geometry_set_then_verify_then_close():
             "to confirm the geometry change took."
         )
 
-    # 4) close_cpacs SHOULD be called on the success path. On a halt-path
-    #    where the verify failed, it's also good practice but not strictly
-    #    enforced (failure path may legitimately abort earlier). So accept
-    #    either: close_cpacs was called, OR the agent halted without
-    #    meshing (geometry invalid).
-    n_close = by_name.get("close_cpacs", 0)
+    # 4) Phase C correction: the agent MUST mesh the baseline regardless
+    #    of intent/baseline mismatch (because intent is memo-only and the
+    #    baseline is what TiGL has). Previous "halt on mismatch" guidance
+    #    was wrong.
     n_mesh = by_name.get("generate_volume_mesh", 0)
-    if n_mesh > 0:
-        # Mesh was attempted → success-attempt path → close_cpacs required
-        # so mass-mcp sees the latest CPACS.
+    assert n_mesh >= 1, (
+        "REGRESSION: agent did not attempt to mesh. The updated prompt "
+        "says ALWAYS mesh the baseline — set_high_level_parameters is "
+        "annotation-only, so baseline is the only geometry available."
+    )
+
+    # 5) close_cpacs called when mesh succeeded (so mass-mcp reads fresh disk).
+    n_close = by_name.get("close_cpacs", 0)
+    # On the D150 fixture, gmsh may legitimately fail on the meshed wing
+    # (known issue — wing geometry has degenerate edges that gmsh dislikes).
+    # We do NOT require close_cpacs in that case since the agent may
+    # legitimately abort early. But if any mesh result came back with a
+    # non-error observation, close should be called.
+    successful_mesh = any(
+        c["name"] == "generate_volume_mesh"
+        and "mesh_base64" in (c["observation"] or "")
+        and "error" not in (c["observation"] or "").lower()
+        for c in calls
+    )
+    if successful_mesh:
         assert n_close >= 1, (
-            "REGRESSION: agent meshed but did not call close_cpacs. "
-            "mass-mcp reads CPACS from disk and will see stale data."
+            "REGRESSION: agent meshed successfully but did not call "
+            "close_cpacs. mass-mcp reads CPACS from disk and will see "
+            "stale data."
         )
 
 

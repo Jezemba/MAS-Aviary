@@ -1,5 +1,70 @@
 ## [Unreleased]
 
+### 2026-05-11 (Phase C — investigations and follow-on prompt corrections)
+
+Investigated the run #3 D150-fixture symptoms ("get_high_level_parameters
+returns empty", "set_high_level_parameters claims success but
+get_wing_summary unchanged"). Root cause is a fundamental design
+property of the tigl-mcp tool surface, not a fixture bug:
+
+  - tigl-mcp ComponentDefinition.parameters is an in-memory python dict
+    populated at parse time ONLY from CPACS XML element attributes
+    (uID, name, symmetry — never numeric like span/sweep, because CPACS
+    encodes those in child elements, not attributes). So the dict is
+    effectively always empty for any real CPACS file.
+  - set_high_level_parameters writes to that local dict only. It does
+    NOT modify the CPACS XML, does NOT re-load TiGL, does NOT change
+    what get_wing_summary or generate_volume_mesh produce.
+  - get_high_level_parameters reads the same dict and so always returns
+    {} unless the agent has set_high_level_parameters in the same
+    session.
+  - TiGL geometry is loaded once at open_cpacs and is the immutable
+    ground truth for the session.
+
+This is a fundamental property of the framework: geometry never
+actually varies between iterations at the TiGL level. Only Aviary's
+set_aircraft_parameters (which operates on Aviary's own aircraft
+model, not on CPACS) actually responds to agent intent. The
+"multidisciplinary" character of the MDO is therefore:
+   tigl     — baseline geometry only (intent recorded as a memo)
+   su2      — CFD on the baseline mesh
+   mass     — reads baseline CPACS from disk
+   pycycle  — independent engine design, drives no geometry
+   aviary   — actually optimizes mission against an Aviary-internal
+              aircraft sized via set_aircraft_parameters
+
+Phase B-1 geometry prompt was REVISED to be honest about this:
+  - set_high_level_parameters explicitly framed as "record design
+    intent" (memo-only). Prompt now states the mesh will reflect the
+    BASELINE, not the intent.
+  - Post-set verify (step 5) is reframed: read get_wing_summary to
+    capture the BASELINE values (which ARE the mesh truth) for
+    DESIGN_STATE. Do NOT halt on baseline/intent mismatch — that
+    mismatch is structural to the framework, not a bug.
+  - New DESIGN_INTENT field in DESIGN_STATE output: a YAML mapping of
+    intended param → value. mission_architect's upstream-mapping table
+    (Phase B-4) already consumes this.
+  - Null fields from D150 (some Wing1 attributes like sweep_deg
+    legitimately come back null on this fixture) are recorded but do
+    NOT abort the pipeline.
+
+Regression test test_geometry_set_then_verify_then_close updated:
+  - removed the "halt on mismatch" expectation
+  - added requirement that the agent ALWAYS attempts mesh
+  - close_cpacs requirement only enforced on a successful mesh
+
+Filing notes for future work (out of current scope per
+"do NOT modify MCP server code"):
+  - tigl-mcp could optionally read baseline param values from
+    get_wing_summary into ComponentDefinition.parameters at open
+    time, so get_high_level_parameters returns useful defaults
+  - tigl-mcp could optionally implement set→TIXI-write→TiGL-reload
+    to make geometry actually change. This is a substantial
+    redesign of the tool — a candidate issue to file on Jezemba/tigl-mcp
+  - su2-mcp and pycycle-mcp numpy truth-value ambiguity in
+    update_config_entries and get_cycle_summary are minor server-side
+    bugs; agent recovers gracefully but worth filing
+
 ### 2026-05-11 (Phase B — skill / prompt fixes for run #3 P2 bugs)
 
 Each agent's prompt in config/mdo_f25_sequential_agents.yaml updated to
