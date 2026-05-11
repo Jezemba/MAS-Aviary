@@ -44,9 +44,21 @@ def _coerce_value(value: Any, schema: dict) -> Any:
     if orig_type:
         allowed_types.add(orig_type)
 
-    # String "null" / "None" → None (when null is allowed)
+    # A field accepts null if any of:
+    #   - "null" is one of the anyOf options or allowed types
+    #   - the field is explicitly marked nullable
+    #   - the field has an explicit null default (i.e. omission means null)
+    #   - the schema declares type="null"
+    accepts_null = (
+        "null" in allowed_types
+        or bool(any_of)  # anyOf present but mcpadapt may have stripped null option
+        or schema.get("nullable") is True
+        or ("default" in schema and schema.get("default") is None)
+    )
+
+    # String "null" / "None" / "" → None when the field accepts null
     if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
-        if "null" in allowed_types or any_of:
+        if accepts_null:
             return None
 
     # JSON string → dict (when object is expected)

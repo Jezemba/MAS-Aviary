@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+### 2026-05-11 (Phase A — middleware fixes)
+- Fixed: type-coercion middleware now treats the literal string "null"
+  (or "None"/"") as Python None for any schema that accepts null in any
+  of these ways:
+    - anyOf includes {type: null}
+    - anyOf is present (mcpadapt may have stripped the null option)
+    - nullable: true is set
+    - schema has explicit "default": null
+  Resolves the run #3 P0 blocker where aviary create_session was called
+  with initial_parameters="null" (string) and rejected with
+  "Input should be a valid dictionary [type=dict_type]".
+- Added: data-plane middleware now intercepts large structured payloads
+  in addition to base64 binary. Triggers on:
+    - lists with > 30 items (e.g. pycycle list_variables 200-item tree)
+    - dicts whose JSON-serialized form exceeds 2KB (e.g. aviary
+      get_trajectory 60-point timeseries)
+  Intercepted payloads are stored in DesignState.data_store under
+  "<tool>__<field>" and the LLM sees a compact summary (preview + ref +
+  total_count + note). Downstream tool calls can pass the ref to fetch
+  the full payload via resolve_request. Eliminates the +30K-tokens-
+  per-list_variables-call growth that hit 377K input tokens by step 11
+  in run #1.
+- Tests: tests/test_type_coercion.py (18 tests) and
+  tests/test_data_plane.py (13 tests) cover the new coercion paths and
+  the large-payload interception against pycycle list_variables and
+  aviary get_trajectory shapes. Full suite 1315/1315 passing.
+
 ### 2026-05-11
 - Tested: ran mdo_f25_sequential_iterative_feedback with the coarse mesh +
   ITER=200 + 60-min timeout. Wandb run j0r9i0w3 (failed connect, tigl

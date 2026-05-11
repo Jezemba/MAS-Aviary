@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 
 _SIZE_THRESHOLD = 1024
 
+# Structured-payload interception thresholds. Long lists and big dicts in tool
+# responses (e.g. pycycle list_variables, aviary get_trajectory) bloat the
+# LLM context — replace them with a ref + small preview, keep the full payload
+# in DesignState.data_store so downstream tool calls can still resolve them.
+_LIST_ITEM_THRESHOLD = 30
+_DICT_BYTE_THRESHOLD = 2048
+_LIST_PREVIEW_COUNT = 5
+_DICT_KEY_PREVIEW_COUNT = 10
+
 _BINARY_FIELD_NAMES = frozenset({
     "mesh_base64", "cad_base64", "step_base64", "stl_base64",
     "mesh_data", "cad_data", "step_data", "stl_data",
@@ -67,6 +76,67 @@ def _is_binary_payload(key: str, value: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def _is_large_structured_payload(value: Any) -> bool:
+    """Detect non-binary structured payloads that should be summarized.
+
+    Triggers on:
+      - lists with more than _LIST_ITEM_THRESHOLD items (e.g. pycycle
+        list_variables returning a 200-item variable tree)
+      - dicts whose JSON-serialized form exceeds _DICT_BYTE_THRESHOLD
+        bytes (e.g. aviary get_trajectory returning a 60-point timeseries)
+    """
+    if isinstance(value, list) and len(value) > _LIST_ITEM_THRESHOLD:
+        return True
+    if isinstance(value, dict):
+        try:
+            return len(json.dumps(value, default=str)) > _DICT_BYTE_THRESHOLD
+        except (TypeError, ValueError):
+            return False
+    return False
+
+
+def _summarize_payload(value: Any, store_key: str) -> dict:
+    """Build a compact summary of a large structured payload.
+
+    The summary preserves enough information for the LLM to know what was
+    intercepted (count, preview, ref) while keeping context cost flat.
+    The full payload remains in DesignState.data_store under ``store_key``;
+    downstream tools can use ``{"ref": store_key}`` to fetch it via
+    resolve_request.
+    """
+    if isinstance(value, list):
+        return {
+            "_intercepted": True,
+            "ref": store_key,
+            "kind": "list",
+            "total_count": len(value),
+            "preview": value[:_LIST_PREVIEW_COUNT],
+            "note": (
+                f"Showing first {_LIST_PREVIEW_COUNT} of {len(value)} items. "
+                f"Pass {{\"ref\": \"{store_key}\"}} downstream to use the full list."
+            ),
+        }
+    if isinstance(value, dict):
+        try:
+            size = len(json.dumps(value, default=str))
+        except (TypeError, ValueError):
+            size = -1
+        keys = list(value.keys())
+        return {
+            "_intercepted": True,
+            "ref": store_key,
+            "kind": "dict",
+            "total_keys": len(keys),
+            "keys_preview": keys[:_DICT_KEY_PREVIEW_COUNT],
+            "size_bytes": size,
+            "note": (
+                f"Large dict with {len(keys)} keys ({size} bytes). "
+                f"Pass {{\"ref\": \"{store_key}\"}} downstream to retrieve the full payload."
+            ),
+        }
+    return value
 
 
 # ── Global state ─────────────────────────────────────────────────────────────
@@ -202,11 +272,20 @@ def _intercept_binaries(tool_name: str, data: dict) -> dict:
         return data
     result = {}
     for key, value in data.items():
+        # Binary strings (base64 meshes, CAD, raw mesh signatures)
         if isinstance(value, str) and _is_binary_payload(key, value):
             store_key = f"{tool_name}__{key}"
             _design_state.data_store[store_key] = value
-            logger.info("Stored %s (%d bytes)", store_key, len(value))
+            logger.info("Stored binary %s (%d bytes)", store_key, len(value))
             result[key] = {"ref": store_key, "size_bytes": len(value)}
+        # Large structured payloads (long lists, big nested dicts)
+        elif _is_large_structured_payload(value):
+            store_key = f"{tool_name}__{key}"
+            _design_state.data_store[store_key] = value
+            count = len(value) if isinstance(value, (list, dict)) else "?"
+            logger.info("Stored structured %s (%s items/keys)", store_key, count)
+            result[key] = _summarize_payload(value, store_key)
+        # Recurse into nested dicts that didn't trip a top-level intercept
         elif isinstance(value, dict):
             result[key] = _intercept_binaries(tool_name, value)
         else:
