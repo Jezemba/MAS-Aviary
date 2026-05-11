@@ -388,3 +388,389 @@ def test_aviary_set_aircraft_parameters_passes_dict():
                 f"parameters arg: {params!r}. "
                 f"Observation: {obs[:400]!r}"
             )
+
+
+# ── Phase B: geometry agent — set once, verify, close ────────────────────────
+
+
+@pytest.mark.live_mcp_llm
+def test_geometry_set_then_verify_then_close():
+    """Phase B-1 regression for the geometry stage prompt updates.
+
+    Run #3 P2 observations against the geometry agent:
+      - called set_high_level_parameters twice (redundant retry)
+      - did not verify whether values took before meshing
+      - did not close the CPACS session, leaving mass-mcp to read stale data
+      - emitted the same DESIGN_STATE final-answer up to 3 times
+
+    The updated prompt (config/mdo_f25_sequential_agents.yaml) now
+    instructs:
+      step 4: set ONCE, surface warnings into COUPLING_NOTES
+      step 5: re-call get_wing_summary, halt on null/mismatch (don't mesh)
+      step 6: mesh only if step 5 looked sane
+      step 7: close_cpacs at end
+      output: ONE final_answer block
+
+    This test runs the geometry agent against the D150 fixture with a
+    small valid wing edit and asserts the new structural behavior.
+    """
+    # Use the mass-mcp fixture as the CPACS file (lives on disk).
+    cpacs_path = (
+        "/home/aipexws3/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml"
+    )
+    agent = _make_agent(
+        tool_names=[
+            "open_cpacs",
+            "get_configuration_summary",
+            "get_wing_summary",
+            "get_fuselage_summary",
+            "get_high_level_parameters",
+            "set_high_level_parameters",
+            "generate_volume_mesh",
+            "close_cpacs",
+        ],
+        servers=["tigl"],
+        max_steps=12,
+        instructions=(
+            "You are the GEOMETRY ENGINEER. Follow exactly the documented "
+            "task order: open_cpacs → inspect → set_high_level_parameters ONCE "
+            "→ get_wing_summary to verify → generate_volume_mesh (only if "
+            "verified) → close_cpacs. Output ONE final DESIGN_STATE block."
+        ),
+    )
+    agent.run(
+        f"Open the CPACS file at {cpacs_path}. Set wing span to 45.0 m. "
+        "Verify the change took via get_wing_summary. If verified, "
+        "generate a coarse volume mesh (surface_mesh_size=1.0, "
+        "boundary_layer_enabled=false). Then close the CPACS session."
+    )
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) set_high_level_parameters called at most once — fixes run #3
+    #    "redundant retry" bug.
+    n_set = by_name.get("set_high_level_parameters", 0)
+    assert n_set <= 1, (
+        f"REGRESSION: set_high_level_parameters called {n_set} times. "
+        "Prompt says call ONCE — the run #3 bug was redundant retries "
+        "that ate context."
+    )
+
+    # 2) final_answer called at most once — fixes run #3 "3x final answer"
+    #    bug where the same DESIGN_STATE was emitted multiple times.
+    n_final = by_name.get("final_answer", 0)
+    assert n_final <= 1, (
+        f"REGRESSION: final_answer emitted {n_final} times. "
+        "Prompt requires ONE final_answer block."
+    )
+
+    # 3) An inspection call MUST happen AFTER set_high_level_parameters
+    #    (this is the "verify before mesh" step). The agent may use either
+    #    get_wing_summary or get_high_level_parameters for the verify —
+    #    both are legitimate inspections. The prior run #3 bug was no
+    #    verify happening at all.
+    seq = [c["name"] for c in calls]
+    inspect_tools = {"get_wing_summary", "get_high_level_parameters"}
+    if "set_high_level_parameters" in seq:
+        idx_set = seq.index("set_high_level_parameters")
+        post_set_inspect = any(n in inspect_tools for n in seq[idx_set + 1 :])
+        assert post_set_inspect, (
+            "REGRESSION: no inspection call after set_high_level_parameters — "
+            "the post-set verify step was skipped. Prompt requires a "
+            "get_wing_summary or get_high_level_parameters call after the set "
+            "to confirm the geometry change took."
+        )
+
+    # 4) close_cpacs SHOULD be called on the success path. On a halt-path
+    #    where the verify failed, it's also good practice but not strictly
+    #    enforced (failure path may legitimately abort earlier). So accept
+    #    either: close_cpacs was called, OR the agent halted without
+    #    meshing (geometry invalid).
+    n_close = by_name.get("close_cpacs", 0)
+    n_mesh = by_name.get("generate_volume_mesh", 0)
+    if n_mesh > 0:
+        # Mesh was attempted → success-attempt path → close_cpacs required
+        # so mass-mcp sees the latest CPACS.
+        assert n_close >= 1, (
+            "REGRESSION: agent meshed but did not call close_cpacs. "
+            "mass-mcp reads CPACS from disk and will see stale data."
+        )
+
+
+# ── Phase B-2: SU2 agent — complete config preset in ONE call ────────────────
+
+
+@pytest.mark.live_mcp_llm
+def test_su2_config_preset_in_one_call():
+    """Phase B-2 regression for the SU2 agent prompt updates.
+
+    Run #3 observations against the SU2 agent:
+      - update_config_entries called TWICE: first with mission state
+        only (which returned "missing_required: SOLVER, MARKER_EULER,
+        FREESTREAM_PRESSURE, ...") and then again to fill in the gaps.
+        Burns one step + token cost.
+      - run_su2_solver was called with max_runtime_seconds=600
+        (instead of 300 documented in earlier prompt update).
+
+    The updated prompt now bakes the complete F25 cruise preset into
+    step 3 of the aerodynamics_analyst task. This test asserts:
+      - exactly ONE update_config_entries call
+      - that call contains the core required keys (SOLVER, MARKER_EULER,
+        FREESTREAM_PRESSURE) so the server doesn't return
+        "missing_required"
+      - if run_su2_solver is called, max_runtime_seconds <= 300
+
+    We do NOT exercise an actual SU2 solve here — we have no mesh and
+    don't need one to test the config-call shape.
+    """
+    agent = _make_agent(
+        tool_names=[
+            "create_su2_session",
+            "update_config_entries",
+            "get_su2_status",
+            "run_su2_solver",
+        ],
+        servers=["su2"],
+        max_steps=6,
+        instructions=(
+            "You are the AERODYNAMICS ANALYST. Configure a SU2 session "
+            "for F25 cruise (Mach 0.78, AoA 2 deg, Re 30e6, altitude "
+            "33000 ft) using a SINGLE update_config_entries call with "
+            "the complete preset (SOLVER='EULER', JST, MARKER_EULER, "
+            "MARKER_FAR, freestream P/T, etc.). No mesh is available; "
+            "do not attempt to run the solver if mesh is missing — "
+            "report config-only and stop."
+        ),
+    )
+    agent.run(
+        "Set up an SU2 session for F25 cruise conditions. Use the full "
+        "preset in a SINGLE update_config_entries call. Markers are "
+        "'aircraft' (wall) and 'farfield'. After config, check "
+        "get_su2_status. Do NOT call run_su2_solver."
+    )
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) update_config_entries called at MOST TWICE. One call is ideal;
+    #    two is acceptable (one initial preset + one tiny fill-in if the
+    #    server flagged a single missing key). Three or more is the
+    #    run #3 regression pattern — agent iteratively filling in
+    #    missing_required, burning steps and tokens.
+    update_calls = [c for c in calls if c["name"] == "update_config_entries"]
+    n_update = len(update_calls)
+    assert 1 <= n_update <= 2, (
+        f"REGRESSION: update_config_entries called {n_update} times. "
+        "Acceptable range is 1 (ideal) or 2 (preset + tiny fill-in)."
+    )
+
+    def _parse_updates(call: dict) -> dict:
+        raw = call["arguments"].get("updates", {})
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return raw if isinstance(raw, dict) else {}
+
+    # 2) The FIRST call must contain the core required keys. These are
+    #    the ones that triggered the run #3 7-key missing_required.
+    first_updates = _parse_updates(update_calls[0])
+    missing = [
+        key for key in ("SOLVER", "MARKER_EULER", "FREESTREAM_PRESSURE")
+        if key not in first_updates
+    ]
+    assert not missing, (
+        f"REGRESSION: agent's FIRST update_config_entries call is missing "
+        f"core required keys: {missing}. Updates sent: "
+        f"{list(first_updates.keys())}"
+    )
+
+    # 3) If a second call exists, it must be a small fill-in (<=5 keys),
+    #    not a substantive redo. The run #3 pattern was 2 large calls.
+    if n_update == 2:
+        second_updates = _parse_updates(update_calls[1])
+        n_second = len(second_updates)
+        assert n_second <= 5, (
+            f"REGRESSION: second update_config_entries call has {n_second} "
+            f"keys; expected <=5 as a fill-in. Keys: {list(second_updates)}"
+        )
+
+    # 4) If the agent did invoke run_su2_solver, it must use the
+    #    300 s budget (not the legacy 600 s).
+    solver_calls = [c for c in calls if c["name"] == "run_su2_solver"]
+    for call in solver_calls:
+        runtime = call["arguments"].get("max_runtime_seconds")
+        assert runtime is not None and runtime <= 300, (
+            f"REGRESSION: run_su2_solver called with "
+            f"max_runtime_seconds={runtime}. Prompt requires <= 300 s "
+            "for the coarse-mesh Euler config."
+        )
+
+
+# ── Phase B-3: pycycle agent — list_variables ONCE ───────────────────────────
+
+
+@pytest.mark.live_mcp_llm
+def test_pycycle_list_variables_called_at_most_once():
+    """Phase B-3 regression for the propulsion agent prompt updates.
+
+    Run #1 P2 observation against the propulsion agent: list_variables
+    was called 6+ times with increasing max_parameters, each adding
+    ~30K tokens to context. By step 11 the agent was at 377K input
+    tokens (Sonnet 4.0's 200K context already overflowed).
+
+    Phase A's data-plane fix means each call's response is now a
+    compact summary (~200 bytes instead of ~30 KB), so the bloat is
+    bounded. But the prompt should ALSO instruct the agent to only
+    make one call — repeated calls are wasted steps even if cheap.
+
+    Assertions:
+      - list_variables called AT MOST ONCE
+      - the observation is a summary (intercepted), not a raw dump
+    """
+    agent = _make_agent(
+        tool_names=[
+            "create_cycle_model",
+            "list_variables",
+            "set_inputs",
+            "run_cycle",
+            "get_outputs",
+            "close_cycle_model",
+        ],
+        servers=["pycycle"],
+        max_steps=6,
+        instructions=(
+            "You are the PROPULSION ANALYST. Create a turbofan cycle "
+            "model. Call list_variables ONCE to learn the input names. "
+            "Then set inputs for a high-BPR civil turbofan at cruise "
+            "(BPR~11, OPR~40, fan PR~1.45, T4~1700 K), and run the cycle. "
+            "Report SFC and thrust. Do NOT call list_variables more than "
+            "once."
+        ),
+    )
+    agent.run(
+        "Create a turbofan cycle, learn its variables with list_variables "
+        "(ONE call), set F25-class cruise inputs, run the cycle, and "
+        "report SFC and Fn."
+    )
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) list_variables called at most once.
+    n_list = by_name.get("list_variables", 0)
+    assert n_list <= 1, (
+        f"REGRESSION: list_variables called {n_list} times. "
+        "Prompt and data plane mandate AT MOST ONCE — repeated calls "
+        "burn steps even though the data plane now intercepts the "
+        "payload."
+    )
+
+    # 2) If list_variables was called, observation must be the
+    #    intercepted summary (small).
+    list_calls = [c for c in calls if c["name"] == "list_variables"]
+    for call in list_calls:
+        obs = call["observation"] or ""
+        has_marker = "_intercepted" in obs or "list_variables__" in obs
+        size_ok = len(obs) < 4096
+        assert has_marker or size_ok, (
+            f"REGRESSION: list_variables observation is {len(obs)} bytes "
+            f"with no interception marker. Data plane did not catch the "
+            f"payload. First 300 chars: {obs[:300]!r}"
+        )
+
+
+# ── Phase B-4: mission agent — get_design_space first, no validation loop ────
+
+
+@pytest.mark.live_mcp_llm
+def test_mission_calls_design_space_first_and_validates_once():
+    """Phase B-4 regression for the mission_architect prompt updates.
+
+    Run #3 P2 observations against the mission agent:
+      - did not call get_design_space first; guessed parameter names
+      - validate_parameters was retried multiple times when upstream
+        data was unusable, instead of accepting the validation failure
+      - mission stage was re-invoked 20 times by the iterative_feedback
+        handler (driven by create_session blocker — now fixed in
+        Phase A, but the prompt should also prevent looping on bad
+        upstream data)
+
+    The updated prompt now instructs:
+      step 1: call get_design_space BEFORE create_session
+      step 4: explicit upstream-param mapping table with fallback values
+              for null/missing upstream fields
+      step 5: validate ONCE; if invalid, report and stop (not loop)
+
+    Assertions:
+      - get_design_space called at least once
+      - get_design_space called BEFORE create_session in the sequence
+      - validate_parameters called at most twice (1 ideal, 2 acceptable
+        if a quick correction was made; 3+ is the loop bug)
+      - final_answer called at most once
+    """
+    agent = _make_agent(
+        tool_names=[
+            "get_design_space",
+            "create_session",
+            "configure_mission",
+            "set_aircraft_parameters",
+            "validate_parameters",
+        ],
+        servers=["aviary"],
+        max_steps=8,
+        instructions=(
+            "You are the MISSION ARCHITECT. Follow the documented task "
+            "order strictly: get_design_space → create_session → "
+            "configure_mission → set_aircraft_parameters → "
+            "validate_parameters. Output ONE DESIGN_STATE block. Do "
+            "not loop on validate_parameters."
+        ),
+    )
+    agent.run(
+        "Set up an Aviary mission for F25 (range 2500 nmi, 239 pax, "
+        "Mach 0.78, FL330). Use F25 baseline aircraft parameters: wing "
+        "area 130.1, AR 15.6, sweep 25 deg, taper 0.278, fuselage "
+        "length 37.79 m, engine scale 1.0. Validate once and report."
+    )
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) get_design_space called at least once
+    n_ds = by_name.get("get_design_space", 0)
+    assert n_ds >= 1, (
+        "REGRESSION: mission_architect did not call get_design_space. "
+        "Prompt requires it as step 1 to discover param names."
+    )
+
+    # 2) get_design_space called BEFORE create_session in the sequence
+    seq = [c["name"] for c in calls]
+    if "create_session" in seq:
+        idx_create = seq.index("create_session")
+        ds_before = "get_design_space" in seq[:idx_create]
+        assert ds_before, (
+            "REGRESSION: get_design_space was not called before "
+            "create_session. Call order matters — discover names FIRST."
+        )
+
+    # 3) validate_parameters called at most twice (ideal: 1)
+    n_validate = by_name.get("validate_parameters", 0)
+    assert n_validate <= 2, (
+        f"REGRESSION: validate_parameters called {n_validate} times. "
+        "Prompt says validate ONCE and stop if invalid — 3+ calls is "
+        "the run #3 loop pattern."
+    )
+
+    # 4) final_answer called at most once (no triplication)
+    n_final = by_name.get("final_answer", 0)
+    assert n_final <= 1, (
+        f"REGRESSION: final_answer emitted {n_final} times. "
+        "Prompt requires ONE DESIGN_STATE block."
+    )

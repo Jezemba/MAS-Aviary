@@ -96,11 +96,34 @@ templates:
              inspect baseline values.
 
           4. Call set_high_level_parameters(session_id, component_uid="Wing",
-             updates={...}) to modify wing geometry as specified by the task.
-             Only change parameters explicitly requested or justified by the
-             MDO objective.
+             updates={...}) ONCE to modify wing geometry as specified by
+             the task. Only change parameters explicitly requested or
+             justified by the MDO objective.
 
-          5. Call generate_volume_mesh(session_id, component_uid="Wing",
+             — If the response includes a "warnings" field that is not
+               null/empty, copy those warnings verbatim into
+               COUPLING_NOTES in your final answer so downstream stages
+               can react. Do NOT silently swallow warnings.
+             — Do NOT call set_high_level_parameters a second time for
+               the same component. If a previous call returned warnings
+               or partial success, record them and proceed — re-calling
+               will not improve the outcome and burns context.
+
+          5. Call get_wing_summary(session_id, wing_uid="Wing") AGAIN
+             to verify the parameter values that actually took effect.
+             Compare to the values you set in step 4.
+
+             — If any of {span, sweep, root_chord, area} comes back as
+               null OR differs by more than 5% from what you set in
+               step 4, the geometry update did not stick cleanly. In
+               that case STOP the pipeline: set MESH_BASE64 to
+               "skipped — geometry invalid" and report the specific
+               null/mismatched parameters in COUPLING_NOTES. Do NOT
+               proceed to the mesh step — meshing a partial geometry
+               produces a useless mesh and wastes downstream time.
+
+          6. Only when step 5's values look sane, call
+             generate_volume_mesh(session_id, component_uid="Wing",
              surface_mesh_size=1.0, mesh_size_min=0.3, mesh_size_max=8.0,
              boundary_layer_enabled=false) to produce a 3D volume mesh
              for SU2 CFD. This tool internally exports the wing as STL,
@@ -118,18 +141,27 @@ templates:
              this will produce a 1M+ cell mesh that takes 15-30 min to
              solve.
 
+          7. Call close_cpacs(session_id) so the updated CPACS file is
+             flushed to disk. The downstream mass-mcp stage reads the
+             CPACS file directly from disk (it does not connect to the
+             TiGL MCP server), so close_cpacs MUST be called or
+             mass-mcp will see stale or partial data.
+
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
+
+          Output ONE final_answer block — do not repeat it. Format:
 
           DESIGN_STATE:
             TIGL_SESSION_ID: <uuid>
             CPACS_FILE: <path>
-            MESH_BASE64: <base64 string or "exported">
-            WING_SPAN_M: <value>
-            WING_SWEEP_DEG: <value>
-            WING_AREA_M2: <computed or estimated>
-            FUSELAGE_LENGTH_M: <value>
+            MESH_BASE64: <base64 string, "exported", or "skipped — <reason>">
+            WING_SPAN_M: <value, or null with reason in COUPLING_NOTES>
+            WING_SWEEP_DEG: <value or null>
+            WING_AREA_M2: <computed or estimated, or null>
+            FUSELAGE_LENGTH_M: <value or null>
             GEOMETRY_CHANGES: <list of parameters changed and why>
-            COUPLING_NOTES: <any warnings for downstream stages>
+            COUPLING_NOTES: <warnings from set_high_level_parameters
+                              + any param mismatches detected in step 5>
         allowed_tools:
           - open_cpacs
           - close_cpacs
@@ -196,47 +228,99 @@ templates:
 
           ── YOUR TASK ─────────────────────────────────────────────────────
 
-          1. Call create_su2_session() to create a new session. Capture session_id.
+          1. Call create_su2_session() to create a new session. The
+             mesh_path field in the response will be null at this stage —
+             that is EXPECTED. The mesh is attached separately via
+             set_mesh in step 2. Capture session_id.
 
           2. If the geometry stage provided MESH_BASE64, call
-             set_mesh(session_id, mesh_base64=<base64_data>).
-             If no mesh was provided, note this and proceed with config only.
+             set_mesh(session_id, mesh_base64=<base64_data>). If no
+             mesh was provided, note this and proceed with config only.
 
-          3. Call update_config_entries(session_id, updates={
-               "MACH_NUMBER": 0.78,
-               "AOA": 2.0,
-               "REYNOLDS_NUMBER": 30000000,
-               "KIND_TURB_MODEL": "SA",
-               "ITER": 200,
-               "CFL_NUMBER": 10.0
-             })
-             Use ITER=200 by default — that is enough for Euler on the
-             coarse mesh generate_volume_mesh produces by default and
-             keeps the solve under ~5 minutes. Only raise it for refined
-             RANS passes on dense meshes.
+          3. Call update_config_entries ONCE with the COMPLETE F25 cruise
+             preset below — do NOT split into multiple calls. The SU2
+             config requires ALL of these together; piecemeal calls
+             return "missing_required" warnings and burn a step:
 
-          4. Call get_su2_status() to check if SU2 binaries are installed.
-             If SU2 is NOT installed (installed: false), SKIP steps 5-7 and
-             use DLR-F25 reference aerodynamic values as fallback:
-               CL_CRUISE: 0.593
-               CD_CRUISE: 0.0304
-               L_OVER_D: 19.5
-               SOLVER_CONVERGED: false
-               AERO_NOTES: "SU2 binaries not available — using F25 reference values"
-             Proceed to the output format section.
+               updates = {
+                 # Mission state
+                 "MACH_NUMBER": 0.78,
+                 "AOA": 2.0,
+                 "REYNOLDS_NUMBER": 30000000,
+                 "FREESTREAM_PRESSURE": 26500.0,   # Pa at 33 kft
+                 "FREESTREAM_TEMPERATURE": 233.0,  # K at 33 kft
+                 # Solver core
+                 "SOLVER": "EULER",
+                 "KIND_TURB_MODEL": "SA",
+                 "CONV_NUM_METHOD_FLOW": "JST",
+                 "NUM_METHOD_GRAD": "GREEN_GAUSS",
+                 "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
+                 # Convergence
+                 "ITER": 200,
+                 "CFL_NUMBER": 10.0,
+                 # Boundary markers — these MUST match the names baked
+                 # into the volume mesh produced by tigl.generate_volume_mesh:
+                 #   wall   = "aircraft"
+                 #   farfield = "farfield"
+                 "MARKER_EULER": "( aircraft )",
+                 "MARKER_FAR":   "( farfield )",
+               }
+
+             Use ITER=200 by default — sufficient for Euler on the
+             coarse 50-200k cell mesh, keeps the solve under ~5 minutes.
+             Only raise it for refined RANS passes on dense meshes.
+
+             IF the server response includes "missing_required" with one
+             or more SU2 option names: include those names in a SECOND
+             update_config_entries call with sensible defaults, then
+             STOP — do not call update_config_entries a third time.
+             Three or more config calls is the run #3 regression pattern
+             we are explicitly avoiding.
+
+          4. Call get_su2_status() to confirm SU2 binaries are available.
+             If SU2 is NOT installed (installed: false), SKIP steps 5-7
+             and use DLR-F25 reference aerodynamic values as fallback:
+               CL_CRUISE: 0.593, CD_CRUISE: 0.0304, L_OVER_D: 19.5,
+               SOLVER_CONVERGED: false,
+               AERO_NOTES: "SU2 binaries not available — using F25 reference"
 
           5. Call run_su2_solver(session_id, solver="SU2_CFD",
-             max_runtime_seconds=300).
-             If this fails or returns an error, use the F25 reference values
-             above as fallback. Do NOT stop the pipeline.
+             max_runtime_seconds=300). The 300 s budget is the hard ceiling
+             for the coarse-mesh Euler solve; do NOT use 600 or higher,
+             that risks busting the per-repeat pipeline timeout. If the
+             solver errors out, fall back to F25 reference values.
 
-          6. Call list_result_files(session_id) to find the history file.
+          6. Call list_result_files(session_id) to find the history file
+             produced by SU2 (typically history.csv or similar).
 
           7. Call read_history_csv(session_id, relative_path=<history_file>)
              to extract CL, CD, and residual convergence.
 
-          8. If solver converged, call sample_surface_solution to check for
-             flow separation (Cf distribution on wing upper surface).
+             RESIDUAL INTERPRETATION (read carefully — this is easy to get
+             wrong):
+
+             SU2 reports density residual as log10(||r||). Values are
+             negative real numbers; a SMALLER (MORE NEGATIVE) value is
+             BETTER. Example: residual going from -1.5 to -5.0 means
+             the solution converged 3.5 orders of magnitude. To compute
+             the drop:
+                 RESIDUAL_DROP_ORDERS = INITIAL_RESIDUAL - FINAL_RESIDUAL
+             where INITIAL is the value at iteration 0 and FINAL is the
+             value at the last iteration. With the convention above,
+             a drop of >= 4 orders is "converged" (set SOLVER_CONVERGED
+             true). A drop of <= 1 order is "not converged" (use fallback
+             reference values).
+
+             Common mistake: reporting "residual dropped from -10 to -2,
+             which is 8 orders" — that is WRONG. -10 → -2 is the residual
+             GROWING by 8 orders (diverging). Going from -2 to -10 is the
+             8-order drop.
+
+          8. If solver converged (>=4 orders), call sample_surface_solution
+             with BOTH session_id AND marker_name='aircraft' (it is a
+             required parameter — calls without marker_name fail with a
+             pydantic 'Field required' error). Use this to check the Cf
+             distribution on the wing upper surface for separation.
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 
@@ -416,15 +500,55 @@ templates:
           1. Call create_cycle_model(cycle_type="turbofan", mode="design").
              Capture the session_id.
 
-          2. Call list_variables(session_id) to discover available input names.
+          2. Call list_variables(session_id) ONCE with max_parameters=50
+             (or whatever the schema accepts) to learn the exact input
+             names. The response is wrapped by middleware into a small
+             summary {ref, total_count, preview} — that is sufficient
+             to read variable names from the preview. Do NOT call
+             list_variables a second time with a larger limit, and do
+             NOT re-call it later in the run. The full payload is
+             stored under the returned ref if you ever need it.
 
-          3. Call set_inputs(session_id, values={...}) with appropriate BPR,
-             OPR, fan pressure ratio, and T4 for the F25 design point.
+             Each list_variables call adds ~30K tokens to your context
+             when uncached (run #1 P2 issue) — exactly one call is the
+             policy here.
 
-          4. Call run_cycle(session_id, outputs_of_interest=["SFC", "Fn", ...]).
+          3. Call set_inputs(session_id, values=...) ONCE with the
+             complete F25-class turbofan design point. Use these
+             starting values (high-BPR civil turbofan, cruise design):
 
-          5. Call get_outputs(session_id, variables=["SFC", "Fn", ...]) to
-             extract the key performance values.
+               fan.BPR:    11.0          # F25 target
+               cycle.OPR:  40.0          # high efficiency
+               fan.PR:     1.45          # propulsive-efficiency-favored
+               burner.T4:  1700.0        # K, modern materials
+
+             AND, critically, set the design-point flight condition
+             so that the cycle is sized for cruise, not sea-level
+             static. The F25 cruise point is Mach 0.78 at FL330 (33
+             000 ft). If your list_variables output exposes any of
+             these names, also set them:
+
+               fc.alt:           33000.0   # ft cruise altitude
+               fc.MN:            0.78       # cruise Mach
+               throttle:         0.85       # cruise power setting
+
+             Sizing the engine at SLS without specifying cruise gives
+             SFC ~ 0.6+ lb/hr/lbf and thrust ~5-6 klbf — the run #3
+             outputs that looked nothing like an F25 cruise engine.
+
+          4. Call run_cycle(session_id, outputs_of_interest=["SFC",
+             "Fn", "W_fuel"]).
+
+          5. Call get_outputs(session_id, variables=["SFC", "Fn", ...])
+             to extract the key performance values.
+
+             SANITY CHECK: a healthy F25-class turbofan at cruise
+             should give SFC in [0.50, 0.62] lb/hr/lbf and net thrust
+             per engine in [10000, 18000] lbf at cruise (since the
+             aircraft needs ~24-30 klbf total at cruise for L/D≈19).
+             If your numbers are outside these ranges, note in
+             PROPULSION_NOTES that the cycle wasn't sized at cruise
+             and use the F25 fallback values in step 6.
 
           IMPORTANT — STUB HANDLING: pycycle-mcp may be running as a
           deterministic stub without om-pycycle installed. If create_cycle_model
@@ -515,9 +639,17 @@ templates:
 
           ── YOUR TASK ─────────────────────────────────────────────────────
 
-          1. Call get_design_space() to confirm available parameter names.
+          1. Call get_design_space() FIRST — before create_session — to
+             confirm the exact parameter names this server accepts. The
+             response lists category → [{name, units, bounds, default}].
+             Use these names verbatim in step 4 — do not guess.
+             (Skipping this call is what made the run #3 agent pass
+             wrong names and lose a step or two re-trying.)
 
           2. Call create_session() — capture the session_id.
+             Pass NO initial_parameters: omit the kwarg entirely (or
+             {}). The server's defaults are sane and starting from
+             defaults is more reliable than partial overrides.
 
           3. Call configure_mission(session_id,
                range_nmi=2500,
@@ -528,14 +660,43 @@ templates:
              )
 
           4. Call set_aircraft_parameters(session_id, parameters={...})
-             with the F25 design variables from the task, plus any values
-             informed by upstream stages:
-             - Wing geometry from geometry stage
-             - Engine scale factor based on propulsion/structures results
-             - Fuselage dimensions from geometry stage
+             ONCE with the F25 baseline values, OVERRIDDEN by any real
+             values produced by upstream stages. Use this mapping
+             exactly — pull from each upstream agent's DESIGN_STATE:
+
+             ┌──────────────────────────────┬──────────────────────────────────┐
+             │ Aviary parameter             │ Upstream source                  │
+             ├──────────────────────────────┼──────────────────────────────────┤
+             │ Aircraft.Wing.AREA           │ geometry.WING_AREA_M2 if set,    │
+             │                              │ else 130.1                       │
+             │ Aircraft.Wing.ASPECT_RATIO   │ derived: SPAN^2/AREA;            │
+             │                              │ else 15.6                        │
+             │ Aircraft.Wing.SWEEP          │ geometry.WING_SWEEP_DEG          │
+             │                              │ else 25.0                        │
+             │ Aircraft.Wing.TAPER_RATIO    │ geometry GEOMETRY_CHANGES; else 0.278 │
+             │ Aircraft.Fuselage.LENGTH     │ geometry.FUSELAGE_LENGTH_M       │
+             │                              │ else 37.79                       │
+             │ Aircraft.Fuselage.MAX_HEIGHT │ geometry (if reported), else 4.06│
+             │ Aircraft.Fuselage.MAX_WIDTH  │ geometry (if reported), else 3.76│
+             │ Aircraft.Engine.SCALE_FACTOR │ derived from propulsion thrust   │
+             │                              │ vs. F25 reference; else 1.0      │
+             └──────────────────────────────┴──────────────────────────────────┘
+
+             Do NOT set Aircraft.Wing.SPAN — Aviary derives it from AREA
+             and ASPECT_RATIO and rejects direct overrides on this
+             parameter (the run #3 SPAN-override caused the
+             "SPAN read-only derived param" injection bug).
+
+             If upstream stages reported UPSTREAM_ERROR or fallback
+             values, USE the F25 baseline values from the "else" column
+             — do NOT propagate null/None to set_aircraft_parameters.
 
           5. Call validate_parameters(session_id) to catch bad inputs.
-             If valid: false, adjust and retry.
+             If valid: false, surface the validation messages in the
+             VALIDATION_STATUS field of your DESIGN_STATE output and
+             STOP — do not loop on validation. Re-running validate
+             three times does not fix the parameters; the upstream
+             stage that produced the bad value must be re-run instead.
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 

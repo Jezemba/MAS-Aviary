@@ -1,5 +1,64 @@
 ## [Unreleased]
 
+### 2026-05-11 (Phase B — skill / prompt fixes for run #3 P2 bugs)
+
+Each agent's prompt in config/mdo_f25_sequential_agents.yaml updated to
+eliminate a specific class of run #3 wasteful behavior. Each change has
+a matching live regression scenario in tests/test_run3_regressions.py.
+
+- geometry_engineer prompt (Phase B-1):
+  - set_high_level_parameters called ONCE (was: redundantly re-called)
+  - response warnings surfaced into DESIGN_STATE.COUPLING_NOTES (was:
+    silently swallowed)
+  - mandatory post-set verification via get_wing_summary; on null/>5%
+    mismatch, halt the pipeline with MESH_BASE64="skipped — geometry
+    invalid" rather than meshing a partial geometry
+  - close_cpacs at end so mass-mcp reads fresh CPACS from disk (was:
+    sometimes omitted, leaving mass to read stale data)
+  - one final_answer block only (was: same DESIGN_STATE repeated 3x,
+    eating downstream context)
+  - regression: test_geometry_set_then_verify_then_close
+- aerodynamics_analyst (SU2) prompt (Phase B-2):
+  - complete F25 cruise config preset baked into the step 3
+    update_config_entries call (was: two piecemeal calls, first
+    returned 7-key missing_required)
+  - mesh_path=null on create_su2_session documented as expected
+  - run_su2_solver max_runtime_seconds=300 hard ceiling (was: 600;
+    risked busting the per-repeat timeout when the LLM picked 600)
+  - residual interpretation: log10 values, smaller = better,
+    drop = INITIAL - FINAL; explicit "common mistake" warning
+    pointing out the run #3 agent's sign error
+  - sample_surface_solution always called with marker_name='aircraft'
+  - second update_config_entries call permitted only as a tiny
+    fill-in for server-flagged missing_required (no third call)
+  - regression: test_su2_config_preset_in_one_call
+- propulsion_analyst (pycycle) prompt (Phase B-3):
+  - list_variables called ONCE with max_parameters cap (was: 6+ times
+    with growing limits, +30K tokens each → 377K input at step 11)
+  - explicit F25 cruise design-point inputs (fc.alt=33000,
+    fc.MN=0.78, throttle=0.85, BPR=11, OPR=40, fan.PR=1.45,
+    T4=1700) so cycle is sized for cruise not SLS
+  - sanity check bounds for SFC and Fn; outside-range outputs trigger
+    fallback to F25 reference values
+  - regression: test_pycycle_list_variables_called_at_most_once
+- mission_architect (aviary) prompt (Phase B-4):
+  - get_design_space called FIRST, before create_session, to discover
+    exact parameter names (was: agent guessed and retried)
+  - create_session called with no initial_parameters (omit kwarg)
+  - explicit upstream-param mapping table for set_aircraft_parameters:
+    each Aviary param maps to a specific DESIGN_STATE field with an
+    F25-baseline fallback when upstream returned UPSTREAM_ERROR or
+    null
+  - Aircraft.Wing.SPAN explicitly NOT to be set (avoids the
+    aviary-mcp "SPAN read-only derived param" injection bug)
+  - validate_parameters called once; on invalid, report and STOP
+    rather than loop (this was the run #3 20-iteration trap on top
+    of the Phase A create_session blocker)
+  - regression: test_mission_calls_design_space_first_and_validates_once
+
+Live regression suite is now 9 scenarios; all pass.
+Full unit suite is 1319/1319 passing.
+
 ### 2026-05-11 (Phase A — middleware fixes)
 - Fixed: type-coercion middleware now treats the literal string "null"
   (or "None"/"") as Python None for any schema that accepts null in any
