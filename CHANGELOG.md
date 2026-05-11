@@ -1,5 +1,70 @@
 ## [Unreleased]
 
+### 2026-05-11
+- Tested: ran mdo_f25_sequential_iterative_feedback with the coarse mesh +
+  ITER=200 + 60-min timeout. Wandb run j0r9i0w3 (failed connect, tigl
+  stale sessions from previous SIGKILL) then run #3 (logs/stat_results/
+  1778517452, no wandb finalize). 50 steps reached mission_architect's
+  2nd iteration before manual stop. Mesh fix end-to-end confirmed:
+  - generate_volume_mesh produced a 62,569-node / 351,391-element volume
+    mesh in coarse-fidelity mode
+  - SU2 actually ran 200 Euler iterations in 120s (no DistributeColoring
+    error, no immediate solver crash) — the TiGL→SU2 wire is fully
+    operational
+- Observed bugs to fix before next rerun:
+  P0 (blocking):
+  - aviary create_session called with initial_parameters="null" (string)
+    instead of None. Same anyOf[dict, null] type-coercion gap that hits
+    multiple aviary tools. mission_architect re-invoked indefinitely
+    (was running its 20th iteration when manually stopped) because
+    every create_session attempt fails. Pipeline never reaches
+    simulation_executor.
+  P1 (real bugs):
+  - sample_surface_solution requires marker_name; aero agent omits it.
+    On retry, server silently returns a different marker_name than
+    requested (asked "mesh_marker_wall", got "aircraft").
+  - numpy truth-value ambiguity ValueError fires inside pycycle
+    get_cycle_summary AND su2 update_config_entries (same bug, two
+    surfaces). Looks like an array-vs-scalar comparison server-side.
+  - mass-mcp OAS solver NaN cascade ('array must not contain infs or
+    NaNs' in solve_matrix). mass-mcp falls back to flops_only; not
+    blocking but indicates upstream geometry passed in is degenerate.
+  - mass-mcp logs "TIGL unavailable, using xpath fallback extraction.
+    Missing optional parameters (n_engines, engine_bpr, cruise_mach,
+    design_range_m, n_passengers)". TiGL session/result not flowing to
+    mass — only the CPACS file path is. Need to verify whether mass
+    actually needs the TiGL session or whether close_cpacs writes
+    everything mass needs into the CPACS file.
+  P2 (skill / prompt quality):
+  - geometry agent: get_high_level_parameters returns empty for the D150
+    fixture; agent proceeds without acknowledging the empties
+  - geometry agent: set_high_level_parameters returns warnings that the
+    agent ignores
+  - geometry agent: re-runs set_high_level_parameters after an initial
+    set without verifying it took
+  - geometry agent: emits the same DESIGN_STATE final-answer body up to
+    3 times in succession (final_answer call + same content in
+    Observations + summary), eating ~4-6KB tokens each repeat
+  - su2 agent: update_config_entries called step-by-step rather than
+    with a complete preset; could be one call with the F25 cruise preset
+  - su2 agent: max_runtime_seconds=600 used despite skill update to 300
+    (LLM didn't pick up the new default reliably; consider hard-cap)
+  - su2 agent: hardcoded mesh_path=null on create_su2_session is fine
+    (mesh is attached later via set_mesh) but worth documenting
+  - pycycle agent: list_variables dumps the entire variable tree into
+    context multiple times — same +30K-token-per-call bloat as run #1
+  - pycycle agent: design-point inputs lead to unrealistic engine
+    (SFC=0.652 lb/hr/lbf high, thrust=5900 lbf low — F25 needs ~15k
+    lbf/engine at cruise)
+  - mission_architect: aircraft parameter set from upstream stages
+    unclear; need to verify TiGL geometry params (span, sweep, area,
+    etc.) and engine cycle params actually flow into aviary
+    set_aircraft_parameters
+  - aviary get_trajectory dumps a 60-point numeric array (~6KB JSON)
+    into LLM context — same dataplane gap as run #1
+  - aerodynamics_analyst's reported RESIDUAL_DROP_ORDERS arithmetic is
+    wrong direction (residual rose, agent reported it as a drop)
+
 ### 2026-05-06
 - Changed: Coarser default fidelity for sequential mdo_f25 SU2 stage to fit
   the per-repeat timeout. generate_volume_mesh call in geometry_engineer
