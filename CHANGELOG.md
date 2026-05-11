@@ -1,5 +1,58 @@
 ## [Unreleased]
 
+### 2026-05-11 (Run #6 — first complete pipeline end-to-end)
+
+After the Phase E unit fix landed in aviary-mcp (ddbc7e1), run #6 of
+mdo_f25_sequential_iterative_feedback completed cleanly for the first
+time across the 6-run debug series. All 7 stages executed, the
+trajectory optimizer converged, and the framework produced real fuel
+burn and gross-mass numbers.
+
+Result vs DLR-F25 reference:
+  FUEL_BURNED_KG:  12747.47   (F25 ref 12100 → +5.3 %)
+  GROSS_MASS_KG:   73779.45   (F25 ref 85700 → -13.9 %)
+  CONVERGED:       true
+  EXIT_CODE:       0
+  SLSQP iterations: 13
+  CONSTRAINTS_FAILED: none (range, pax, mach, altitude all met)
+
+Stage tally (clean run):
+  geometry_engineer    : 1 invocation, 62569-node / 351391-element mesh
+  aerodynamics_analyst : 1 invocation, SU2 exit_code 0 (first time);
+                         agent used F25 fallback CL/CD because residual
+                         drop < 4 orders at ITER=200
+  structures_analyst   : 1 invocation, FLOPS fallback (OAS NaN persists)
+  propulsion_analyst   : 1 invocation, CYCLE_CONVERGED true (first time)
+                         BPR=11, OPR=30.5, SFC=0.646 lb/hr/lbf
+  mission_architect    : 3 invocations, validate_parameters VALID
+                         (first time — no AVIARY_SETUP_ERROR)
+  simulation_executor  : 1 invocation, run_simulation converged
+                         (first time — no looping)
+  mdo_integrator       : 1 invocation, result synthesized
+
+Artifacts:
+  wandb: https://wandb.ai/jessicae/mas-aviary-stat/runs/t4kdv9om
+  logs:  logs/stat_results/1778527085/
+
+The 5.3-% fuel-burn delta from F25 is a reasonable A320-baseline-doing-
+F25-mission gap. The MTOM is 14 % lighter because Aviary's bench
+aircraft is fundamentally lighter than the F25; closing that gap
+requires a custom F25 aircraft CSV (Phase F, separate work).
+
+Outstanding (does not block — pipeline produces valid results today):
+- Phase D's AR cap (11.0) and SCALE_FACTOR default (1.3) in
+  mission_architect were precautionary against the AR-cliff theory
+  that turned out to be wrong (it was units). Reverting them to
+  documented F25-target values (AR=15.6, SCALE_FACTOR=1.0) is now
+  safe and would let the agent target F25 geometry. Deferred to a
+  follow-up commit.
+- SU2 still falls back to F25 reference CL/CD because ITER=200 isn't
+  enough to drop residuals 4 orders on this mesh. A higher ITER
+  (~500-1000) would produce real CFD numbers but doubles SU2 stage
+  runtime.
+- mass-mcp OAS NaN persists; FLOPS fallback works. Not on the
+  critical path.
+
 ### 2026-05-11 (Phase E — ROOT CAUSE: aviary-mcp unit bug)
 
 The AVIARY_SETUP_ERROR ("Newton solver residuals contain inf/NaN after
