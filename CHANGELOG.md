@@ -45,12 +45,19 @@
   - geometry agent: emits the same DESIGN_STATE final-answer body up to
     3 times in succession (final_answer call + same content in
     Observations + summary), eating ~4-6KB tokens each repeat
+  - geometry agent: doesn't acknowledge that some parameters are null
+    before generating the mesh — risks meshing on a partial parameter
+    set, hides upstream data-quality issues
   - su2 agent: update_config_entries called step-by-step rather than
     with a complete preset; could be one call with the F25 cruise preset
   - su2 agent: max_runtime_seconds=600 used despite skill update to 300
     (LLM didn't pick up the new default reliably; consider hard-cap)
   - su2 agent: hardcoded mesh_path=null on create_su2_session is fine
     (mesh is attached later via set_mesh) but worth documenting
+  - su2 agent: tool responses are unstructured prose with file paths
+    embedded — LLM has to grep paths from text rather than receiving a
+    typed schema. Workable but lossy; consider a structured response
+    envelope (status, working_dir, log_tail, marker_names) for SU2 tools.
   - pycycle agent: list_variables dumps the entire variable tree into
     context multiple times — same +30K-token-per-call bloat as run #1
   - pycycle agent: design-point inputs lead to unrealistic engine
@@ -60,6 +67,12 @@
     unclear; need to verify TiGL geometry params (span, sweep, area,
     etc.) and engine cycle params actually flow into aviary
     set_aircraft_parameters
+  - mission_architect: aviary lacks a structured "design space" query
+    (analogous to pycycle list_variables) that the LLM can call to
+    discover what aircraft parameters are settable, with units and
+    bounds. get_design_space exists but isn't as discoverable. Consider
+    a lightweight parameters-info surface so the mission agent doesn't
+    have to remember constants from the prompt.
   - aviary get_trajectory dumps a 60-point numeric array (~6KB JSON)
     into LLM context — same dataplane gap as run #1
   - aerodynamics_analyst's reported RESIDUAL_DROP_ORDERS arithmetic is
