@@ -8,9 +8,15 @@
     - anyOf is present (mcpadapt may have stripped the null option)
     - nullable: true is set
     - schema has explicit "default": null
-  Resolves the run #3 P0 blocker where aviary create_session was called
-  with initial_parameters="null" (string) and rejected with
-  "Input should be a valid dictionary [type=dict_type]".
+- Fixed (uncovered by the live regression test): coercing "null" → None
+  is not enough — aviary's create_session pydantic wrapper rejects
+  explicit None even when its own schema says default: null. The
+  middleware now DROPS the kwarg entirely when the coerced value is
+  None AND the schema declares default: null, letting the server's
+  native default kick in. End-to-end create_session now succeeds.
+  Resolves the run #3 P0 blocker where mission_architect was stuck in
+  a 20-iteration loop because every create_session attempt was
+  rejected with "Input should be a valid dictionary [type=dict_type]".
 - Added: data-plane middleware now intercepts large structured payloads
   in addition to base64 binary. Triggers on:
     - lists with > 30 items (e.g. pycycle list_variables 200-item tree)
@@ -22,10 +28,21 @@
   the full payload via resolve_request. Eliminates the +30K-tokens-
   per-list_variables-call growth that hit 377K input tokens by step 11
   in run #1.
-- Tests: tests/test_type_coercion.py (18 tests) and
-  tests/test_data_plane.py (13 tests) cover the new coercion paths and
-  the large-payload interception against pycycle list_variables and
-  aviary get_trajectory shapes. Full suite 1315/1315 passing.
+- Tests: tests/test_type_coercion.py (22 tests, +4 for the drop-key
+  fix) and tests/test_data_plane.py (13 tests) cover the coercion paths
+  and large-payload interception against pycycle list_variables and
+  aviary get_trajectory shapes. Full unit suite 1319/1319 passing.
+- Added: live regression harness at tests/test_run3_regressions.py and
+  the live_mcp_llm pytest marker. Each test spins up a minimal
+  smolagents ToolCallingAgent with Claude Sonnet 4 via LiteLLM and ONLY
+  the tools needed to reproduce one run #3 bug. End-to-end against the
+  live MCPs. Run on demand: pytest -m live_mcp_llm -v. Five scenarios
+  cover: create_session pydantic blocker, pycycle list_variables
+  context bloat, aviary get_trajectory bloat, sample_surface_solution
+  marker recovery, set_aircraft_parameters dict handling. All 5 pass
+  on the Phase A + drop-key middleware. This harness was responsible
+  for catching the "coerce-to-None isn't enough, must drop key" gap
+  that the unit tests alone missed.
 
 ### 2026-05-11
 - Tested: ran mdo_f25_sequential_iterative_feedback with the coarse mesh +

@@ -46,6 +46,7 @@ markers = [
     "slow: marks tests requiring GPU or real MCP (deselect with '-m not slow')",
     "gpu: marks tests requiring CUDA GPU",
     "mcp: marks tests requiring running MCP server",
+    "live_mcp_llm: regression scenarios using live MCP + live LLM (Anthropic API). Run on demand with -m live_mcp_llm",
 ]
 
 [tool.ruff]

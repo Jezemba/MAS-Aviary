@@ -108,12 +108,24 @@ def _coerce_value(value: Any, schema: dict) -> Any:
 def coerce_tool_arguments(tool: Tool, kwargs: dict) -> dict:
     """Coerce tool arguments based on the tool's input schema.
 
+    Two-stage behavior:
+
+    1. Each value is type-coerced via ``_coerce_value`` (string "null" →
+       None, JSON-string → dict, etc.).
+    2. If the coerced value is None AND the schema declares
+       ``"default": null`` (i.e. omission is the canonical null), the
+       key is OMITTED from the final kwargs. This matters because some
+       servers (e.g. aviary create_session) build their tool wrapper
+       with strict pydantic and reject explicit None even when the
+       schema says default is null — they only accept the kwarg being
+       absent. Dropping the key lets the server's own default kick in.
+
     Args:
         tool: The smolagents Tool with .inputs schema.
         kwargs: The raw arguments from the LLM.
 
     Returns:
-        Coerced arguments dict.
+        Coerced arguments dict (may have fewer keys than input).
     """
     inputs = getattr(tool, "inputs", None)
     if not inputs:
@@ -131,6 +143,19 @@ def coerce_tool_arguments(tool: Tool, kwargs: dict) -> dict:
                     value, type(value).__name__,
                     new_value, type(new_value).__name__,
                 )
+            # Drop None-valued kwargs whose schema marks them optional via
+            # explicit null default. This works around servers that reject
+            # explicit None for "optional" fields (run #3 P0 case).
+            if (
+                new_value is None
+                and "default" in schema
+                and schema.get("default") is None
+            ):
+                logger.debug(
+                    "Dropping %s.%s — coerced to None and schema default is null",
+                    tool.name, key,
+                )
+                continue
             coerced[key] = new_value
         else:
             coerced[key] = value

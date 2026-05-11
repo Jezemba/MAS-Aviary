@@ -101,8 +101,10 @@ class TestCoerceToolArguments:
         """End-to-end shape of the create_session blocker from run #3.
 
         Schema exactly as aviary-mcp exposes it (no anyOf, just
-        default=null). LLM passes 'null' string. Coercer must rewrite
-        to None.
+        default=null). LLM passes 'null' string. The coerced None is
+        then DROPPED entirely so the server uses its own default
+        (some servers reject explicit None even when schema says
+        default: null — discovered via the live regression test).
         """
         tool = _FakeTool(
             "create_session",
@@ -115,7 +117,7 @@ class TestCoerceToolArguments:
             },
         )
         out = coerce_tool_arguments(tool, {"initial_parameters": "null"})
-        assert out == {"initial_parameters": None}
+        assert out == {}  # key dropped
 
     def test_mixed_args_only_offending_coerced(self):
         tool = _FakeTool(
@@ -129,10 +131,80 @@ class TestCoerceToolArguments:
             tool,
             {"session_id": "abc-123", "parameters": "null"},
         )
-        assert out == {"session_id": "abc-123", "parameters": None}
+        # parameters dropped (coerced to None + has default=null);
+        # session_id retained as-is
+        assert out == {"session_id": "abc-123"}
 
     def test_missing_inputs_passthrough(self):
         """If a tool has no inputs schema, args pass through unchanged."""
         tool = _FakeTool("foo", inputs={})
         out = coerce_tool_arguments(tool, {"x": "null"})
         assert out == {"x": "null"}
+
+    def test_null_with_default_null_drops_key(self):
+        """When the schema marks a field optional with default: null AND
+        the coerced value is None, the kwarg is dropped entirely.
+
+        This is the fix for the second-half of the run #3 P0 bug: aviary's
+        create_session rejects explicit None even though the schema has
+        default: null. Dropping the key lets the server's native default
+        kick in (which is exactly what the LLM intended when it tried to
+        say "no initial_parameters").
+        """
+        tool = _FakeTool(
+            "create_session",
+            inputs={
+                "initial_parameters": {
+                    "additionalProperties": True,
+                    "default": None,
+                    "type": "object",
+                }
+            },
+        )
+        out = coerce_tool_arguments(tool, {"initial_parameters": "null"})
+        assert out == {}  # key dropped entirely
+
+    def test_none_value_with_default_null_drops_key(self):
+        """Direct None (not just 'null' string) also drops the key."""
+        tool = _FakeTool(
+            "create_session",
+            inputs={
+                "initial_parameters": {
+                    "default": None,
+                    "type": "object",
+                }
+            },
+        )
+        out = coerce_tool_arguments(tool, {"initial_parameters": None})
+        assert out == {}
+
+    def test_null_without_default_keeps_key_as_none(self):
+        """If the field has no default: null (e.g. is required), keep as None.
+
+        This way the server's own validator can fire — we don't want to
+        silently swallow what is genuinely a missing-required-arg case.
+        """
+        tool = _FakeTool(
+            "foo",
+            inputs={
+                "x": {
+                    "anyOf": [{"type": "object"}, {"type": "null"}],
+                    # no "default" key at all
+                }
+            },
+        )
+        out = coerce_tool_arguments(tool, {"x": "null"})
+        assert out == {"x": None}
+
+    def test_dict_value_passes_through_when_default_null(self):
+        """If the LLM provided a real dict for a default-null field, keep it."""
+        tool = _FakeTool(
+            "create_session",
+            inputs={
+                "initial_parameters": {"default": None, "type": "object"}
+            },
+        )
+        out = coerce_tool_arguments(
+            tool, {"initial_parameters": {"Aircraft.Wing.AREA": 130.0}}
+        )
+        assert out == {"initial_parameters": {"Aircraft.Wing.AREA": 130.0}}
