@@ -794,3 +794,87 @@ def test_mission_calls_design_space_first_and_validates_once():
         f"REGRESSION: final_answer emitted {n_final} times. "
         "Prompt requires ONE DESIGN_STATE block."
     )
+
+
+# ── Phase D: simulator does not loop on AVIARY_SETUP_ERROR ───────────────────
+
+
+@pytest.mark.live_mcp_llm
+def test_simulator_does_not_loop_on_aviary_setup_error():
+    """Phase D regression for the simulation_executor prompt update.
+
+    Run #4 observation: when run_simulation returned AVIARY_SETUP_ERROR
+    (Aviary's Newton solver got inf/NaN from out-of-range AR), the
+    simulator agent looped — calling run_simulation again, then
+    get_results (which returned NO_RESULTS), then a third time. Each
+    iteration produced the same permanent failure but the agent kept
+    retrying.
+
+    The updated prompt teaches the agent that AVIARY_SETUP_ERROR is a
+    PERMANENT failure for the current parameter set: report once and
+    stop, do not call run_simulation, get_results, or get_trajectory
+    again on this session.
+
+    Forcing the error condition: build a fresh aviary session with
+    AR=15.6 (above the reliable_range cliff for the default aircraft).
+    """
+    agent = _make_agent(
+        tool_names=[
+            "create_session",
+            "configure_mission",
+            "set_aircraft_parameters",
+            "run_simulation",
+            "get_results",
+            "get_trajectory",
+        ],
+        servers=["aviary"],
+        max_steps=8,
+        instructions=(
+            "You are the SIMULATION EXECUTOR. Set up an Aviary session "
+            "with Aircraft.Wing.ASPECT_RATIO=15.6 (a known F25-target "
+            "value that Aviary's default aircraft tables NaN on), "
+            "configure a basic mission, then attempt run_simulation "
+            "ONCE. If the response shows AVIARY_SETUP_ERROR, report "
+            "EXIT_CODE: AVIARY_SETUP_ERROR and STOP — do NOT call "
+            "run_simulation, get_results, or get_trajectory again."
+        ),
+    )
+    agent.run(
+        "Create an Aviary session, set Aircraft.Wing.ASPECT_RATIO to "
+        "15.6 (other params default), configure_mission(range=1000nmi, "
+        "pax=150, Mach=0.78, alt=33000), then call run_simulation. "
+        "If you get AVIARY_SETUP_ERROR, report it once and stop."
+    )
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) run_simulation called at most ONCE (the new explicit instruction)
+    n_run = by_name.get("run_simulation", 0)
+    assert n_run <= 1, (
+        f"REGRESSION: run_simulation called {n_run} times. Phase D "
+        "prompt says: on AVIARY_SETUP_ERROR, ONE attempt is enough; "
+        "retrying produces the same permanent failure."
+    )
+
+    # 2) get_results / get_trajectory not called after an
+    #    AVIARY_SETUP_ERROR observation (they'd just return NO_RESULTS)
+    saw_setup_error = any(
+        "AVIARY_SETUP_ERROR" in (c["observation"] or "") for c in calls
+    )
+    if saw_setup_error:
+        n_results = by_name.get("get_results", 0)
+        n_traj = by_name.get("get_trajectory", 0)
+        assert n_results + n_traj <= 1, (
+            "REGRESSION: agent called get_results/get_trajectory "
+            f"{n_results + n_traj} times after seeing "
+            "AVIARY_SETUP_ERROR. Both return NO_RESULTS in this state; "
+            "the agent must skip them and report."
+        )
+
+    # 3) final_answer once
+    n_final = by_name.get("final_answer", 0)
+    assert n_final <= 1, (
+        f"REGRESSION: final_answer emitted {n_final} times."
+    )

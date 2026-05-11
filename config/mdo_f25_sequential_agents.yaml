@@ -632,8 +632,20 @@ templates:
 
           set_aircraft_parameters(session_id, parameters={...}):
 
-          Aircraft.Wing.ASPECT_RATIO   F25: 15.6 | Range: 7–14 | unitless
-            NOTE: F25 baseline exceeds recommended range upper bound.
+          Aircraft.Wing.ASPECT_RATIO   F25 target: 15.6 | Advisory: [7, 17] |
+                                       RELIABLE: [9.0, 11.5] | unitless
+            CRITICAL — Aviary's default aircraft baseline
+            (aircraft_for_bench_FwFm.csv, A320-class) has its FLOPS aero
+            buildup and engine deck tabulated for AR ~= 9-12. AR > ~12
+            causes the climb-phase Newton solver to evaluate residuals
+            out of the table range and return inf/NaN — this is the
+            AVIARY_SETUP_ERROR from run #4.
+            DEFAULT YOU SHOULD USE: 11.0 (reliable, gives valid solves).
+            Setting 15.6 to "match F25 exactly" will produce
+            AVIARY_SETUP_ERROR. F25-class fidelity requires a custom
+            aircraft CSV (not currently shipped). Note the
+            DESIGN_INTENT.aspect_ratio from geometry stage if it asked
+            for higher, but do not propagate values above 11.5.
 
           Aircraft.Wing.AREA           F25: 130.1 m² | Range: 100–160 m²
             Primary wing-loading driver. Affects TOFL, Vref, fuel burn.
@@ -648,9 +660,18 @@ templates:
 
           Aircraft.Fuselage.MAX_WIDTH  F25: 3.76 m | Range: 3.0–5.5 m
 
-          Aircraft.Engine.SCALE_FACTOR F25: 1.0 | Range: 0.8–1.5
-            Scales thrust, mass, and dimensions linearly.
-            Lower saves weight but risks TOFL/climb constraint violation.
+          Aircraft.Engine.SCALE_FACTOR F25 default: 1.3 | Range: 0.5–1.5
+            Scales thrust, mass, and dimensions linearly off the
+            A320-class baseline (~24,000 lbf SLS per engine at 1.0).
+            DEFAULT YOU SHOULD USE: 1.3. The F25-target mission (2500
+            nmi, 200 pax, Mach 0.78 at FL330) is heavier than the
+            A320 baseline (Aviary default MTOM ~67t vs F25 ~85t).
+            SCALE_FACTOR=1.0 underpowers the climb phase and risks
+            convergence failure. Pycycle's design point informs the
+            intent, but propagate 1.3 unless propulsion stage produced
+            specific thrust-vs-weight justification for a different
+            value. Lower saves weight but risks TOFL/climb constraint
+            violation.
 
           COUPLING: AR = span²/area. Only set ONE of {AREA, SPAN, AR} per call.
 
@@ -686,8 +707,10 @@ templates:
              ├──────────────────────────────┼──────────────────────────────────┤
              │ Aircraft.Wing.AREA           │ geometry.WING_AREA_M2 if set,    │
              │                              │ else 130.1                       │
-             │ Aircraft.Wing.ASPECT_RATIO   │ derived: SPAN^2/AREA;            │
-             │                              │ else 15.6                        │
+             │ Aircraft.Wing.ASPECT_RATIO   │ CAP at 11.5 regardless of intent │
+             │                              │ (Aviary default-aircraft         │
+             │                              │ feasibility cliff). Use 11.0     │
+             │                              │ as a safe default.               │
              │ Aircraft.Wing.SWEEP          │ geometry.WING_SWEEP_DEG          │
              │                              │ else 25.0                        │
              │ Aircraft.Wing.TAPER_RATIO    │ geometry GEOMETRY_CHANGES; else 0.278 │
@@ -696,7 +719,9 @@ templates:
              │ Aircraft.Fuselage.MAX_HEIGHT │ geometry (if reported), else 4.06│
              │ Aircraft.Fuselage.MAX_WIDTH  │ geometry (if reported), else 3.76│
              │ Aircraft.Engine.SCALE_FACTOR │ derived from propulsion thrust   │
-             │                              │ vs. F25 reference; else 1.0      │
+             │                              │ vs. F25 reference; else 1.3      │
+             │                              │ (1.0 underpowers F25-class       │
+             │                              │ mass, causes climb NaN)          │
              └──────────────────────────────┴──────────────────────────────────┘
 
              Do NOT set Aircraft.Wing.SPAN — Aviary derives it from AREA
@@ -769,7 +794,7 @@ templates:
 
           ── CONVERGENCE HANDLING ──────────────────────────────────────────
 
-          If converged = false:
+          If converged = false (typical optimizer failure):
             Report exit_code and flag: "SIMULATION DID NOT CONVERGE"
             Likely causes:
             - Engine scale factor too low → insufficient thrust for climb
@@ -777,14 +802,35 @@ templates:
             - Mission too demanding for the aircraft configuration
             Do NOT present unconverged numbers as reliable.
 
+          If error_code = "AVIARY_SETUP_ERROR" (NaN/inf in Newton solver):
+            This is a PERMANENT failure for the current parameter set, not a
+            recoverable run failure. It means Aviary's aero/engine tables
+            produced inf/NaN before the optimizer even started — usually
+            because Aircraft.Wing.ASPECT_RATIO is outside the
+            reliable_range [9.0, 11.5] of the default A320-class bench
+            file. Retrying run_simulation will produce the same error.
+
+            On this error, report EXIT_CODE: AVIARY_SETUP_ERROR with
+            FUEL_BURNED_KG=null and a clear message that the mission
+            architect's parameter set is infeasible for the Aviary
+            baseline; do NOT loop on run_simulation, get_results, or
+            get_trajectory — each will just re-fail or return NO_RESULTS.
+            One run_simulation attempt is enough to surface this.
+
           ── YOUR TASK ─────────────────────────────────────────────────────
 
           1. Get the SESSION_ID from the mission architect's DESIGN_STATE.
 
-          2. Call run_simulation(session_id=<uuid>, timeout_seconds=300).
-             This typically takes 40–60 seconds for 200 iterations.
+          2. Call run_simulation(session_id=<uuid>, timeout_seconds=300)
+             ONCE. This typically takes 40–60 seconds for 200 iterations.
 
-          3. Call get_results(session_id=<uuid>) to extract all output variables.
+             If the response is "AVIARY_SETUP_ERROR", go straight to
+             step 5 with EXIT_CODE: AVIARY_SETUP_ERROR and stop. Do NOT
+             call get_results or get_trajectory — they will return
+             NO_RESULTS and burn a step.
+
+          3. On a successful (or just non-AVIARY_SETUP_ERROR) run, call
+             get_results(session_id=<uuid>) to extract all output variables.
 
           4. Call get_trajectory(session_id=<uuid>) to get timeseries data
              (altitude, Mach, mass, throttle, drag vs. time for each phase).

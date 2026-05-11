@@ -1,5 +1,66 @@
 ## [Unreleased]
 
+### 2026-05-11 (Phase D — AR feasibility cliff + simulator no-loop on setup error)
+
+Run #4 reached simulation_executor for the first time, then hit a new
+failure mode: `run_simulation` returned `AVIARY_SETUP_ERROR` with the
+message "Solver 'NL: Newton' on system 'traj.phases.climb.rhs_all.
+solver_sub': residuals contain 'inf' or 'NaN' after 0 iterations". The
+agent recovered partially (lowered Aircraft.Wing.ASPECT_RATIO from
+15.6 → 14 → 13.5) but each retry still NaN'd, and the simulator agent
+then looped on run_simulation/get_results in successive
+iterative_feedback iterations.
+
+Diagnosis: aviary-mcp's default aircraft baseline
+(aircraft_for_bench_FwFm.csv, A320-class) has its FLOPS aero buildup
+and engine deck tabulated for AR ~= 9-12. Setting AR > ~12 causes the
+climb-phase Newton solver to evaluate residuals out of the table range
+and produce inf/NaN. The previous advisory bounds [7.0, 14.0] both
+rejected legitimate high-AR targets (DLR-F25 AR=15.6) and hid the real
+feasibility cliff — agent obeyed the bound (set AR=14.0) and still
+NaN'd because the cliff is at ~12, not 14.
+
+aviary-mcp fix (separate PR on Jezemba/aviary-mcp, branch
+fix/ar-reliable-range):
+- AR advisory bounds widened to [7.0, 17.0] (covers F25 + modern
+  high-AR transports as advisory targets)
+- Added explicit "reliable_range": [9.0, 11.5] field documenting the
+  cleanly-interpolating window for the default aircraft
+- set_aircraft_parameters emits a SECOND warning ("outside
+  reliable_range") when the value is in advisory bounds but outside
+  the reliable window, so agents see the real cliff before
+  run_simulation
+
+MAS-Aviary prompt fixes:
+- mission_architect: default Aircraft.Wing.ASPECT_RATIO = 11.0 (down
+  from F25-target 15.6). F25 noted as aspirational; full fidelity
+  requires a custom aircraft CSV (filed as future work). Upstream
+  mapping table caps AR at 11.5 regardless of geometry intent.
+- mission_architect: default Aircraft.Engine.SCALE_FACTOR = 1.3 (up
+  from 1.0). The F25-target mission mass (~85t) is heavier than
+  Aviary's baseline (~67t); SCALE_FACTOR=1.0 underpowers the climb
+  phase.
+- simulation_executor: explicit handling of AVIARY_SETUP_ERROR as a
+  PERMANENT failure for the current parameter set. Report once, do
+  NOT call run_simulation/get_results/get_trajectory again — those
+  return NO_RESULTS in this state and burn steps.
+
+New live regression scenario:
+- test_simulator_does_not_loop_on_aviary_setup_error
+  Forces AR=15.6 to trigger the cliff, asserts run_simulation called
+  at most once and get_results/get_trajectory skipped on
+  AVIARY_SETUP_ERROR. PASS on the updated prompt.
+
+All 10 live regressions pass.
+
+The deeper finding: this framework as-shipped is doing "A320-class MDO
+with F25 mission targets" — the trajectory optimizer will find an
+A320-shape optimum because the aero/engine tables are A320-shape. To
+genuinely optimize an F25-shape aircraft requires a custom F25
+aircraft CSV in aviary-mcp (calibrated aero/engine tables for AR > 12;
+~half-day work; could derive from the Abu Zurayk paper in .llm/). That
+is "Phase E" and out of current scope.
+
 ### 2026-05-11 (Phase C — investigations and follow-on prompt corrections)
 
 Investigated the run #3 D150-fixture symptoms ("get_high_level_parameters
