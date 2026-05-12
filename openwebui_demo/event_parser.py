@@ -43,6 +43,10 @@ EventKind = Literal[
     "agent_end",        # implicit when the next agent_start fires
     "run_done",         # "DONE: 1 completed, 0 failed"
     "error",            # explicit error/traceback
+    # Synthetic events injected by runners (replay / live) for pacing
+    # and narration. Not produced by parse_lines itself.
+    "narration",        # plain-text buffer line ("Now passing to X…")
+    "pause",            # consumer hint to pause for ``duration_s`` seconds
 ]
 
 
@@ -151,17 +155,23 @@ def _flush_final(state: _StreamState) -> Optional[Event]:
 
 
 def _safe_parse_dict(s: str) -> dict:
-    """The runner sometimes emits Python-repr ('{'a': 1}') rather than JSON.
-    Try JSON first, then a permissive eval fallback that only allows literals."""
-    try:
-        return json.loads(s)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    try:
-        import ast
-        return ast.literal_eval(s)
-    except (ValueError, SyntaxError):
-        return {"_raw": s[:600]}
+    """The runner sometimes emits Python-repr ('{'a': 1}') rather than JSON,
+    AND smolagents' Rich renderer replaces ``[`` with ``|`` in its
+    observation pretty-printing (closing ``]`` is preserved). Try JSON
+    first, then a literal_eval pass, then a JSON pass with ``|`` → ``[``
+    swapped back. That last attempt is what actually recovers list
+    parsing for tool responses that contain arrays."""
+    for variant in (s, s.replace("|", "[")):
+        try:
+            return json.loads(variant)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        try:
+            import ast
+            return ast.literal_eval(variant)
+        except (ValueError, SyntaxError):
+            pass
+    return {"_raw": s[:600]}
 
 
 def parse_lines(lines: Iterator[str]) -> Iterator[Event]:
