@@ -1,0 +1,59 @@
+# Open WebUI demo for the MAS-Aviary multi-MCP MDO pipeline.
+#
+# Architecture
+# ────────────
+#   ┌────────────────┐  HTTP/SSE   ┌─────────────────────────┐
+#   │  Open WebUI    │ ────────────▶  chat_server.py         │
+#   │  (this compose)│             │  (runs on host :8090)   │
+#   └────────────────┘             └─────────────────────────┘
+#                                          │
+#                                          ▼
+#                          spawns/replays the MAS-Aviary
+#                          run_batch.sh pipeline
+#
+# The Open WebUI container hits the host via the standard Linux
+# host-gateway alias (host.docker.internal). Start the host-side
+# chat_server.py *before* running `docker-compose up`.
+#
+# Quick start (from this directory):
+#     ../../.venv/bin/python chat_server.py &      # host :8090
+#     docker-compose up -d                         # Open WebUI :3000
+#     xdg-open http://localhost:3000               # then pick model
+#
+# Or use start_demo.sh, which does both.
+
+version: "3.9"
+
+services:
+  open-webui:
+    image: openwebui/open-webui:latest-slim
+    container_name: mas-aviary-openwebui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    extra_hosts:
+      # Linux convention: tells Docker to add host.docker.internal as an
+      # alias for the host's loopback gateway, matching macOS/Windows
+      # behavior. Open WebUI containers reach the host this way.
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Point Open WebUI at the host's chat_server.py
+      OPENAI_API_BASE_URL: http://host.docker.internal:8090/v1
+      # Any non-empty key — chat_server.py does not validate it.
+      OPENAI_API_KEY: demo
+      # We only expose our custom endpoint — turn off the rest.
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      # Skip user account creation for a single-user demo.
+      WEBUI_AUTH: "false"
+      # Tag the install for the demo
+      WEBUI_NAME: "MAS-Aviary MDO Demo"
+      # Disable signup / login UI noise
+      ENABLE_SIGNUP: "false"
+      # Disable the default "starter" suggestions so the chat opens clean
+      DEFAULT_MODELS: "mas-aviary-replay"
+    volumes:
+      - openwebui_data:/app/backend/data
+
+volumes:
+  openwebui_data:
