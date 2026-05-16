@@ -303,6 +303,15 @@ templates:
                  "CONV_FIELD":            "RMS_DENSITY",
                  "CONV_RESIDUAL_MINVAL":  -8,
                  "CONV_STARTITER":        10,
+                 # ── Output (request CL/CD in history.csv) ────────────
+                 # SU2's default HISTORY_OUTPUT writes only the residuals.
+                 # Adding AERO_COEFF puts CL, CD, and the moment
+                 # coefficients into history.csv so the agent can read
+                 # them in step 7. Without this the last row only has
+                 # rms[Rho], and the agent has no choice but to fall back
+                 # to F25 reference values (Run #7 2026-05-16 finding).
+                 "HISTORY_OUTPUT":  "( ITER, RMS_RES, AERO_COEFF )",
+                 "SCREEN_OUTPUT":   "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
                  # ── Boundary markers ─────────────────────────────────
                  # These MUST match the names baked into the volume mesh
                  # produced by tigl.generate_volume_mesh:
@@ -357,6 +366,14 @@ templates:
           7. Call read_history_csv(session_id, relative_path=<history_file>)
              to extract CL, CD, and the residual convergence trace.
 
+             The history.csv columns include CL, CD, and the residuals
+             — because step 3's preset sets HISTORY_OUTPUT=( ITER,
+             RMS_RES, AERO_COEFF ). The LAST row of the rows list holds
+             the converged values of CL and CD. Field names vary by SU2
+             version but are typically "CL" and "CD" or "LIFT" and
+             "DRAG"; the response's "columns" list shows exactly which
+             names appear.
+
              FIRST, check the simpler signal: the run_su2_solver response
              you got back in step 5 has a `log_tail` field. Read the
              LAST FEW LINES of that log_tail. SU2 always prints one of:
@@ -366,9 +383,12 @@ templates:
                  -8, but probably got close (residual drop reported in
                  the same block).
              If "Converged: Yes" is in log_tail, SET SOLVER_CONVERGED=true
-             and use the actual CL/CD from history.csv (last row). You
-             do not need to compute the residual drop manually in this
-             case.
+             and read CL/CD from the LAST ROW of history.csv. Do NOT
+             fall back to F25 reference values just because the
+             computation looked unfamiliar — that is the run #7 mistake
+             we explicitly want to avoid. Real CL/CD from a converged
+             SU2 run are more accurate for the *current* geometry than
+             the F25 reference values would be.
 
              RESIDUAL INTERPRETATION (only needed when log_tail says
              "Maximum number of iterations reached"):

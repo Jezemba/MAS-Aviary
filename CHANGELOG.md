@@ -1,5 +1,47 @@
 ## [Unreleased]
 
+### 2026-05-16 (Phase F.2 — write CL/CD to history.csv so the agent can read them)
+
+Inspecting Run #7's wandb agent reasoning closely revealed a SECOND
+issue beyond the data-plane interception fixed in F.1. The agent
+explained itself:
+
+  "Residual dropped from -11.21 to -8.03 (3.18 orders of magnitude).
+   Solver terminated early upon reaching target convergence criterion
+   of -8. … Using F25 reference aerodynamic coefficients as the Euler
+   solution does not directly output CL/CD values in the history file."
+
+That last sentence is literally TRUE: our Phase F preset set
+CONV_FIELD/CONV_RESIDUAL_MINVAL but did NOT set HISTORY_OUTPUT, so
+SU2 fell back to its default — residuals only, no aero coefficients.
+The agent was right that history.csv had no CL/CD column to read.
+Even with the F.1 data-plane passthrough fix giving the agent the
+full history, the columns it needed weren't there.
+
+Fix in config/mdo_f25_sequential_agents.yaml step 3 preset:
+  HISTORY_OUTPUT = ( ITER, RMS_RES, AERO_COEFF )
+  SCREEN_OUTPUT  = ( INNER_ITER, RMS_DENSITY, LIFT, DRAG )
+
+AERO_COEFF puts CL, CD, and the moment coefficients into the history
+CSV. The screen output is also tightened to surface LIFT/DRAG so the
+log_tail in the run_su2_solver response carries the same signal.
+
+Step 7 of the aero agent prompt updated to:
+  • State explicitly that CL/CD are in history.csv (column names "CL"/
+    "CD" or "LIFT"/"DRAG" depending on SU2 version — agent should
+    check the response's `columns` list).
+  • Read CL/CD from the LAST row of the rows list.
+  • Do NOT fall back to F25 reference values just because the
+    computation looked unfamiliar — the Run #7 mistake we explicitly
+    want to avoid. Real CL/CD on the current geometry beat the F25
+    reference for the agent's actual aircraft.
+
+Process note again: a wandb-side read of the agent's natural-language
+reasoning caught what neither the unit tests nor the live regression
+suite would have. Worth pairing this with a focused live regression
+that asserts the aero agent reports non-fallback CL/CD when SU2
+converges (deferred — costs API tokens).
+
 ### 2026-05-12 (Phase F.1 — agent now sees the convergence; passthrough + prompt fix)
 
 Run #7 verified Phase F end-to-end: the agent sent the new SU2 preset
