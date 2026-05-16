@@ -1,5 +1,56 @@
 ## [Unreleased]
 
+### 2026-05-12 (Open WebUI demo — narrated chat visualization)
+
+Added a chat-style visualization of the multi-MCP MDO pipeline on a
+new branch `feat/openwebui-demo` (forked from this branch). Anyone can
+submit a prompt in the Open WebUI chat window and watch the pipeline
+unfold as collapsible color-coded cards, one per agent, with
+plain-language narration of every tool call and observation.
+
+Two modes, picked from Open WebUI's model dropdown:
+  • `mas-aviary-replay`  — streams Run #6's cached transcript at a
+    comfortable pace (~30 s), free, deterministic
+  • `mas-aviary-live`    — spawns the real run_batch.sh and tails its
+    stdout (~10 min, costs Anthropic + WandB)
+
+Components (all in `openwebui_demo/`):
+  - chat_server.py     — FastAPI OpenAI-compatible /v1/chat/completions
+  - event_parser.py    — Stream parser: runner stdout → Event objects.
+                          Handles smolagents' Rich-renderer "[" → "|"
+                          substitution so list contents are recoverable.
+  - narration.py       — Per-tool plain-language descriptions (50+ tools),
+                          per-agent first-person intros, per-tool
+                          observation summarizers that extract headline
+                          numbers (span, AR, mesh cells, FUEL_BURNED, …),
+                          and a 7-stage progress strip.
+  - formatter.py       — Event → markdown chunks. Per-agent <details>
+                          blocks, agent intro paragraph, progress strip
+                          refreshed at boundaries, FIFO tool→observation
+                          matching for multi-tool steps.
+  - replay_runner.py   — Reads cached run log, yields Events with
+                          per-event-kind pacing and "⏳ working on it…"
+                          buffer lines around slow tools.
+  - live_runner.py     — Spawns run_batch.sh and tails stdout.
+  - docker-compose.yml — Open WebUI (openwebui/open-webui:latest-slim)
+                          wired to the host chat_server via
+                          host.docker.internal:host-gateway.
+  - start_demo.sh / stop_demo.sh — convenience scripts
+  - README.md          — setup, architecture, troubleshooting
+
+Iteration history during this work:
+  - v1: raw tool/observation dumps with emoji + collapsible cards.
+    User feedback: "not intuitive to follow" — too technical.
+  - v2 (current): added narration layer. Each tool becomes a one-line
+    plain-language description ("📂 Loading the aircraft definition
+    from CPACS…") and each observation becomes a one-line summary of
+    the headline numbers ("✅ Wing: span 33.91 m, area 61.39 m²,
+    AR 18.73"). Replay default speed lowered 10× → 2× and slow tools
+    get an explicit "this is a longer step…" buffer line. FIFO
+    matching of observations to tool calls fixed the multi-tool-step
+    rendering bug. Smolagents Rich-renderer "|" → "[" substitution
+    in the parser recovers list contents that previously came up empty.
+
 ### 2026-05-11 (Run #6 — first complete pipeline end-to-end)
 
 After the Phase E unit fix landed in aviary-mcp (ddbc7e1), run #6 of
