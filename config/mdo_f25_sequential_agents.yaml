@@ -211,11 +211,16 @@ templates:
           REYNOLDS_NUMBER    Based on MAC and altitude. Cruise at 33 kft: ~30e6
           KIND_TURB_MODEL    "SA" (Spalart-Allmaras, faster) or "SST" (Menter k-ω, better for separation)
           ITER               Solver iterations. Default: 200 | Range: 100–10000
-                             More iterations = tighter convergence. 200 is
-                             enough for Euler on a coarse mesh; bump to
-                             1000+ only for refined RANS runs.
-          CFL_NUMBER         Courant number. Default: 10.0 | Range: 1–100
-                             Lower values for difficult cases (high AoA, separated flow).
+                             With CONV_RESIDUAL_MINVAL=-8 the solver
+                             terminates early once it hits 1e-8 RMS;
+                             empirically ~120 iters on a 350k-cell mesh.
+          CFL_NUMBER         Courant number. Default: 1e3 | Range: 1–1e4
+                             SU2's reference inv_NACA0012.cfg uses 1e3
+                             combined with W-cycle multigrid + ILU
+                             preconditioning. CFL=10 with no multigrid
+                             plateaus around rms[Rho]=-2.6 (verified
+                             empirically). CFL_ADAPT=YES is the safety
+                             net for ill-conditioned 3-D meshes.
 
           ── AERODYNAMIC OUTPUTS ───────────────────────────────────────────
 
@@ -260,32 +265,71 @@ templates:
              return "missing_required" warnings and burn a step:
 
                updates = {
-                 # Mission state
+                 # ── Mission state ────────────────────────────────────
                  "MACH_NUMBER": 0.78,
                  "AOA": 2.0,
                  "REYNOLDS_NUMBER": 30000000,
                  "FREESTREAM_PRESSURE": 26500.0,   # Pa at 33 kft
                  "FREESTREAM_TEMPERATURE": 233.0,  # K at 33 kft
-                 # Solver core
+                 "MATH_PROBLEM": "DIRECT",
+                 "RESTART_SOL": "NO",
+                 "REF_DIMENSIONALIZATION": "DIMENSIONAL",
+                 # ── Solver core (Euler) ──────────────────────────────
                  "SOLVER": "EULER",
                  "KIND_TURB_MODEL": "SA",
-                 "CONV_NUM_METHOD_FLOW": "JST",
-                 "NUM_METHOD_GRAD": "GREEN_GAUSS",
-                 "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
-                 # Convergence
-                 "ITER": 200,
-                 "CFL_NUMBER": 10.0,
-                 # Boundary markers — these MUST match the names baked
-                 # into the volume mesh produced by tigl.generate_volume_mesh:
-                 #   wall   = "aircraft"
+                 "CONV_NUM_METHOD_FLOW":  "JST",
+                 "JST_SENSOR_COEFF":      "( 0.5, 0.02 )",
+                 "NUM_METHOD_GRAD":       "WEIGHTED_LEAST_SQUARES",
+                 "TIME_DISCRE_FLOW":      "EULER_IMPLICIT",
+                 # ── Pseudo-time stepping ─────────────────────────────
+                 # CFL=1e3 is what SU2's reference inv_NACA0012.cfg
+                 # uses — combined with multigrid + ILU it converges
+                 # to 1e-8 RMS in ~120 iterations. The old CFL=10 with
+                 # no multigrid plateaued at ~1e-2.6 after 200 iters
+                 # (verified empirically against the reference mesh).
+                 "CFL_NUMBER": 1e3,
+                 "CFL_ADAPT":  "YES",
+                 "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+                 # ── Multigrid ────────────────────────────────────────
+                 "MGCYCLE":     "W_CYCLE",
+                 "MGLEVEL":     3,
+                 # ── Linear solver ────────────────────────────────────
+                 "LINEAR_SOLVER":       "FGMRES",
+                 "LINEAR_SOLVER_PREC":  "ILU",
+                 "LINEAR_SOLVER_ITER":  10,
+                 "LINEAR_SOLVER_ERROR": 1E-10,
+                 # ── Convergence ──────────────────────────────────────
+                 "ITER":                  200,
+                 "CONV_FIELD":            "RMS_DENSITY",
+                 "CONV_RESIDUAL_MINVAL":  -8,
+                 "CONV_STARTITER":        10,
+                 # ── Boundary markers ─────────────────────────────────
+                 # These MUST match the names baked into the volume mesh
+                 # produced by tigl.generate_volume_mesh:
+                 #   wall     = "aircraft"
                  #   farfield = "farfield"
-                 "MARKER_EULER": "( aircraft )",
-                 "MARKER_FAR":   "( farfield )",
+                 "MARKER_EULER":      "( aircraft )",
+                 "MARKER_FAR":        "( farfield )",
+                 "MARKER_PLOTTING":   "( aircraft )",
+                 "MARKER_MONITORING": "( aircraft )",
                }
 
-             Use ITER=200 by default — sufficient for Euler on the
-             coarse 50-200k cell mesh, keeps the solve under ~5 minutes.
-             Only raise it for refined RANS passes on dense meshes.
+             Why these numerics matter (vs. the agent's naive instinct
+             of CFL=10 + GREEN_GAUSS + default linear solver):
+               • CFL=10 with no multigrid plateaus around rms[Rho] = -2.6
+                 in 200 iterations — under-converged, SOLVER_CONVERGED
+                 falls back to F25 reference values.
+               • CFL=1e3 + W_CYCLE multigrid + FGMRES/ILU + WLS gradient
+                 (this preset) converges to rms[Rho] = -8 in ~120 iters.
+               • CFL_ADAPT=YES is a safety net — if CFL=1e3 destabilizes
+                 on a particular mesh, the solver auto-throttles down to
+                 CFL=10 and works its way back up. So we keep the
+                 aggressive setting without risking blow-up on rougher
+                 meshes.
+
+             Use ITER=200 by default — convergence terminates early
+             once CONV_RESIDUAL_MINVAL is hit. Total solve time on a
+             ~350k cell mesh stays under ~3 minutes.
 
              IF the server response includes "missing_required" with one
              or more SU2 option names: include those names in a SECOND

@@ -1,5 +1,64 @@
 ## [Unreleased]
 
+### 2026-05-12 (Phase F — SU2 numerics fix; converges to rms=-8 in ~120 iter)
+
+Run #6's aero stage technically completed (SU2 exit_code=0) but the
+agent used the F25-reference fallback values because the actual
+residual only dropped ~1 order of magnitude. Root cause turned out to
+be a too-conservative numerics preset in the agent's update_config
+call, not a mesh-quality problem.
+
+Diagnosis (via direct SU2 binary tests against the upstream
+inv_NACA0012 reference case from `ReferenceCode/su2-mcp/tests/`):
+
+  • The reference inv_NACA0012.cfg converges to rms[Rho] = -8.03 in
+    ~130 iterations using CFL=1e3, W-cycle multigrid, FGMRES+ILU
+    linear solver, and weighted-least-squares gradient.
+
+  • Our pipeline was sending CFL=10, no multigrid, default linear
+    solver, GREEN_GAUSS gradient. Running our exact config on the
+    same proven reference mesh plateaus at rms[Rho]=-2.59 after 200
+    iterations — the same shape we saw across runs 3-6.
+
+  • The reference numerics on the same mesh + our flight condition
+    (Mach 0.78, FL330) converges to rms[Rho]=-8.10 in ~125 iters.
+
+So our config was the bottleneck, not gmsh mesh quality, not the
+solver, not the geometry.
+
+Prompt fix in config/mdo_f25_sequential_agents.yaml — the
+aerodynamics_analyst's step-3 update_config_entries preset is
+extended with:
+
+  CFL_NUMBER          1e3        (was 10.0)
+  CFL_ADAPT           YES         (safety net for ill-conditioned meshes —
+  CFL_ADAPT_PARAM     (0.1,2.0,    auto-throttles 10..1e10 on divergence)
+                       10.0,1e10)
+  MGCYCLE             W_CYCLE     (multigrid)
+  MGLEVEL             3
+  LINEAR_SOLVER       FGMRES      (was default)
+  LINEAR_SOLVER_PREC  ILU
+  LINEAR_SOLVER_ITER  10
+  LINEAR_SOLVER_ERROR 1E-10
+  NUM_METHOD_GRAD     WEIGHTED_LEAST_SQUARES  (was GREEN_GAUSS)
+  JST_SENSOR_COEFF    (0.5, 0.02)              (transonic-shock-sensitive)
+  MATH_PROBLEM        DIRECT
+  RESTART_SOL         NO
+  REF_DIMENSIONALIZATION  DIMENSIONAL
+  CONV_FIELD          RMS_DENSITY
+  CONV_RESIDUAL_MINVAL -8
+  CONV_STARTITER      10
+  MARKER_PLOTTING/MONITORING ( aircraft )
+
+The SU2 SOLVER CONFIGURATION docs section in the prompt is updated to
+reflect the new defaults and explains why CFL=10 + GREEN_GAUSS isn't
+strong enough.
+
+Outstanding (not blocking):
+  • Verify on a full live pipeline run that SU2 now returns
+    SOLVER_CONVERGED=true and the agent uses real CL/CD/L/D instead
+    of the F25 fallback.
+
 ### 2026-05-11 (Run #6 — first complete pipeline end-to-end)
 
 After the Phase E unit fix landed in aviary-mcp (ddbc7e1), run #6 of
