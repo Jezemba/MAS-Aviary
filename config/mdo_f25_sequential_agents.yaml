@@ -355,29 +355,58 @@ templates:
              produced by SU2 (typically history.csv or similar).
 
           7. Call read_history_csv(session_id, relative_path=<history_file>)
-             to extract CL, CD, and residual convergence.
+             to extract CL, CD, and the residual convergence trace.
 
-             RESIDUAL INTERPRETATION (read carefully — this is easy to get
-             wrong):
+             FIRST, check the simpler signal: the run_su2_solver response
+             you got back in step 5 has a `log_tail` field. Read the
+             LAST FEW LINES of that log_tail. SU2 always prints one of:
+               • "Convergence Field ... Converged: Yes" → solver hit the
+                 CONV_RESIDUAL_MINVAL=-8 target. Trust the result.
+               • "Maximum number of iterations reached" → did not hit
+                 -8, but probably got close (residual drop reported in
+                 the same block).
+             If "Converged: Yes" is in log_tail, SET SOLVER_CONVERGED=true
+             and use the actual CL/CD from history.csv (last row). You
+             do not need to compute the residual drop manually in this
+             case.
+
+             RESIDUAL INTERPRETATION (only needed when log_tail says
+             "Maximum number of iterations reached"):
 
              SU2 reports density residual as log10(||r||). Values are
-             negative real numbers; a SMALLER (MORE NEGATIVE) value is
-             BETTER. Example: residual going from -1.5 to -5.0 means
-             the solution converged 3.5 orders of magnitude. To compute
-             the drop:
+             real numbers; a SMALLER (MORE NEGATIVE) value is BETTER.
+             rms[Rho] = -8 is fully converged; rms[Rho] = -1 is barely
+             stepped at all.
+
+             Read the FINAL ROW of history.csv (the row with the highest
+             Inner_Iter — when data plane passes the rows through, the
+             list is iteration-ordered and the last element is the
+             current state). Note that SU2's row 0 is the *pre-step*
+             state with un-physically small residuals; use row 1 (after
+             the first iteration) as INITIAL.
                  RESIDUAL_DROP_ORDERS = INITIAL_RESIDUAL - FINAL_RESIDUAL
-             where INITIAL is the value at iteration 0 and FINAL is the
-             value at the last iteration. With the convention above,
-             a drop of >= 4 orders is "converged" (set SOLVER_CONVERGED
-             true). A drop of <= 1 order is "not converged" (use fallback
-             reference values).
+             where INITIAL is row 1's rms[Rho] and FINAL is the last
+             row's rms[Rho]. With the SU2 sign convention, the drop is
+             POSITIVE if the residual fell (good).
+
+             Decision rule:
+               • drop >= 3 orders OR final rms[Rho] <= -5
+                   → SOLVER_CONVERGED=true, use real CL/CD from history.csv
+               • drop in (1, 3) AND final rms[Rho] > -5
+                   → SOLVER_CONVERGED=true but flag in AERO_NOTES that
+                     convergence was partial; still use the actual CL/CD
+                     (they're more accurate than the F25 reference for
+                     non-F25-shaped aircraft)
+               • drop <= 1 order or solver diverged
+                   → SOLVER_CONVERGED=false, fall back to F25 reference
+                     (CL=0.593, CD=0.0304, L/D=19.5) and note the failure
 
              Common mistake: reporting "residual dropped from -10 to -2,
              which is 8 orders" — that is WRONG. -10 → -2 is the residual
              GROWING by 8 orders (diverging). Going from -2 to -10 is the
              8-order drop.
 
-          8. If solver converged (>=4 orders), call sample_surface_solution
+          8. If SOLVER_CONVERGED is true, call sample_surface_solution
              with BOTH session_id AND marker_name='aircraft' (it is a
              required parameter — calls without marker_name fail with a
              pydantic 'Field required' error). Use this to check the Cf

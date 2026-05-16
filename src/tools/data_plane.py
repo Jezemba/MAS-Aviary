@@ -57,6 +57,22 @@ _CPACS_PATH_TOOLS = frozenset({
     "estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown",
 })
 
+# Tools whose responses ARE the analytical content the agent has to
+# reason about (rather than bulk binary or huge metadata trees).
+# Their structured fields are NOT intercepted — the agent sees the full
+# response.  Use sparingly; adding a tool here means the LLM pays the
+# full token cost for its response every time it calls the tool.
+#
+# read_history_csv: the convergence trace IS the answer the agent needs
+# to decide SOLVER_CONVERGED vs fallback.  Intercepting it hides the
+# final residual and forces the agent to guess from the iter-0 jump in
+# the preview.  Discovered in Run #7 (2026-05-12) — the agent reported
+# "RESIDUAL_DROP_ORDERS=3.18" from the first 5 rows of a 117-row history
+# that actually reached rms=-8 (8 orders) by the end.
+_PASSTHROUGH_TOOLS = frozenset({
+    "read_history_csv",
+})
+
 
 def _is_binary_payload(key: str, value: str) -> bool:
     key_lower = key.lower()
@@ -269,6 +285,11 @@ def _capture_mesh_markers(tool_name: str, data: dict) -> None:
 
 def _intercept_binaries(tool_name: str, data: dict) -> dict:
     if _design_state is None:
+        return data
+    # Passthrough tools — return the response as-is. The agent needs to
+    # see the full structured content to do its job (e.g. read the final
+    # rows of a convergence history to decide convergence).
+    if tool_name in _PASSTHROUGH_TOOLS:
         return data
     result = {}
     for key, value in data.items():

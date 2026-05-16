@@ -140,3 +140,29 @@ class TestInterceptResponse:
         assert out["mesh_base64"]["size_bytes"] == 5000
         # statistics is small, passes through
         assert out["statistics"] == {"cells": 350000}
+
+    def test_read_history_csv_passes_through_no_interception(self, fresh_state):
+        """``read_history_csv`` is in _PASSTHROUGH_TOOLS — its rows ARE
+        the analytical content the agent reasons about. Intercepting
+        them hides the final residuals and makes the agent under-count
+        the convergence (Run #7 2026-05-12 regression).
+
+        Even with 117 rows (well above the list-intercept threshold of
+        30), the response should be returned as-is so the agent can
+        read the final iteration's rms value.
+        """
+        history = [
+            {"Inner_Iter": i, "rms[Rho]": -1.0 - 0.06 * i}
+            for i in range(117)
+        ]
+        response = {"columns": ["Inner_Iter", "rms[Rho]"],
+                    "rows": history, "total_rows": 117}
+        out = intercept_response("read_history_csv", response)
+
+        # rows pass through unchanged — agent sees full trace
+        assert out == response, (
+            "read_history_csv response was intercepted; agent will only "
+            "see the preview rows and miss the converged tail."
+        )
+        # Nothing got stored under a ref either
+        assert "read_history_csv__rows" not in fresh_state.data_store

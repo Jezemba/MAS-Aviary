@@ -1,5 +1,55 @@
 ## [Unreleased]
 
+### 2026-05-12 (Phase F.1 — agent now sees the convergence; passthrough + prompt fix)
+
+Run #7 verified Phase F end-to-end: the agent sent the new SU2 preset
+(CFL=1e3, MGCYCLE=W_CYCLE, MGLEVEL=3, FGMRES+ILU, WLS) and SU2 ran to
+exit_code=0 in 154 s. The actual SU2 log (visible in the run_su2_solver
+response's `log_tail`) showed residuals dropping past rms[Rho] = -5.98
+by iteration 56 and continuing toward -8.
+
+BUT the agent reported `RESIDUAL_DROP_ORDERS: 3.18` and used the F25
+reference CL/CD/L/D values anyway. Root cause: the data plane was
+intercepting read_history_csv's `rows` field (117 rows > 30-item
+threshold), so the agent only saw a 5-row preview. The first 5 rows
+include SU2's iter-0 pre-step state (where rms is artificially low),
+making the visible "drop" tiny.
+
+Two real bugs to fix, both about getting the convergence signal to the
+LLM:
+
+1. Data plane was hiding the answer
+   src/tools/data_plane.py: added `_PASSTHROUGH_TOOLS = {"read_history_csv"}`.
+   Tools listed here skip interception — their structured response IS
+   the analytical content the agent reasons about, not bulk data. The
+   convergence trace is small (~5-10 kB for 100-1000 iters) and worth
+   the tokens.
+   Unit test:
+   tests/test_data_plane.py::test_read_history_csv_passes_through_no_interception
+   (full 117-row response returns unchanged through intercept_response;
+   no ref stored in data_store).
+
+2. Prompt didn't use SU2's own convergence flag
+   config/mdo_f25_sequential_agents.yaml: step 7 of the aerodynamics
+   agent's task was rewritten to FIRST check the run_su2_solver
+   response's `log_tail` field — SU2 always prints "Converged: Yes" or
+   "Maximum number of iterations reached" near the end. If "Converged:
+   Yes" is present, the agent trusts the result directly and doesn't
+   need to do residual-drop arithmetic at all.
+   The fallback rule was loosened so the agent uses REAL CL/CD whenever
+   the drop is >= 3 orders OR the final rms <= -5 (rather than the
+   previous strict >= 4 orders). Three orders is the typical
+   engineering convergence threshold for Euler; four was overcautious.
+   The agent is also explicitly told to read the LAST row of
+   history.csv (not the preview rows) and to treat row 0 as the
+   pre-step state.
+
+Process note for future fixes: validate at the AGENT level whenever
+the change is meant to affect what the agent reports. Running SU2
+standalone (which proved the numerics fix worked) was necessary but
+not sufficient — the agent's residual-decision path is its own
+behavior and needs to be checked end-to-end.
+
 ### 2026-05-12 (Phase F — SU2 numerics fix; converges to rms=-8 in ~120 iter)
 
 Run #6's aero stage technically completed (SU2 exit_code=0) but the
