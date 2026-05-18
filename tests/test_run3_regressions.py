@@ -974,3 +974,200 @@ def test_mesh_ref_handoff_to_su2():
         "containing mesh_path. Set_mesh attempted but none succeeded. "
         f"Observations: {[c['observation'][:200] for c in set_mesh_calls]}"
     )
+
+
+# ── Run #7 regression: aero agent reports real CL/CD when SU2 converges ──────
+
+@pytest.mark.live_mcp_llm
+def test_aero_agent_uses_real_cl_cd_when_su2_converges():
+    """Run #7 (2026-05-16) regression: SU2 actually converged with the
+    new Phase F numerics but the aero agent reported the F25 reference
+    fallback CL/CD because (1) the data plane intercepted the
+    convergence history, (2) AERO_COEFF wasn't in HISTORY_OUTPUT so
+    history.csv had no CL/CD column, (3) the agent fell back to F25
+    reference whenever the manual residual computation looked uncertain.
+
+    F.1, F.2, F.3 each addressed one layer. This test verifies the
+    aggregate: the agent reports REAL CL/CD (not the F25 fallback
+    0.593/0.0304/19.5) when SU2 actually converges.
+
+    Setup: pre-load the upstream NACA0012 inviscid reference mesh into
+    the data plane under a known ref. Give the agent the standard SU2
+    workflow (set_mesh → update_config_entries with Phase F.2 preset →
+    run_su2_solver → read_history_csv). The NACA0012 inv reference
+    converges to rms[Rho] ≈ -8 in ~120 iterations with CL ≈ 0.32,
+    CD ≈ 0.022 at Mach 0.8, AoA 1.25°. The agent should report THOSE
+    numbers — definitively not the F25 fallback 0.593/0.0304/19.5.
+
+    Cost: ~10-15 Claude calls + ~5 s SU2 solve. Run on-demand.
+    """
+    import base64
+
+    ref_mesh = Path(
+        "/home/aipexws3/Jessica/Avion/ReferenceCode/su2-mcp/tests/"
+        "fixtures/mesh_NACA0012_inv.su2"
+    )
+    if not ref_mesh.exists():
+        pytest.skip(f"reference NACA0012 mesh missing at {ref_mesh}")
+
+    mesh_b64 = base64.b64encode(ref_mesh.read_bytes()).decode("ascii")
+
+    agent = _make_agent(
+        tool_names=[
+            "create_su2_session",
+            "set_mesh",
+            "update_config_entries",
+            "get_su2_status",
+            "run_su2_solver",
+            "list_result_files",
+            "read_history_csv",
+        ],
+        servers=["su2"],
+        max_steps=12,
+        instructions=(
+            "You are running a SU2 Euler convergence test on the "
+            "reference NACA0012 inviscid case. The wing mesh has been "
+            "PRE-LOADED into the data plane under the ref name "
+            "'test_naca_mesh__mesh_base64' — pass it to set_mesh "
+            "directly as that ref string. After the solver runs, "
+            "report the converged CL and CD from the last row of "
+            "history.csv. DO NOT fall back to any reference values; "
+            "the entire point of this test is whether you successfully "
+            "read CL/CD from history.csv."
+        ),
+    )
+
+    # Pre-load the NACA mesh into the data plane's data_store. The
+    # tool_loader initialized the data plane during _make_agent; we
+    # just inject our test mesh under a known key so the agent can
+    # forward it as a ref into set_mesh.
+    from src.tools.data_plane import get_design_state
+
+    ds = get_design_state()
+    assert ds is not None, "data plane not initialized by _make_agent"
+    ds.data_store["test_naca_mesh__mesh_base64"] = mesh_b64
+    # The data plane's _fix_su2_markers middleware auto-rewrites
+    # MARKER_EULER / MARKER_FAR in update_config_entries to whatever's
+    # in data_store under these keys. In a real pipeline run those
+    # come from the gmsh mesh ("aircraft" / "farfield"). The NACA test
+    # mesh uses "airfoil" / "farfield" — set them explicitly so the
+    # middleware doesn't trample the agent's correct marker name.
+    ds.data_store["mesh_marker_wall"] = "airfoil"
+    ds.data_store["mesh_marker_farfield"] = "farfield"
+
+    agent.run(
+        "Create a SU2 session, then attach the pre-loaded mesh via "
+        "set_mesh using the ref 'test_naca_mesh__mesh_base64'. "
+        "Configure SU2 for the NACA0012 inviscid reference case in "
+        "ONE update_config_entries call with this preset:\n"
+        '  { "SOLVER": "EULER", "MATH_PROBLEM": "DIRECT",\n'
+        '    "MACH_NUMBER": 0.8, "AOA": 1.25,\n'
+        '    "FREESTREAM_PRESSURE": 101325.0,\n'
+        '    "FREESTREAM_TEMPERATURE": 273.15,\n'
+        '    "REF_DIMENSIONALIZATION": "DIMENSIONAL",\n'
+        '    "CONV_NUM_METHOD_FLOW": "JST",\n'
+        '    "JST_SENSOR_COEFF": "( 0.5, 0.02 )",\n'
+        '    "NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES",\n'
+        '    "TIME_DISCRE_FLOW": "EULER_IMPLICIT",\n'
+        '    "CFL_NUMBER": 1e3, "ITER": 200,\n'
+        '    "MGCYCLE": "W_CYCLE", "MGLEVEL": 3,\n'
+        '    "LINEAR_SOLVER": "FGMRES", "LINEAR_SOLVER_PREC": "ILU",\n'
+        '    "LINEAR_SOLVER_ITER": 10, "LINEAR_SOLVER_ERROR": 1e-10,\n'
+        '    "CONV_FIELD": "RMS_DENSITY",\n'
+        '    "CONV_RESIDUAL_MINVAL": -8, "CONV_STARTITER": 10,\n'
+        '    "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",\n'
+        '    "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",\n'
+        '    "MARKER_EULER": "( airfoil )",\n'
+        '    "MARKER_FAR": "( farfield )",\n'
+        '    "MARKER_PLOTTING": "( airfoil )",\n'
+        '    "MARKER_MONITORING": "( airfoil )" }\n'
+        "Then run_su2_solver (max_runtime_seconds=120, "
+        "capture_log_lines=100). Then list_result_files and "
+        "read_history_csv. Report:\n"
+        "  CL_CRUISE: <value from last row of history.csv>\n"
+        "  CD_CRUISE: <value from last row of history.csv>\n"
+        "  L_OVER_D: <CL/CD>\n"
+        "  SOLVER_CONVERGED: true if log_tail contains 'Converged: Yes'\n"
+        "  RESIDUAL_DROP_ORDERS: |row1 rms[Rho]| - |last row rms[Rho]|"
+    )
+
+    calls = _collect_tool_calls(agent)
+    by_name: dict[str, int] = {}
+    for c in calls:
+        by_name[c["name"]] = by_name.get(c["name"], 0) + 1
+
+    # 1) The agent must have reached run_su2_solver AND read_history_csv.
+    assert by_name.get("run_su2_solver", 0) >= 1, (
+        "REGRESSION: agent never ran SU2. Memory: "
+        f"{[c['name'] for c in calls]}"
+    )
+    assert by_name.get("read_history_csv", 0) >= 1, (
+        "REGRESSION: agent never read history.csv — cannot have read CL/CD."
+    )
+
+    # 2) run_su2_solver must have succeeded (no error, exit_code 0).
+    solver_calls = [c for c in calls if c["name"] == "run_su2_solver"]
+    last_solver_obs = (solver_calls[-1]["observation"] or "") if solver_calls else ""
+    assert '"exit_code": 0' in last_solver_obs, (
+        f"REGRESSION: run_su2_solver did not exit cleanly. "
+        f"Observation: {last_solver_obs[:400]!r}"
+    )
+
+    # 3) read_history_csv response must include CL/CD column (the
+    #    Phase F.2 AERO_COEFF fix). SU2 surrounds column names with
+    #    quotes and padding spaces in the CSV — the JSON-encoded
+    #    observation ends up containing backslash-escaped quotes like
+    #    \"CL\" (i.e. "\\\"CL\\\"" as a Python string literal). Match
+    #    leniently on multiple representations.
+    hist_calls = [c for c in calls if c["name"] == "read_history_csv"]
+    last_hist_obs = (hist_calls[-1]["observation"] or "") if hist_calls else ""
+
+    def _has_col(name: str, alt: str) -> bool:
+        for tok in (
+            f'\\"{name}\\"',     # JSON-encoded "<name>"
+            f'"{name}"',          # bare quoted
+            f'\\"{alt}\\"',
+            f'"{alt}"',
+        ):
+            if tok in last_hist_obs:
+                return True
+        return False
+
+    has_cl_col = _has_col("CL", "LIFT")
+    has_cd_col = _has_col("CD", "DRAG")
+    assert has_cl_col and has_cd_col, (
+        "REGRESSION: history.csv response has no CL/CD column. "
+        "The Phase F.2 HISTORY_OUTPUT=AERO_COEFF preset did not "
+        "reach SU2, or SU2 didn't write the column. "
+        f"Observation head: {last_hist_obs[:600]!r}"
+    )
+
+    # 4) read_history_csv response must NOT be intercepted (Phase F.1
+    #    passthrough). Look at the *rows* — they should be a real list
+    #    of dicts, not a summary marker.
+    assert "_intercepted" not in last_hist_obs, (
+        "REGRESSION: read_history_csv response was intercepted. "
+        "Phase F.1 passthrough did not take effect. The agent will "
+        "only see the preview rows and miss the converged tail."
+    )
+
+    # 5) Final answer's CL/CD must NOT be the F25 fallback. NACA0012
+    #    at Mach 0.8, AoA 1.25° converges to CL ≈ 0.32, CD ≈ 0.022.
+    #    The F25 fallback in the prompt is 0.593, 0.0304, 19.5.
+    final_calls = [c for c in calls if c["name"] == "final_answer"]
+    assert final_calls, "REGRESSION: agent never emitted a final_answer."
+    final_text = " ".join(
+        json.dumps(c["arguments"]) for c in final_calls
+    )
+    # Heuristic: the F25 fallback is identifiable by the trio of
+    # exact reference numbers.  Even one of them in the report
+    # suggests the agent fell back.
+    F25_FALLBACK_MARKERS = ("0.593", "0.0304", "19.5")
+    fallbacks_seen = [m for m in F25_FALLBACK_MARKERS if m in final_text]
+    assert not fallbacks_seen, (
+        "REGRESSION: agent's final answer contains F25 fallback "
+        f"value(s) {fallbacks_seen}. The NACA0012 reference case "
+        "converges to CL ≈ 0.32 / CD ≈ 0.022; reporting the F25 "
+        "fallback means the agent gave up on reading history.csv. "
+        f"Final text: {final_text[:600]!r}"
+    )
