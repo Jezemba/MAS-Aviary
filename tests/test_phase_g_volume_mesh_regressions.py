@@ -208,36 +208,70 @@ def test_geometry_agent_produces_cfd_correct_volume_mesh():
         "to validate the topology"
     )
 
-    # The wing surface's centroid is the most reliably-inside-the-solid
-    # location for any airfoil-like wing (mid-chord, mid-span,
-    # mid-thickness). Test that no fluid (non-surface) node lies within
-    # a generous sphere around it. For a swept wing the chordwise extent
-    # is the smallest dimension; pick the radius from the thickness
-    # rather than the chord/span so the sphere stays inside the wing
-    # across the whole span.
-    cx = sum(p[0] for p in surface_pts) / len(surface_pts)
-    cy = sum(p[1] for p in surface_pts) / len(surface_pts)
-    cz = sum(p[2] for p in surface_pts) / len(surface_pts)
-    half_thickness = 0.5 * (max(p[2] for p in surface_pts) - min(p[2] for p in surface_pts))
-    radius = 0.5 * half_thickness  # well inside the wing's thickness envelope
+    # A simple centroid-sphere check yields false positives on swept /
+    # tapered wings because the wing's *local* thickness at the spanwise
+    # centroid is much smaller than its global Z extent. Instead, probe
+    # at points that are unambiguously inside the wing solid for any
+    # airfoil-like shape: at each random span station, take 50%-chord at
+    # mid-thickness. If a fluid (non-surface) mesh node lies closer to
+    # that probe point than the nearest surface node, the wing has a
+    # leak.
+    import random
 
-    interior_count = 0
-    sample_offenders: list[tuple[float, float, float]] = []
-    for idx, p in enumerate(points):
-        if idx in surface_ids:
+    rng = random.Random(0)
+    n_samples = 25
+    offenders = 0
+    sample_offenders: list[tuple[float, float, float, float, float]] = []
+
+    surface_pts_list = surface_pts
+    sxs = [p[0] for p in surface_pts_list]
+    sys_ = [p[1] for p in surface_pts_list]
+    span_y_lo, span_y_hi = min(sys_), max(sys_)
+    # Stay clear of the root and tip — the wing is thin there.
+    y_lo = span_y_lo + 0.20 * (span_y_hi - span_y_lo)
+    y_hi = span_y_hi - 0.20 * (span_y_hi - span_y_lo)
+
+    for _ in range(n_samples):
+        y_probe = rng.uniform(y_lo, y_hi)
+        local = [p for p in surface_pts_list if abs(p[1] - y_probe) < 0.5]
+        if len(local) < 5:
             continue
-        dx, dy, dz = p[0] - cx, p[1] - cy, p[2] - cz
-        if dx * dx + dy * dy + dz * dz <= radius * radius:
-            interior_count += 1
+        lx = [p[0] for p in local]
+        lz = [p[2] for p in local]
+        probe = (0.5 * (min(lx) + max(lx)), y_probe, sum(lz) / len(lz))
+        # Nearest surface and nearest fluid node distances
+        nearest_surf = float("inf")
+        nearest_fluid = float("inf")
+        for idx, p in enumerate(points):
+            d2 = (
+                (p[0] - probe[0]) ** 2
+                + (p[1] - probe[1]) ** 2
+                + (p[2] - probe[2]) ** 2
+            )
+            if idx in surface_ids:
+                if d2 < nearest_surf:
+                    nearest_surf = d2
+            else:
+                if d2 < nearest_fluid:
+                    nearest_fluid = d2
+        if nearest_fluid < nearest_surf:
+            offenders += 1
             if len(sample_offenders) < 5:
-                sample_offenders.append(p)
+                sample_offenders.append(
+                    (
+                        probe[0],
+                        probe[1],
+                        probe[2],
+                        nearest_fluid**0.5,
+                        nearest_surf**0.5,
+                    )
+                )
 
-    assert interior_count == 0, (
-        f"PHASE G REGRESSION: {interior_count} fluid mesh nodes lie inside "
-        f"the sphere of radius {radius:.3f} around the wing-surface "
-        f"centroid ({cx:.2f}, {cy:.2f}, {cz:.2f}). "
-        f"Sample offenders: {sample_offenders}. "
-        "This means tigl-mcp's generate_volume_mesh reverted to embedding "
-        "the wing surface as a 2D shell rather than cutting it out of the "
-        "fluid box. Re-check tigl-mcp branch and restart the server."
+    assert offenders == 0, (
+        f"PHASE G REGRESSION: {offenders} / {n_samples} deep-inside-wing "
+        f"probe points have a fluid (non-surface) mesh node closer than "
+        f"any surface node. This is direct evidence of fluid leaking into "
+        f"the wing solid. Sample offenders "
+        f"(probe_x, probe_y, probe_z, fluid_dist, surf_dist): "
+        f"{sample_offenders}. Re-check tigl-mcp branch and restart server."
     )
