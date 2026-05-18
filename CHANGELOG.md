@@ -1,5 +1,61 @@
 ## [Unreleased]
 
+### 2026-05-18 (Phase G — TDD: root-cause unphysical CL/CD, fix in tigl-mcp)
+
+Re-launched the full live pipeline with all Phase F.* fixes in place
+(Run #9, wandb rj3iv6tx). The Phase F data-plane plumbing all worked:
+``set_mesh`` no longer hit "Incorrect padding", SU2 reached
+``exit_code: 0`` with ``SOLVER_CONVERGED: true`` and
+``RESIDUAL_DROP_ORDERS: 9.22``, the aero agent read the real CL/CD
+from history.csv instead of falling back to the F25 reference.
+
+But the values themselves were nonphysical:
+``CL_CRUISE: 2.28, CD_CRUISE: -0.20, L_OVER_D: -11.4``. Negative drag
+is impossible for a closed body in steady flow. Diagnosis:
+
+  1. Re-ran SU2 on the same mesh at AOA=0 → still got CD = -0.0043
+     (negative). Rules out an AoA-handling bug.
+  2. Inspected the surface Cp distribution in surface.vtu: Cp_max =
+     1.144 (exactly the compressible stagnation Cp at M=0.78), but
+     located at the *trailing edge* (X=18.84) rather than the leading
+     edge (X=12.75). Suction peak ended up at the LE.
+  3. Probed the volume solution INSIDE the wing solid envelope
+     (Y≈3, X≈14.5, Z≈-1.3) — found 5 fluid mesh nodes there with
+     |V|≈177 m/s and reduced pressure (23.2 kPa vs freestream 26.5).
+     The wing was not a closed body; fluid was flowing through it.
+
+Root cause: ``tigl-mcp/src/tigl_mcp/tools/volume_mesh.py`` used
+``gmsh.model.mesh.embed(2, ac_tags, 3, box_tag)`` to insert the
+aircraft STL as a 2D shell inside the fluid box, then reversed its
+normals. There was no boolean cut subtracting the wing volume from
+the far-field. SU2 was therefore integrating pressure on both faces
+of an open shell, producing meaningless force coefficients.
+
+Fix lives in tigl-mcp, not MAS-Aviary. User authorized a one-off
+exception to the "Do NOT modify MCP server code" rule on branch
+``feat/cfd-ready-volume-mesh`` (Jezemba fork only). The new
+implementation:
+
+  1. Sews the STL triangulation into a watertight OCC shell
+     (``pythonocc.BRepBuilderAPI_Sewing``), promotes it to a solid,
+     writes BREP.
+  2. Imports the BREP into gmsh OCC and runs
+     ``gmsh.model.occ.cut([(3, box)], [(3, aircraft)])`` so the fluid
+     domain wraps the body rather than passing through it.
+  3. Recovers ``farfield`` / ``aircraft`` markers by surface centroid
+     (box-edge vs. interior) so existing SU2 configs with
+     ``MARKER_EULER=(aircraft)`` keep working.
+
+Regression test ``tigl-mcp/tests/test_volume_mesh_cfd_correctness.py``
+pins down the topology contract: zero fluid nodes inside the input
+solid. Written FIRST per project TDD rule; failed on the old code
+(13 interior nodes for a unit sphere, min(r)=0.015) and passes on the
+new code (0 interior nodes, min(r)=1.000 exactly). Commit ``30e3474``
+on Jezemba/tigl-mcp.
+
+The MAS-Aviary side is unchanged. The fix takes effect after the
+tigl-mcp server is restarted on the new branch.
+
 ### 2026-05-16 (Phase F.3 — TDD: tolerate every ref serialization format the LLM emits)
 
 Run #8 exposed a new failure: the aero agent received the data plane's
