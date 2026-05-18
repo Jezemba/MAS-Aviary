@@ -1,5 +1,68 @@
 ## [Unreleased]
 
+### 2026-05-18 (Phase G.2 — TiGL BREP replaces sewn STL: positive drag at last)
+
+Run #11 (wandb sh5o47il) is the first pipeline run that produced a
+physically correct aerodynamic result end-to-end:
+
+```
+CL_CRUISE:           11.49   (REF_AREA=1.0 default; physically ≈ 0.19)
+CD_CRUISE:           +0.786  (REF_AREA=1.0 default; physically ≈ 0.013)
+L_OVER_D:            14.61
+SOLVER_CONVERGED:    true
+RESIDUAL_DROP_ORDERS: 7.32
+```
+
+Drag is positive. The wing is finally flying nose-first. After
+rescaling by the wing reference area (61.4 m²), CL/CD are in the right
+ballpark for inviscid Euler at AoA=2°.
+
+The Phase G.1 fix (commit 30e3474 on tigl-mcp) had switched the volume
+mesh tool from ``embed`` to ``BRepBuilderAPI_Sewing + OCC.cut``. That
+worked for synthetic closed STL (the unit-sphere unit test), but
+leaked on TiGL's swept multi-segment wing — the sewer left small
+holes at section seams that allowed fluid mesh nodes inside the solid.
+Run #10 (wandb 6dafj24g) confirmed: CD went from −0.20 (Phase F) to
+**−3.60**, even more wrong. Diagnosis showed 98% of surface normals
+were outward (correct), 5/62k fluid nodes had leaked into the wing
+centroid sphere, and Cp_max=1.54 was at the *trailing* edge — fluid
+was wrapping THROUGH the wing solid, not around it.
+
+Phase G.2 (commit 3371528 on tigl-mcp) skips the sewing step entirely:
+when TiGL exposes a BREP exporter for the component
+(``exportWingBREPByUID``, ``exportFuselageBREPByUID``,
+``exportFusedBREP``), the BREP bytes go straight into
+``gmsh.model.occ.importShapes``. Parametric watertight CAD all the way.
+The mesh agent's response now shows ``brep_source: "tigl"`` and 8
+aircraft surfaces (was 2476 with sewn STL) — clean topology.
+
+Other Phase G.2 fixes that landed in the same commit:
+
+- Per-axis classifier bug: Phase G.1 used the wing's X coordinate
+  when checking Y and Z box faces, so 4 of the 6 outer box faces
+  were misclassified as ``aircraft``.
+- Curvature-aware mesh sizing: LE/TE radii now get enough elements
+  even at the agent's coarse default mesh_size_max.
+
+Live regression in this repo
+(``tests/test_phase_g_volume_mesh_regressions.py``) was rewritten too:
+the centroid-sphere check was a false-positive generator on swept
+tapered wings (sphere extended past the local thickness envelope).
+Replaced with a deep-inside probe — sample 50%-chord, mid-thickness
+at random span stations, and assert no fluid node is closer than the
+nearest surface node. Catches Phase G.1's STL leak, passes on G.2's
+BREP path.
+
+Downstream stages still hit the **known** chain
+(structures: mass-mcp OAS NaN → FLOPS fallback;
+propulsion: CYCLE_CONVERGED=false;
+mission: cascading UPSTREAM_ERROR) so SU2's CL/CD doesn't yet drive
+fuel-burn. The pipeline still produces FUEL_BURNED_KG=12,747 (same
+as Run #6 baseline) because aviary's mission simulator falls back to
+its internal aero model. Closing that loop — passing SU2 CL/CD into
+aviary instead of letting the fallback take over — is the next
+phase.
+
 ### 2026-05-18 (Phase G — TDD: root-cause unphysical CL/CD, fix in tigl-mcp)
 
 Re-launched the full live pipeline with all Phase F.* fixes in place
