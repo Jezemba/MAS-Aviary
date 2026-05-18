@@ -316,26 +316,75 @@ def _intercept_binaries(tool_name: str, data: dict) -> dict:
 
 # ── Request middleware ───────────────────────────────────────────────────────
 
+def _extract_ref_key(value) -> str | None:
+    """Recognize the ways an LLM might serialize a `{"ref": "key"}` dict
+    and return the underlying key, or None if value is not a ref shape.
+
+    Handles all observed patterns:
+      • dict:        {"ref": "key", "size_bytes": 123}
+      • bare string: "key"
+      • prefixed:    "ref:key"  (with arbitrary surrounding whitespace)
+      • JSON-string: '{"ref": "key"}'  (mcpadapt anyOf collapse)
+
+    Returns the key as a plain string in all cases, or None when the
+    value is not recognizable as a ref. ``None`` lets the caller decide
+    whether to treat the value as a literal or fall through.
+    """
+    # dict form
+    if isinstance(value, dict) and "ref" in value:
+        return value["ref"] if isinstance(value["ref"], str) else None
+
+    if not isinstance(value, str):
+        return None
+
+    stripped = value.strip()
+
+    # prefixed string form: "ref:keyname" with arbitrary whitespace
+    if stripped.lower().startswith("ref:"):
+        return stripped[4:].strip() or None
+
+    # JSON-stringified dict form: '{"ref": "keyname"}'
+    if stripped.startswith("{") and "ref" in stripped:
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict) and isinstance(parsed.get("ref"), str):
+                return parsed["ref"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
+
+
 def resolve_request(tool_name: str, kwargs: dict) -> dict:
-    """Pre-process tool call arguments."""
+    """Pre-process tool call arguments — resolve data-store refs that
+    the LLM may have produced in any of several formats (see
+    _extract_ref_key), inject session_id and cpacs_file_path."""
     resolved = {}
     mcp_name = _tool_server_map.get(tool_name, "")
 
     for key, value in kwargs.items():
-        # Resolve data store refs (dict with "ref" key)
-        if isinstance(value, dict) and "ref" in value:
-            ref_key = value["ref"]
-            payload = _design_state.data_store.get(ref_key) if _design_state else None
-            if payload is not None:
-                logger.info("Resolved ref %s for %s.%s", ref_key, tool_name, key)
-                resolved[key] = payload
-                continue
-        # Resolve plain string refs
+        ref_key = _extract_ref_key(value)
+        if ref_key is not None and _design_state and ref_key in _design_state.data_store:
+            payload = _design_state.data_store[ref_key]
+            logger.info(
+                "Resolved ref '%s' (from %r) for %s.%s",
+                ref_key, value if not isinstance(value, str) else value[:40],
+                tool_name, key,
+            )
+            resolved[key] = payload
+            continue
+
+        # Bare string that happens to BE a data store key.
         if isinstance(value, str) and _design_state and value in _design_state.data_store:
             payload = _design_state.data_store[value]
             logger.info("Resolved string ref %s for %s.%s", value, tool_name, key)
             resolved[key] = payload
             continue
+
+        # Not a ref — pass through unchanged (including unrecognized
+        # "ref:nonexistent" strings, so the underlying server errors
+        # loudly rather than the middleware silently swapping in a
+        # different payload).
         resolved[key] = value
 
     # Auto-inject session_id

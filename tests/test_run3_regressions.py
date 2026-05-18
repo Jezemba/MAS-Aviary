@@ -878,3 +878,99 @@ def test_simulator_does_not_loop_on_aviary_setup_error():
     assert n_final <= 1, (
         f"REGRESSION: final_answer emitted {n_final} times."
     )
+
+
+# ── Run #8 regression: mesh-ref handoff from geometry to SU2 ──────────────────
+
+@pytest.mark.live_mcp_llm
+def test_mesh_ref_handoff_to_su2():
+    """Run #8 (2026-05-16) regression: the geometry agent produced a
+    volume mesh and the data plane stored it under a ref. The aero
+    agent then forwarded that ref to su2.set_mesh, but the LLM
+    serialized the dict as the literal string "ref:keyname" instead of
+    {"ref": "keyname"}. The middleware did not recognize that pattern,
+    so set_mesh received the string, tried to base64-decode it, and
+    failed with "Incorrect padding". SU2 never ran; the aero agent
+    fell back to F25 reference values.
+
+    The fix extended resolve_request to recognize multiple ref
+    serialization formats. This live test confirms the fix end-to-end
+    against a real LLM that may pick ANY of those formats at runtime.
+
+    Test: drive geometry → su2 mesh transfer with a real agent and
+    assert set_mesh succeeded (no "Incorrect padding" / "Failed to set
+    mesh" error).
+
+    Cost: ~5-10 Claude calls and ~30s of gmsh. Run on-demand.
+    """
+    cpacs_path = (
+        "/home/aipexws3/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml"
+    )
+
+    agent = _make_agent(
+        tool_names=[
+            "open_cpacs",
+            "get_configuration_summary",
+            "generate_volume_mesh",
+            "close_cpacs",
+            "create_su2_session",
+            "set_mesh",
+        ],
+        servers=["tigl", "su2"],
+        max_steps=10,
+        instructions=(
+            "You are bridging geometry and aerodynamics. Open the CPACS "
+            "file, build a coarse volume mesh on Wing1, then push the "
+            "resulting mesh into a new SU2 session via set_mesh. The "
+            "geometry response will contain a mesh_base64 field whose "
+            "value is a ref to the actual mesh bytes — forward it to "
+            "set_mesh exactly as you receive it. Report what set_mesh "
+            "returned."
+        ),
+    )
+    agent.run(
+        f"Open the CPACS at {cpacs_path}. Generate a coarse volume mesh "
+        "on Wing1 (surface_mesh_size=1.0, boundary_layer_enabled=False). "
+        "Create an SU2 session and push the mesh into it via set_mesh. "
+        "Report the set_mesh response."
+    )
+
+    calls = _collect_tool_calls(agent)
+    set_mesh_calls = [c for c in calls if c["name"] == "set_mesh"]
+
+    assert set_mesh_calls, (
+        "REGRESSION: agent never reached set_mesh. Memory: "
+        f"{[c['name'] for c in calls]}"
+    )
+
+    # The bug signature: set_mesh observation reports a base64-decode
+    # error because the mesh ref didn't resolve.
+    BASE64_FAILURE_MARKERS = (
+        "Incorrect padding",
+        "Failed to set mesh",
+        "Invalid base64",
+        "binascii.Error",
+        "Invalid character",
+    )
+    for call in set_mesh_calls:
+        obs = call["observation"] or ""
+        for marker in BASE64_FAILURE_MARKERS:
+            assert marker not in obs, (
+                f"REGRESSION: set_mesh observation contains '{marker}' — "
+                "the mesh ref did not resolve. This is the Run #8 bug. "
+                f"Agent passed: {call['arguments'].get('mesh_base64', '<absent>')!r}. "
+                f"Observation: {obs[:400]!r}"
+            )
+
+    # Positive — at least one set_mesh call must have written a mesh_path
+    # in its observation (indicates the bytes were decoded and saved).
+    success = any(
+        '"mesh_path"' in (c["observation"] or "")
+        and '"error"' not in (c["observation"] or "")
+        for c in set_mesh_calls
+    )
+    assert success, (
+        "REGRESSION: no set_mesh call returned a non-error response "
+        "containing mesh_path. Set_mesh attempted but none succeeded. "
+        f"Observations: {[c['observation'][:200] for c in set_mesh_calls]}"
+    )

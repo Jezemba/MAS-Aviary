@@ -1,5 +1,53 @@
 ## [Unreleased]
 
+### 2026-05-16 (Phase F.3 — TDD: tolerate every ref serialization format the LLM emits)
+
+Run #8 exposed a new failure: the aero agent received the data plane's
+``{"ref": "generate_volume_mesh__mesh_base64", "size_bytes": N}`` from
+the geometry stage but forwarded it to su2's set_mesh as the *string*
+``"ref:generate_volume_mesh__mesh_base64"``. The middleware did not
+recognize that pattern, so set_mesh received the raw string, tried to
+base64-decode it, and failed with "Incorrect padding". SU2 never ran;
+the agent reported the F25 fallback (SOLVER_CONVERGED=false,
+RESIDUAL_DROP_ORDERS=0).
+
+Run #7 had different bugs (data plane intercepted the convergence trace
+F.1; AERO_COEFF missing from history F.2). Run #8 hit this third bug
+which has the same flavor: agent-formatting drift between runs at
+temperature=0.
+
+Fix shipped in two parts, this time TDD-style (test FIRST, then fix):
+
+  1. New `_extract_ref_key` helper in src/tools/data_plane.py recognizes
+     four ref formats and returns the underlying key:
+        • dict:        {"ref": "key", ...}
+        • bare string: "key"  (when the string IS a data_store key)
+        • prefixed:    "ref:key"  with arbitrary whitespace
+        • JSON-string: '{"ref": "key"}'  (mcpadapt anyOf collapse)
+     resolve_request uses this; everything else passes through unchanged
+     so a typo'd ref still errors loudly on the server side.
+
+  2. Unit tests in tests/test_data_plane.py::TestResolveRequestRefFormats
+     cover all four formats plus the negative cases (unknown string and
+     unknown-ref-key both pass through). Written BEFORE the fix —
+     established the failing-test baseline, then made them green.
+
+  3. Live regression in tests/test_run3_regressions.py::
+     test_mesh_ref_handoff_to_su2 drives geometry → set_mesh against
+     real MCPs and Claude and asserts:
+        • set_mesh was reached;
+        • observation does not contain "Incorrect padding" /
+          "Failed to set mesh" / similar base64-decode markers;
+        • at least one call returned a mesh_path (success).
+     PASSED in 216 s — would have caught Run #8 in under 4 min.
+
+Process lesson the user has flagged THREE times in this conversation:
+when a change affects what the agent SEES (data plane / tool
+responses / prompts), an agent-level regression must catch the bug —
+not a 10-minute live pipeline run. Run #7 and Run #8 were exactly
+this pattern. Going forward, any data-plane / prompt change ships
+with a live regression scenario in the same commit.
+
 ### 2026-05-16 (Phase F.2 — write CL/CD to history.csv so the agent can read them)
 
 Inspecting Run #7's wandb agent reasoning closely revealed a SECOND

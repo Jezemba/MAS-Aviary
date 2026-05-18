@@ -15,6 +15,7 @@ from src.tools.data_plane import (
     _summarize_payload,
     init_data_plane,
     intercept_response,
+    resolve_request,
 )
 
 
@@ -141,6 +142,115 @@ class TestInterceptResponse:
         # statistics is small, passes through
         assert out["statistics"] == {"cells": 350000}
 
+    def test_read_history_csv_passes_through_no_interception_PLACEHOLDER(self, fresh_state):  # noqa
+        """Placeholder name to keep below test in this file."""
+        pass
+
+
+class TestResolveRequestRefFormats:
+    """The data plane stores large payloads under a key and hands the LLM
+    ``{"ref": "key", "size_bytes": N}``. When the LLM then forwards that
+    ref into a downstream tool, it picks ONE of several reasonable
+    formats based on how it interpreted the dict. resolve_request must
+    handle all of them — or set_mesh / set_inputs etc. receive a literal
+    string and the underlying MCP server fails with a base64-decode
+    error ("Incorrect padding" — observed in Run #8 2026-05-16).
+
+    Every format below is one a real Claude run has produced at temp=0.
+    They differ only in how the LLM serialized the dict the data plane
+    handed it. The middleware should treat them all as the same ref.
+    """
+
+    @pytest.fixture
+    def stored_payload(self):
+        """Pre-populate DesignState.data_store with a fake mesh payload."""
+        ds = DesignState()
+        ds.data_store["generate_volume_mesh__mesh_base64"] = "AAAA" * 1000  # 4 KB stand-in
+        init_data_plane(ds, {"set_mesh": "su2"})
+        return ds
+
+    def test_dict_form_resolves(self, stored_payload):
+        """{"ref": "key"} — the canonical format the data plane emits."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": {"ref": "generate_volume_mesh__mesh_base64"}},
+        )
+        assert out["mesh_base64"] == "AAAA" * 1000
+
+    def test_dict_form_with_extra_keys_resolves(self, stored_payload):
+        """The summary dict carries ref + size_bytes. Both should work."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": {
+                "ref": "generate_volume_mesh__mesh_base64",
+                "size_bytes": 4000,
+            }},
+        )
+        assert out["mesh_base64"] == "AAAA" * 1000
+
+    def test_bare_string_key_resolves(self, stored_payload):
+        """Just the key as a plain string — agent often picks this shape."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": "generate_volume_mesh__mesh_base64"},
+        )
+        assert out["mesh_base64"] == "AAAA" * 1000
+
+    def test_ref_prefix_string_resolves(self, stored_payload):
+        """LLM serialized the dict as a `ref:key` string (the Run #8 bug).
+
+        This is what burned Run #8: the agent received
+        {"ref": "generate_volume_mesh__mesh_base64"} from the previous
+        step, then forwarded it to set_mesh as the STRING
+        `"ref:generate_volume_mesh__mesh_base64"` instead of the dict.
+        The middleware must recognize this as a ref-to-key and resolve.
+        """
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": "ref:generate_volume_mesh__mesh_base64"},
+        )
+        assert out["mesh_base64"] == "AAAA" * 1000
+
+    def test_ref_prefix_with_whitespace_resolves(self, stored_payload):
+        """Same as above but with whitespace variants the LLM might produce."""
+        for value in ("ref: generate_volume_mesh__mesh_base64",
+                      "ref:  generate_volume_mesh__mesh_base64",
+                      " ref:generate_volume_mesh__mesh_base64 "):
+            out = resolve_request("set_mesh", {"mesh_base64": value})
+            assert out["mesh_base64"] == "AAAA" * 1000, (
+                f"ref-prefix variant did not resolve: {value!r}"
+            )
+
+    def test_json_string_dict_resolves(self, stored_payload):
+        """LLM might forward the dict as a JSON-string (mcpadapt anyOf
+        collapse). resolve_request should handle this too."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": '{"ref": "generate_volume_mesh__mesh_base64"}'},
+        )
+        assert out["mesh_base64"] == "AAAA" * 1000
+
+    def test_unknown_string_passes_through(self, stored_payload):
+        """A string that is NOT a known ref must not be munged."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": "this_is_not_a_ref"},
+        )
+        assert out["mesh_base64"] == "this_is_not_a_ref"
+
+    def test_unknown_ref_prefix_passes_through(self, stored_payload):
+        """A `ref:` prefix pointing at an unknown key must NOT be silently
+        swapped to something else — let the server error so we notice."""
+        out = resolve_request(
+            "set_mesh",
+            {"mesh_base64": "ref:nonexistent_key"},
+        )
+        # Stays as-is; the underlying server's base64 decode will fail
+        # loudly which is the right outcome here.
+        assert out["mesh_base64"] == "ref:nonexistent_key"
+
+
+class TestRunHistoryPassthroughOriginal:
     def test_read_history_csv_passes_through_no_interception(self, fresh_state):
         """``read_history_csv`` is in _PASSTHROUGH_TOOLS — its rows ARE
         the analytical content the agent reasons about. Intercepting
