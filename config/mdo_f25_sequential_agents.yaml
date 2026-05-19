@@ -167,6 +167,15 @@ templates:
             WING_SPAN_M: <BASELINE value from step-5 get_wing_summary>
             WING_SWEEP_DEG: <value or null if D150 returns null>
             WING_AREA_M2: <BASELINE value from step-5 get_wing_summary>
+            # SU2 needs these for proper force/moment normalization
+            # (default REF_AREA=1.0 yields CL/CD ~60× too large in
+            # magnitude). Read straight from the get_wing_summary
+            # response — do NOT compute or estimate.
+            WING_REF_AREA_M2: <reference_area from get_wing_summary>
+            WING_MAC_LENGTH_M: <mac_length from get_wing_summary>
+            WING_MAC_QC_X: <mac_quarter_chord.x>
+            WING_MAC_QC_Y: <mac_quarter_chord.y>
+            WING_MAC_QC_Z: <mac_quarter_chord.z>
             FUSELAGE_LENGTH_M: <value or null>
             GEOMETRY_CHANGES: <list of INTENT values you set in step 4,
                               what you would have liked the geometry
@@ -230,7 +239,12 @@ templates:
           - L/D ratio = CL / CD
           - Convergence residual (should drop 4+ orders of magnitude)
 
-          Use sample_surface_solution to check for flow separation:
+          Use sample_surface_solution to check for flow separation.
+          IMPORTANT: ``relative_path`` MUST be ``"surface_flow.csv"``,
+          NOT ``"surface.vtu"`` — the tool opens the file as text/CSV
+          and ``surface.vtu`` is binary (you'll get a UTF-8 decode
+          error). The CSV is emitted only because OUTPUT_FILES
+          includes SURFACE_CSV in the preset above.
           - Skin friction coefficient Cf < 0 indicates separated flow (constraint C8)
           - Separation near trailing edge or wing tip is a design concern
 
@@ -274,6 +288,19 @@ templates:
                  "MATH_PROBLEM": "DIRECT",
                  "RESTART_SOL": "NO",
                  "REF_DIMENSIONALIZATION": "DIMENSIONAL",
+                 # ── Reference geometry ───────────────────────────────
+                 # Plug these in from the geometry stage's DESIGN_STATE
+                 # block (fields WING_REF_AREA_M2, WING_MAC_LENGTH_M,
+                 # WING_MAC_QC_X/Y/Z). Without them SU2 defaults A_ref
+                 # to 1.0 m² and CL/CD come out ~60× too large in
+                 # magnitude (Phase G.3 finding from Run #11 —
+                 # CL=11.49 → real ≈ 0.19 after rescaling). The signs
+                 # are correct; only the scaling is wrong.
+                 "REF_AREA":             <WING_REF_AREA_M2 from upstream DESIGN_STATE>,
+                 "REF_LENGTH":           <WING_MAC_LENGTH_M from upstream DESIGN_STATE>,
+                 "REF_ORIGIN_MOMENT_X":  <WING_MAC_QC_X from upstream DESIGN_STATE>,
+                 "REF_ORIGIN_MOMENT_Y":  <WING_MAC_QC_Y from upstream DESIGN_STATE>,
+                 "REF_ORIGIN_MOMENT_Z":  <WING_MAC_QC_Z from upstream DESIGN_STATE>,
                  # ── Solver core (Euler) ──────────────────────────────
                  "SOLVER": "EULER",
                  "KIND_TURB_MODEL": "SA",
@@ -312,6 +339,12 @@ templates:
                  # to F25 reference values (Run #7 2026-05-16 finding).
                  "HISTORY_OUTPUT":  "( ITER, RMS_RES, AERO_COEFF )",
                  "SCREEN_OUTPUT":   "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
+                 # SU2's default OUTPUT_FILES skips the surface CSV, so
+                 # sample_surface_solution errors with a UTF-8 decode
+                 # failure when it tries to open the binary surface.vtu.
+                 # Add SURFACE_CSV so we get surface_flow.csv too
+                 # (Run #11 finding, 2026-05-18).
+                 "OUTPUT_FILES":    "( RESTART, PARAVIEW, SURFACE_CSV )",
                  # ── Boundary markers ─────────────────────────────────
                  # These MUST match the names baked into the volume mesh
                  # produced by tigl.generate_volume_mesh:
