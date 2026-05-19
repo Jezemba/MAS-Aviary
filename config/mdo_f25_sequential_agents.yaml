@@ -823,6 +823,41 @@ templates:
                optimizer_max_iter=200
              )
 
+          ── PHASE H: PIPE SU2's CL/CD INTO AVIARY ────────────────────────
+          The aero stage's DESIGN_STATE carries CL_CRUISE and CD_CRUISE
+          from a real SU2 Euler solve. Without telling aviary, the
+          mission uses FLOPS regression aero and the SU2 numbers don't
+          actually drive fuel burn (Runs #6, #9, #11, #12 all produced
+          FUEL_BURNED_KG=12,747 regardless of the geometry sweep).
+          Wire them through these TWO additional parameter keys:
+
+          - ``Mission.Design.LIFT_COEFFICIENT`` = CL_CRUISE
+            Sizes aviary so the cruise-phase trim CL matches SU2.
+
+          - ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`` = scale_factor
+            Computed deterministically below. SU2 reports only
+            *inviscid* CD (no skin friction). Reconstruct realistic
+            cruise CD by adding a friction estimate, then divide by
+            aviary's drag-polar default to get the multiplicative
+            factor aviary applies on top of its own buildup:
+
+              CD_realistic        = CD_CRUISE + 0.0050   # add friction
+              AR_eff              = max(WING_AR_FROM_GEOMETRY_OR_DEFAULT, 8.0)
+              CD_aviary_default   = 0.022 + CL_CRUISE**2 / (3.14159 * AR_eff * 0.85)
+              scale_factor        = CD_realistic / CD_aviary_default
+              # Clamp to a sane range
+              scale_factor        = max(0.5, min(scale_factor, 2.0))
+
+            Where 0.0050 is the typical fully-turbulent skin-friction
+            CD increment for a narrow-body wing+fuselage at cruise Re,
+            and 0.022 is aviary's FLOPS-regression CD0 baseline for
+            the A320-class bench file. Both are *prompt-fixed* — do
+            not invent your own numbers.
+
+            If CL_CRUISE is missing from the aero handoff (UPSTREAM_ERROR
+            cascade), skip BOTH of these parameters — letting aviary
+            use its internal aero is the right fallback.
+
           4. Call set_aircraft_parameters(session_id, parameters={...})
              ONCE with the F25 baseline values, OVERRIDDEN by any real
              values produced by upstream stages. Use this mapping
@@ -848,6 +883,12 @@ templates:
              │                              │ vs. F25 reference; else 1.3      │
              │                              │ (1.0 underpowers F25-class       │
              │                              │ mass, causes climb NaN)          │
+             │ Mission.Design.LIFT_COEFFICIENT │ aero.CL_CRUISE if present;    │
+             │                              │ skip if UPSTREAM_ERROR cascaded  │
+             │ Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR │ scale_factor      │
+             │                              │ computed via the Phase H        │
+             │                              │ formula above (CL & CD pulled   │
+             │                              │ from aero DESIGN_STATE).        │
              └──────────────────────────────┴──────────────────────────────────┘
 
              Do NOT set Aircraft.Wing.SPAN — Aviary derives it from AREA
@@ -974,6 +1015,11 @@ templates:
             WING_MASS_KG: <value>
             RESERVE_FUEL_KG: <value>
             ZERO_FUEL_WEIGHT_KG: <computed>
+            # Phase H: aviary's actually-flown cruise CL/CD (from
+            # extract_results.cruise_cl_avg / cruise_cd_avg). Lets the
+            # MDO integrator confirm aviary matched the SU2 target.
+            CRUISE_CL_AVIARY: <cruise_cl_avg from get_results>
+            CRUISE_CD_AVIARY: <cruise_cd_avg from get_results>
             RUNTIME_S: <wall clock seconds>
             CONVERGENCE_NOTE: <any observations about the optimizer>
         allowed_tools:
