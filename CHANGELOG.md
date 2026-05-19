@@ -1,5 +1,67 @@
 ## [Unreleased]
 
+### 2026-05-18 (Phase G.3 — REF_AREA wiring + surface sampler defense: physical CL/CD)
+
+Run #12 (wandb zjqntn6j) is the first pipeline run where SU2 reports
+CL and CD at their physically expected magnitudes:
+
+```
+CL_CRUISE:            0.187         (Run #11 raw: 11.49; ÷61.39 = 0.187 ✓)
+CD_CRUISE:            0.01281
+L_OVER_D:             14.61
+SOLVER_CONVERGED:     true
+RESIDUAL_DROP_ORDERS: 7.42
+sample_surface_solution: returned data, no UTF-8 crash
+```
+
+Three coupled fixes landed in this commit (7f8f8be) + the two MCP
+branches:
+
+1. **REF_AREA / REF_LENGTH / REF_ORIGIN_MOMENT propagation.**
+   Phase G.2 (Run #11) gave the right *sign* on CD but the
+   coefficients were ~60× too large in magnitude because the agent's
+   SU2 preset never set REF_AREA — SU2 defaulted A_ref to 1.0 m².
+   Geometry stage now hands ``WING_REF_AREA_M2``,
+   ``WING_MAC_LENGTH_M``, and ``WING_MAC_QC_{X,Y,Z}`` through
+   DESIGN_STATE; aero plugs them in verbatim. Run #12 confirms the
+   agent passed ``REF_AREA: 61.39076274891849`` (the value
+   ``get_wing_summary`` returned for ``Wing1``) and SU2's history
+   came out at the physically expected scale.
+
+2. **SU2 OUTPUT_FILES now includes SURFACE_CSV.** Without it SU2
+   only writes ``surface.vtu`` (binary), and the aero agent's
+   ``sample_surface_solution`` call crashed with
+   ``'utf-8' codec can't decode byte 0x94`` (Run #11 finding).
+   Preset now ships ``OUTPUT_FILES= (RESTART, PARAVIEW, SURFACE_CSV)``
+   and the prompt explicitly tells the agent to call
+   ``sample_surface_solution(relative_path="surface_flow.csv", ...)``.
+
+3. **su2-mcp defensive guard** (branch
+   ``Jezemba/su2-mcp@feat/csv-only-surface-sampler``, commit
+   8e778be). ``sample_surface_solution`` used to open any caller
+   path as UTF-8 text — fine for ``surface_flow.csv``, fatal for
+   ``surface.vtu``. The function now (a) rejects ``.vtu/.vtk/.dat/
+   .plt/.bin/.szplt`` suffixes with a ``validation_error`` that
+   names the right CSV, and (b) catches ``UnicodeDecodeError``
+   around the CSV parser and rewrites it as the same friendly error.
+   TDD regression in
+   ``tigl-mcp/tests/test_sample_surface_solution_binary.py``
+   reproduces the production 0x94-byte crash and asserts the new
+   error shape.
+
+Bonus from Run #12: ``CYCLE_CONVERGED: true`` this time (was false
+in Run #11), CONSTRAINTS_PASSED: 3/5 (was 2/7), pipeline reached
+DONE: 1 completed, 0 failed in ~12 min.
+
+The fuel-burn number (``FUEL_BURNED_KG: 12,747``) is **unchanged**
+from Runs #6, #9, #11. That's because aviary's mission simulator
+falls back to its internal aero/mass model when upstream stages
+hit known errors (mass-mcp OAS NaN → FLOPS fallback; mission
+``AVIARY_SETUP_ERROR`` cascade). Closing that loop — actually
+piping SU2's CL/CD into aviary instead of letting its fallback take
+over — is the next phase. The aero stage and surface sampling are
+now both physically correct end-to-end.
+
 ### 2026-05-18 (Phase G.2 — TiGL BREP replaces sewn STL: positive drag at last)
 
 Run #11 (wandb sh5o47il) is the first pipeline run that produced a
