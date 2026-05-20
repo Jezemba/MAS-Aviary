@@ -859,9 +859,31 @@ templates:
             use its internal aero is the right fallback.
 
           4. Call set_aircraft_parameters(session_id, parameters={...})
-             ONCE with the F25 baseline values, OVERRIDDEN by any real
-             values produced by upstream stages. Use this mapping
-             exactly — pull from each upstream agent's DESIGN_STATE:
+             ONCE. The ``parameters`` dict MUST be a single
+             JSON object that contains BOTH the geometry/engine keys
+             AND the Phase H aero keys (LIFT_COEFFICIENT,
+             SUBSONIC_DRAG_COEFF_FACTOR). Do not split into two
+             calls — set_aircraft_parameters takes one dict.
+
+             Skeleton — fill in every value:
+
+               parameters = {
+                 "Aircraft.Wing.AREA":              <from table below>,
+                 "Aircraft.Wing.ASPECT_RATIO":      <from table below>,
+                 "Aircraft.Wing.SWEEP":             <from table below>,
+                 "Aircraft.Wing.TAPER_RATIO":       <from table below>,
+                 "Aircraft.Fuselage.LENGTH":        <from table below>,
+                 "Aircraft.Fuselage.MAX_HEIGHT":    <from table below>,
+                 "Aircraft.Fuselage.MAX_WIDTH":     <from table below>,
+                 "Aircraft.Engine.SCALE_FACTOR":    <from table below>,
+                 # ── Phase H aero calibration (compute from aero
+                 #    DESIGN_STATE CL_CRUISE/CD_CRUISE before this call):
+                 "Mission.Design.LIFT_COEFFICIENT": <CL_CRUISE>,
+                 "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": <scale_factor>,
+               }
+
+             Use this mapping exactly — pull from each upstream
+             agent's DESIGN_STATE:
 
              ┌──────────────────────────────┬──────────────────────────────────┐
              │ Aviary parameter             │ Upstream source                  │
