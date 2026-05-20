@@ -817,55 +817,66 @@ templates:
 
           3. Call configure_mission(session_id,
                range_nmi=2500,
-               num_passengers=239,
+               num_passengers=200,         # aviary-mcp caps at 200
                cruise_mach=0.78,
                cruise_altitude_ft=33000,
                optimizer_max_iter=200
              )
+             (Pass 200 directly — do not retry with 239 first. The
+             server enforces num_passengers <= 200 and we already
+             know it.)
 
-          ── PHASE H: PIPE SU2's CL/CD INTO AVIARY ────────────────────────
-          The aero stage's DESIGN_STATE carries CL_CRUISE and CD_CRUISE
-          from a real SU2 Euler solve. Without telling aviary, the
-          mission uses FLOPS regression aero and the SU2 numbers don't
-          actually drive fuel burn (Runs #6, #9, #11, #12 all produced
-          FUEL_BURNED_KG=12,747 regardless of the geometry sweep).
-          Wire them through these TWO additional parameter keys:
+          ── PHASE H — MANDATORY: CALCULATE BEFORE STEP 4 ─────────────────
+          Before you call set_aircraft_parameters, you MUST find the
+          aerodynamics_analyst DESIGN_STATE block in the shared context
+          above and EXTRACT two numbers from it:
 
-          - ``Mission.Design.LIFT_COEFFICIENT`` = CL_CRUISE
-            Sizes aviary so the cruise-phase trim CL matches SU2.
+              CL_CRUISE = (the numeric value next to "CL_CRUISE:" in
+                           the aerodynamics_analyst output)
+              CD_CRUISE = (the numeric value next to "CD_CRUISE:" in
+                           the aerodynamics_analyst output)
 
-          - ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`` = scale_factor
-            Computed deterministically below. SU2 reports only
-            *inviscid* CD (no skin friction). Reconstruct realistic
-            cruise CD by adding a friction estimate, then divide by
-            aviary's drag-polar default to get the multiplicative
-            factor aviary applies on top of its own buildup:
+          If you cannot locate them (e.g. aero stage cascaded
+          UPSTREAM_ERROR), write down "PHASE_H_SKIPPED: aero handoff
+          missing" in your COUPLING NOTES and skip the Phase H
+          parameters entirely; only then is it acceptable to omit
+          LIFT_COEFFICIENT and SUBSONIC_DRAG_COEFF_FACTOR from step 4.
 
-              CD_realistic        = CD_CRUISE + 0.0050   # add friction
-              AR_eff              = max(WING_AR_FROM_GEOMETRY_OR_DEFAULT, 8.0)
-              CD_aviary_default   = 0.022 + CL_CRUISE**2 / (3.14159 * AR_eff * 0.85)
-              scale_factor        = CD_realistic / CD_aviary_default
-              # Clamp to a sane range
-              scale_factor        = max(0.5, min(scale_factor, 2.0))
+          When the two numbers ARE available, compute these explicitly
+          in your thoughts (showing the arithmetic) before you build
+          the parameters dict:
 
-            Where 0.0050 is the typical fully-turbulent skin-friction
-            CD increment for a narrow-body wing+fuselage at cruise Re,
-            and 0.022 is aviary's FLOPS-regression CD0 baseline for
-            the A320-class bench file. Both are *prompt-fixed* — do
-            not invent your own numbers.
+              AR_eff            = max(11.0, 8.0)        = 11.0
+              CL_squared        = CL_CRUISE * CL_CRUISE
+              CD_aviary_default = 0.022 + CL_squared / (3.14159 * AR_eff * 0.85)
+              CD_realistic      = CD_CRUISE + 0.0050
+              scale_factor_raw  = CD_realistic / CD_aviary_default
+              scale_factor      = max(0.5, min(scale_factor_raw, 2.0))
 
-            If CL_CRUISE is missing from the aero handoff (UPSTREAM_ERROR
-            cascade), skip BOTH of these parameters — letting aviary
-            use its internal aero is the right fallback.
+          Worked example (if upstream gives CL=0.187, CD=0.0128):
+              CL_squared        = 0.187 * 0.187 = 0.03497
+              CD_aviary_default = 0.022 + 0.03497 / (3.14159 * 11.0 * 0.85)
+                                = 0.022 + 0.03497 / 29.36 = 0.02319
+              CD_realistic      = 0.0128 + 0.0050 = 0.0178
+              scale_factor_raw  = 0.0178 / 0.02319 = 0.768
+              scale_factor      = 0.768  (already inside [0.5, 2.0])
+
+          You then pass:
+              "Mission.Design.LIFT_COEFFICIENT": CL_CRUISE,            # e.g. 0.187
+              "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": scale_factor,  # e.g. 0.768
+
+          These TWO keys must appear in the parameters dict at step 4.
+          The 0.022, 0.0050, and clamp [0.5, 2.0] are fixed by this
+          prompt — don't substitute your own constants.
 
           4. Call set_aircraft_parameters(session_id, parameters={...})
-             ONCE. The ``parameters`` dict MUST be a single
-             JSON object that contains BOTH the geometry/engine keys
-             AND the Phase H aero keys (LIFT_COEFFICIENT,
-             SUBSONIC_DRAG_COEFF_FACTOR). Do not split into two
-             calls — set_aircraft_parameters takes one dict.
+             ONCE with a single JSON object containing ALL TEN keys —
+             the eight geometry/engine keys PLUS the two Phase H aero
+             keys you just computed. Splitting into two calls is wrong;
+             set_aircraft_parameters accepts one dict.
 
-             Skeleton — fill in every value:
+             Concrete shape (substitute the numeric values, not the
+             angle brackets):
 
                parameters = {
                  "Aircraft.Wing.AREA":              <from table below>,
@@ -876,10 +887,8 @@ templates:
                  "Aircraft.Fuselage.MAX_HEIGHT":    <from table below>,
                  "Aircraft.Fuselage.MAX_WIDTH":     <from table below>,
                  "Aircraft.Engine.SCALE_FACTOR":    <from table below>,
-                 # ── Phase H aero calibration (compute from aero
-                 #    DESIGN_STATE CL_CRUISE/CD_CRUISE before this call):
-                 "Mission.Design.LIFT_COEFFICIENT": <CL_CRUISE>,
-                 "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": <scale_factor>,
+                 "Mission.Design.LIFT_COEFFICIENT": <CL_CRUISE from Phase H>,
+                 "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": <scale_factor from Phase H>,
                }
 
              Use this mapping exactly — pull from each upstream
