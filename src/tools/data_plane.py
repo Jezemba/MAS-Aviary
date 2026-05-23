@@ -226,13 +226,17 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     if not isinstance(last, dict):
         return
 
-    cl = last.get("CL") or last.get("       CL       ")
-    cd = last.get("CD") or last.get("       CD       ")
+    cl = last.get("CL")
+    cd = last.get("CD")
     if cl is None or cd is None:
-        # Some SU2 history headers have surrounding whitespace; scan keys
+        # SU2's raw history.csv writes column headers like
+        # ``       "CL"       `` (surrounding whitespace plus embedded
+        # double quotes from the CSV quoting). csv.DictReader preserves
+        # both, so the keys arrive as that exact literal string. Strip
+        # whitespace AND embedded quote chars before matching.
         for k, v in last.items():
             if isinstance(k, str):
-                ks = k.strip()
+                ks = k.strip().strip('"').strip("'").strip()
                 if ks == "CL" and cl is None:
                     cl = v
                 elif ks == "CD" and cd is None:

@@ -319,6 +319,24 @@ class TestPhaseHAeroInjection:
         assert fresh_state.data_store["aero_cl_cruise"] == pytest.approx(0.42)
         assert fresh_state.data_store["aero_cd_cruise"] == pytest.approx(0.018)
 
+    def test_capture_handles_quoted_su2_column_headers(self, fresh_state):
+        """SU2's actual history.csv writes column headers with literal
+        double quotes inside each CSV cell: '       "CL"       '.
+        csv.DictReader preserves them; Phase H v4 (Run #16) hit this
+        and the capture silently no-op'd. Strip whitespace AND
+        embedded quote chars before matching.
+        """
+        response = {
+            "rows": [
+                {"Time_Iter": 0.0,
+                 "       \"CL\"       ": 0.187,
+                 "       \"CD\"       ": 0.0128},
+            ],
+        }
+        intercept_response("read_history_csv", response)
+        assert fresh_state.data_store["aero_cl_cruise"] == pytest.approx(0.187)
+        assert fresh_state.data_store["aero_cd_cruise"] == pytest.approx(0.0128)
+
     def test_inject_into_set_aircraft_parameters(self, fresh_state):
         """When the agent submits the 8-key parameters dict without the
         Phase H keys, resolve_request adds Mission.Design.LIFT_COEFFICIENT
