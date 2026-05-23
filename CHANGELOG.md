@@ -1,5 +1,99 @@
 ## [Unreleased]
 
+### 2026-05-23 (Phase H — SU2 CL/CD actually drives fuel burn)
+
+Run #17 (wandb p4zyf1zd) is the first pipeline run where
+``FUEL_BURNED_KG`` is *not* 12,747.47:
+
+```
+FUEL_BURNED_KG:    12,694.52    (−52.95 kg vs the Runs #6/9/11/12/14/15/16 baseline)
+MTOM_KG:           73,721.32    (was 73,779.45)
+CRUISE_CL_AVIARY:  0.421
+CRUISE_CD_AVIARY:  0.0207       (was 0.0213 with default aero)
+LIFT_COEFFICIENT:  0.1871       (injected from SU2)
+SUBSONIC_DRAG_COEFF_FACTOR: 0.768  (computed from SU2 CD + friction estimate)
+```
+
+Phase H wires the SU2 CL/CD from the aero stage into aviary's
+mission via the data-plane middleware — no LLM cooperation required.
+Four bugs gated the closure; each was caught only by the next
+integration test layer down. The fixes, in order:
+
+1. **OAS NaN crash in mass-mcp** — wing mesh was on the wrong
+   half-side (positive Y, tip-to-root) for OAS's symmetry=True
+   convention, and the wingbox initial thicknesses (3mm uniform)
+   buckled at the 2.5g design load before the coupled aero-structural
+   solve could converge. Branch ``Jezemba/mass-mcp@feat/oas-converged-init``
+   commit 9a232ba: build mesh on Y ≤ 0, grade spar/skin thickness
+   tip-to-root matching the OAS uCRM example, drop initial alpha to 2°.
+   TDD: ``tests/test_oas_d150_does_not_nan.py``.
+
+2. **aviary-mcp didn't expose cruise CL/CD** — extract_results only
+   returned fuel/mass; the framework couldn't compare aviary's
+   internal aero to SU2's. Branch
+   ``Jezemba/aviary-mcp@fix/ar-reliable-range`` commits d91198d +
+   2c518c1: extract_results now computes cruise_cl_avg, cruise_cd_avg,
+   cruise_mach_avg, cruise_altitude_m_avg from aviary's drag/mass/
+   mach/altitude timeseries + ISA density, and the get_results MCP
+   wrapper passes them through.
+
+3. **Prompt-only Phase H kept failing** — three iterations of the
+   mission_architect prompt (Runs #13, #14, #15, #16) all had the
+   agent emit only the 8 geometry/engine keys to
+   set_aircraft_parameters, dropping LIFT_COEFFICIENT and
+   SUBSONIC_DRAG_COEFF_FACTOR despite progressively more explicit
+   instructions (MANDATORY pre-step, worked example, line-by-line
+   arithmetic). Moved the calibration into data_plane middleware so
+   the LLM doesn't need to think about it. Commit 6751040 +
+   d1dc622:
+   - intercept_response: capture CL/CD off the last row of
+     read_history_csv. Strips both whitespace AND embedded quote
+     chars from the SU2 column headers (history.csv writes them as
+     ``       "CL"       ``).
+   - resolve_request: on every set_aircraft_parameters call, compute
+     the scale factor from the captured aero coefficients and merge
+     ``Mission.Design.LIFT_COEFFICIENT`` and
+     ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`` into the
+     parameters dict.
+   - mission_architect prompt updated to acknowledge "Phase H is
+     handled by the framework, don't include those keys".
+
+4. **aviary-mcp whitelist rejected both Phase H keys** — even when
+   the middleware injected them, aviary-mcp's
+   set_aircraft_parameters returned UNKNOWN_PARAMETER because the
+   names weren't in VARIABLE_NAME_MAP. Caught by Run #17's pre-run
+   integration test
+   (``tests/test_phase_h_middleware_live.py``); fixed in
+   aviary-mcp commit 5bacd77 — both names added to
+   DESIGN_PARAMETERS (for get_design_space) and VARIABLE_NAME_MAP
+   (for set_val routing). Verified locally that aviary v0.9.10
+   accepts both via aviary_inputs.set_val.
+
+The remaining −0.4% fuel-burn delta is **smaller than expected**
+because:
+
+- ``Mission.Design.LIFT_COEFFICIENT`` is a design-point input used
+  by aviary's wing sizing during pre-mission, not a hard cruise
+  constraint. The trajectory optimizer still picks its own cruise
+  CL (0.42 here) based on wing area, mass, and altitude.
+- ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR=0.768`` scales only
+  the subsonic FLOPS drag buildup component; the supersonic /
+  induced / profile splits take most of the cruise CD on the
+  height-energy phase, so total CD only dropped from 0.0213 to
+  0.0207 (~3%).
+
+Closing the magnitude gap is Phase I work — likely needs an aviary
+custom-aero subsystem that consumes the SU2 polar directly, or a
+different override surface (e.g. ``Aircraft.Design.DRAG_POLAR``
+table). The Phase H plumbing is done either way: SU2 → aviary is
+wired end-to-end, agent-independent, with regression coverage.
+
+Live regression in
+``tests/test_phase_h_middleware_live.py``: two tests covering both
+the wrapped-tool path (no LLM, 0.3s) and a real Claude agent path
+(16s, ~\$0.02). Caught the embedded-quote bug and the whitelist
+bug before Run #17 burned the API budget.
+
 ### 2026-05-18 (Phase G.3 — REF_AREA wiring + surface sampler defense: physical CL/CD)
 
 Run #12 (wandb zjqntn6j) is the first pipeline run where SU2 reports
