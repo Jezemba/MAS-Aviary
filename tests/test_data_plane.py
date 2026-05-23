@@ -276,3 +276,120 @@ class TestRunHistoryPassthroughOriginal:
         )
         # Nothing got stored under a ref either
         assert "read_history_csv__rows" not in fresh_state.data_store
+
+
+class TestPhaseHAeroInjection:
+    """Phase H — data-plane captures SU2 CL/CD off read_history_csv
+    and merges them into the next set_aircraft_parameters call.
+
+    The LLM-driven prompt path consistently dropped these keys (Runs
+    #13–#15, 2026-05-19), so the middleware closes the loop. These
+    tests pin down the contract: the agent doesn't need to know.
+    """
+
+    def test_capture_aero_from_read_history_csv(self, fresh_state):
+        """Final-row CL/CD on a read_history_csv response is stashed
+        in data_store under fixed keys."""
+        response = {
+            "columns": ["Inner_Iter", "rms[Rho]", "CL", "CD"],
+            "rows": [
+                {"Inner_Iter": 0, "rms[Rho]": -1.0, "CL": 0.05, "CD": 0.01},
+                {"Inner_Iter": 100, "rms[Rho]": -8.0,
+                 "CL": 0.187, "CD": 0.0128},
+            ],
+            "total_rows": 2,
+        }
+        intercept_response("read_history_csv", response)
+
+        assert fresh_state.data_store["aero_cl_cruise"] == pytest.approx(0.187)
+        assert fresh_state.data_store["aero_cd_cruise"] == pytest.approx(0.0128)
+
+    def test_capture_handles_whitespace_padded_keys(self, fresh_state):
+        """SU2 raw history CSVs ship column headers like 'CL      '
+        with surrounding whitespace; the capture must still find them.
+        """
+        response = {
+            "rows": [
+                {"Inner_Iter": 50,
+                 "      CL      ": 0.42,
+                 "      CD      ": 0.018},
+            ],
+        }
+        intercept_response("read_history_csv", response)
+        assert fresh_state.data_store["aero_cl_cruise"] == pytest.approx(0.42)
+        assert fresh_state.data_store["aero_cd_cruise"] == pytest.approx(0.018)
+
+    def test_inject_into_set_aircraft_parameters(self, fresh_state):
+        """When the agent submits the 8-key parameters dict without the
+        Phase H keys, resolve_request adds Mission.Design.LIFT_COEFFICIENT
+        and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR using the
+        previously captured aero coefficients."""
+        fresh_state.data_store["aero_cl_cruise"] = 0.187
+        fresh_state.data_store["aero_cd_cruise"] = 0.0128
+
+        agent_params = {
+            "Aircraft.Wing.AREA": 130.1,
+            "Aircraft.Wing.ASPECT_RATIO": 11.0,
+            "Aircraft.Engine.SCALE_FACTOR": 1.3,
+        }
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": agent_params},
+        )
+        params = out["parameters"]
+        assert params["Mission.Design.LIFT_COEFFICIENT"] == pytest.approx(0.187)
+        # CD_realistic = 0.0128 + 0.005 = 0.0178
+        # CD_av_default = 0.022 + 0.187**2 / (pi * 11 * 0.85) ≈ 0.02319
+        # scale ≈ 0.0178 / 0.02319 ≈ 0.768
+        assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == \
+            pytest.approx(0.768, abs=0.01)
+
+    def test_inject_does_not_overwrite_explicit_agent_values(
+        self, fresh_state,
+    ):
+        """If the agent did set the Phase H keys (e.g. in a future run
+        where the prompt finally landed), preserve their values rather
+        than overwriting with the middleware's calculation.
+        """
+        fresh_state.data_store["aero_cl_cruise"] = 0.187
+        fresh_state.data_store["aero_cd_cruise"] = 0.0128
+
+        agent_params = {
+            "Aircraft.Wing.AREA": 130.1,
+            "Mission.Design.LIFT_COEFFICIENT": 0.40,
+            "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 1.0,
+        }
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": agent_params},
+        )
+        params = out["parameters"]
+        assert params["Mission.Design.LIFT_COEFFICIENT"] == 0.40
+        assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == 1.0
+
+    def test_inject_noop_when_no_aero_captured(self, fresh_state):
+        """If aero never produced CL/CD (e.g. UPSTREAM_ERROR cascaded),
+        the middleware is a no-op so aviary falls back to its internal
+        FLOPS aero."""
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        assert "Mission.Design.LIFT_COEFFICIENT" not in out["parameters"]
+        assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in out["parameters"]
+
+    def test_inject_coerces_json_string_parameters(self, fresh_state):
+        """mcpadapt's anyOf gap sometimes lands `parameters` as a JSON
+        string. Inject still works."""
+        fresh_state.data_store["aero_cl_cruise"] = 0.187
+        fresh_state.data_store["aero_cd_cruise"] = 0.0128
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s",
+             "parameters": json.dumps({"Aircraft.Wing.AREA": 130.1})},
+        )
+        params = out["parameters"]
+        # Should be coerced to a dict now
+        assert isinstance(params, dict)
+        assert "Mission.Design.LIFT_COEFFICIENT" in params

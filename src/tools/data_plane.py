@@ -182,6 +182,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_session(tool_name, data)
                 _capture_cpacs_path(tool_name, data)
                 _capture_mesh_markers(tool_name, data)
+                _capture_aero_coefficients(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -196,10 +197,59 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_session(tool_name, response)
         _capture_cpacs_path(tool_name, response)
         _capture_mesh_markers(tool_name, response)
+        _capture_aero_coefficients(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
     return response
+
+
+def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
+    """Phase H: stash CL/CD from SU2's read_history_csv into data_store.
+
+    The agent-driven prompt path consistently fails to plumb the SU2
+    cruise CL/CD into aviary (Runs #13, #14, #15 all left aviary on
+    its FLOPS defaults), so the data-plane middleware grabs the
+    coefficients off the read_history_csv response — the LAST row is
+    the converged state at AoA=2°, cruise Mach — and stashes them.
+    ``resolve_request`` then merges them into set_aircraft_parameters
+    before the call leaves the framework. Mission_architect never has
+    to think about Phase H.
+    """
+    if _design_state is None or tool_name != "read_history_csv":
+        return
+
+    rows = data.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return
+    last = rows[-1]
+    if not isinstance(last, dict):
+        return
+
+    cl = last.get("CL") or last.get("       CL       ")
+    cd = last.get("CD") or last.get("       CD       ")
+    if cl is None or cd is None:
+        # Some SU2 history headers have surrounding whitespace; scan keys
+        for k, v in last.items():
+            if isinstance(k, str):
+                ks = k.strip()
+                if ks == "CL" and cl is None:
+                    cl = v
+                elif ks == "CD" and cd is None:
+                    cd = v
+
+    try:
+        cl_f = float(cl)
+        cd_f = float(cd)
+    except (TypeError, ValueError):
+        return
+
+    _design_state.data_store["aero_cl_cruise"] = cl_f
+    _design_state.data_store["aero_cd_cruise"] = cd_f
+    logger.info(
+        "Captured aero coefficients from read_history_csv: CL=%.4f CD=%.4f",
+        cl_f, cd_f,
+    )
 
 
 def _capture_session(tool_name: str, data: dict) -> None:
@@ -423,7 +473,81 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             far_marker = _design_state.data_store.get("mesh_marker_farfield", "farfield")
             _fix_su2_markers(updates, wall_marker, far_marker)
 
+    # Phase H: merge SU2 CL/CD into set_aircraft_parameters
+    if tool_name == "set_aircraft_parameters" and _design_state:
+        _inject_phase_h_aero(resolved)
+
     return resolved
+
+
+def _inject_phase_h_aero(resolved: dict) -> None:
+    """Merge SU2 cruise CL/CD into a set_aircraft_parameters call.
+
+    Adds two keys to the ``parameters`` dict if they are not already
+    set by the agent:
+
+      Mission.Design.LIFT_COEFFICIENT          = aero_cl_cruise
+      Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR = scale_factor
+
+    where scale_factor is derived from the SU2 inviscid CD plus a
+    fixed skin-friction increment, divided by aviary's FLOPS-baseline
+    drag-polar estimate at the target CL. The formula matches what
+    the prompt SPECIFIED — the LLM kept skipping it. This middleware
+    closes the gap without touching the prompt path.
+
+    No-op when the aero coefficients haven't been captured yet (e.g.
+    a non-aviary set_aircraft_parameters call, or the aero stage
+    cascaded UPSTREAM_ERROR before producing data).
+    """
+    if _design_state is None:
+        return
+
+    cl = _design_state.data_store.get("aero_cl_cruise")
+    cd = _design_state.data_store.get("aero_cd_cruise")
+    if cl is None or cd is None:
+        return
+
+    parameters = resolved.get("parameters")
+    # ``parameters`` may arrive as a JSON string (mcpadapt anyOf gap) —
+    # coerce so we can mutate it.
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(parameters, dict):
+        return
+
+    # CD calibration formula. Fixed constants are tuned to aviary's
+    # height_energy A320-class bench. See the Phase H section of the
+    # mission_architect prompt for the derivation — kept consistent
+    # here so the prompt and the middleware stay aligned.
+    ar = parameters.get("Aircraft.Wing.ASPECT_RATIO")
+    try:
+        ar_eff = max(float(ar) if ar is not None else 11.0, 8.0)
+    except (TypeError, ValueError):
+        ar_eff = 11.0
+
+    cd_realistic = cd + 0.0050
+    cd_aviary_default = 0.022 + (cl * cl) / (3.14159 * ar_eff * 0.85)
+    scale_factor = cd_realistic / cd_aviary_default
+    scale_factor = max(0.5, min(scale_factor, 2.0))
+
+    injected: list[str] = []
+    if "Mission.Design.LIFT_COEFFICIENT" not in parameters:
+        parameters["Mission.Design.LIFT_COEFFICIENT"] = float(cl)
+        injected.append("LIFT_COEFFICIENT")
+    if "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in parameters:
+        parameters["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] = float(scale_factor)
+        injected.append("SUBSONIC_DRAG_COEFF_FACTOR")
+
+    if injected:
+        resolved["parameters"] = parameters
+        logger.info(
+            "Phase H middleware injected %s into set_aircraft_parameters "
+            "(CL=%.4f, scale_factor=%.3f)",
+            ", ".join(injected), float(cl), float(scale_factor),
+        )
 
 
 def _fix_su2_markers(updates: dict, wall: str, far: str) -> None:
