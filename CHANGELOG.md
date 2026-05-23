@@ -1,5 +1,74 @@
 ## [Unreleased]
 
+### 2026-05-23 (Phase I — pycycle canonical inputs: no more agent name-guessing)
+
+Run #18 (wandb v3gqlk8p) is the first pipeline run where ALL FOUR
+disciplinary stages produce clean physical numbers end-to-end:
+
+```
+Aero       :  CL=0.187, CD=0.0128, L/D=14.6, SOLVER_CONVERGED true   (Phase G.3)
+Structures :  MASS_METHOD_USED=both, OEM=35,725 kg                   (Phase H mass-mcp)
+Propulsion :  SFC=0.513 lb/hr/lbf, Fn=5900 lbf, CYCLE_CONVERGED true (Phase I — NEW)
+Mission    :  FUEL_BURNED=12,694.52 kg, MTOM=73,721 kg               (Phase H middleware)
+```
+
+Run #17 had ``CYCLE_CONVERGED: false`` because the propulsion agent
+guessed ``fan.map.design.BPR`` and ``fan.BPR`` for bypass ratio —
+neither exists. With BPR unset the Newton solver ran on an
+under-constrained model and produced ``perf.Fn = -2.6e+19 lbf`` and
+``perf.TSFC = -0.0029``. Root cause: ``list_variables`` returns ~936
+promoted names with no hint which are design dials vs flow-station
+internals vs balance-state variables, so the agent has to guess.
+
+Phase I adds a new pycycle-mcp tool ``get_design_inputs(session_id)``
+that returns the curated short list of settable design dials for
+the session's cycle type. For HBTF the entries are:
+
+  fc.alt, fc.MN, Fn_DES, T4_MAX, splitter.BPR, fan.PR, lpc.PR,
+  hpc.PR, fan.eff, lpc.eff, hpc.eff, hpt.eff, lpt.eff
+
+Each carries the exact set_inputs path, units, default, current
+value (from the live model), and a one-line description. The agent
+calls get_design_inputs first, sees ``splitter.BPR`` is the bypass-
+ratio path, passes it straight to set_inputs. No name guessing,
+no translation layer (the user explicitly rejected the alias-map
+approach: *"the guessing is an indication the MCP is not designed
+right"*).
+
+Branch: ``Jezemba/pycycle-mcp@feat/canonical-design-inputs`` commit.
+Module: ``canonical_inputs.py`` holds the curated lists per cycle
+type. ``get_design_inputs_for_cycle`` returns a deep copy so the
+tool can mutate entries per session without corrupting the module
+constants. ``create_cycle_model`` now stashes ``cycle_type`` in
+session meta so the tool can dispatch correctly.
+
+The MAS-Aviary prompt change is **one line**: adding
+``get_design_inputs`` to ``propulsion_analyst``'s allowed_tools.
+The tool's own MCP description (built into the registration) tells
+the agent to call it before set_inputs.
+
+Regression coverage:
+
+- ``pycycle-mcp/tests/test_canonical_inputs.py`` (11 unit tests):
+  curated-data sanity, tool dispatch including
+  KeyError-vs-NotFound, drift check that every canonical path is
+  settable on a real HBTF. 11/11 pass.
+
+- ``MAS-Aviary/tests/test_pycycle_canonical_inputs_live.py`` (1
+  live LLM test, 62 s, ~$0.03): drives a real Claude agent through
+  the propulsion task and asserts (a) it calls
+  get_design_inputs, (b) it passes splitter.BPR to set_inputs
+  (not a guessed alias), (c) run_cycle has no runaway exponents.
+  Passes — caught no bugs because the previous live test on
+  pycycle-mcp wrapped tools already exercised the contract.
+
+Run #17 already converged the propulsion stage on a coin flip
+(BPR happened to be left at the model default 5.105). Phase I
+makes that determination ironclad. Fuel-burn number is unchanged
+(12,694.52 kg) because aviary's mission still draws its SFC from
+its internal engine table — the pycycle output isn't piped into
+aviary yet. That's Phase J (mission engine deck override).
+
 ### 2026-05-23 (Phase H — SU2 CL/CD actually drives fuel burn)
 
 Run #17 (wandb p4zyf1zd) is the first pipeline run where
