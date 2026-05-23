@@ -1,5 +1,79 @@
 ## [Unreleased]
 
+### 2026-05-23 (Phase H/J coupling validation — Phase J reverted)
+
+User asked for sensitivity tests proving the H/J wiring actually
+moves fuel burn. Added
+``tests/test_phase_hj_coupling_validation.py`` — pre-seed
+data_store with three (CL, CD) or (SFC) tuples, run aviary directly
+through wrapped tools (no LLM), assert ``fuel_burned_kg`` responds
+monotonically. ~33s wall clock for both tests, $0 cost.
+
+**Phase H result — coupling has real teeth:**
+```
+SU2 CD   Scaler   aviary cruise_cd   fuel_burn (kg)
+0.012    0.619    0.0136             5,102
+0.025    1.093    0.0247             8,370
+0.040    1.640    0.0398             13,571
+```
+CD triples → fuel burn 2.7×. ``SUBSONIC_DRAG_COEFF_FACTOR`` reaches
+the trajectory aero, ``cruise_cd_avg`` echoes it exactly, fuel burn
+responds proportionally. Phase H wiring confirmed end-to-end.
+
+**Phase J result — coupling silent, reverted:**
+```
+pyCycle SFC   Scaler   aviary cruise_sfc   fuel_burn (kg)
+0.40          0.735    0.5434              7,058
+0.55          1.011    0.5434              7,058
+0.70          1.287    0.5434              7,058
+```
+``SUBSONIC_FUEL_FLOW_SCALER`` lands in aviary's applied list
+correctly. ``cruise_sfc_avg`` is identical for all three. Fuel
+burn doesn't move. Verified independently by calling
+``prob.aviary_inputs.set_val(SUBSONIC_FUEL_FLOW_SCALER, 1.5)``
+directly in Python (no MCP, no middleware) — same null result.
+
+Root cause: ``aircraft_for_bench_FwFm.csv`` uses a **tabular engine
+deck** (pre-computed thrust + fuel-flow lookup tables).
+``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`` is a knob for the
+FLOPS *analytical* engine model. The variable is settable on the
+problem but never read during the trajectory simulation. The
+Phase J injection was a true no-op — middleware succeeded at every
+step except the one that mattered.
+
+Reverts shipped here:
+- ``data_plane.py``: removed ``_capture_pycycle_performance`` and
+  ``_inject_phase_j_propulsion``; ``set_aircraft_parameters`` is
+  now Phase H only.
+- ``aviary-mcp design_space.py``: removed
+  SUBSONIC_FUEL_FLOW_SCALER from DESIGN_PARAMETERS and
+  VARIABLE_NAME_MAP (otherwise the agent would see a useless knob).
+- ``aviary-mcp aviary_runner.py``: kept
+  ``cruise_sfc_avg_lb_per_hr_lbf`` in extract_results as a
+  diagnostic — confirming SFC values is still useful even when we
+  can't override them.
+- ``tests/test_data_plane.py``: removed 7 Phase J unit tests
+  (they validated the synthetic-data injection logic, which was
+  correct but useless in production).
+- ``tests/test_phase_h_middleware_live.py``: removed the no-LLM
+  Phase J test (would have been a false positive — it only
+  checked aviary echoed the value, not that the value mattered).
+- ``tests/test_phase_hj_coupling_validation.py``: kept the Phase J
+  test as ``@pytest.mark.xfail(strict=True)`` so the test suite
+  fails LOUDLY if someone re-adds the silent middleware. Removes
+  the xfail when a working coupling path lands.
+
+How to actually pipe pyCycle SFC into the bench mission (future
+work): either (a) switch to a GASP analytic engine model
+(aircraft_for_bench_GwGm.csv variant) where scalers apply, or
+(b) replace the tabular engine deck file at runtime with one
+generated from pyCycle's SFC. Both are bigger than middleware
+injection.
+
+The CHANGELOG entry below (the original Phase J ship) is left
+intact for git-archaeology — it explains what was attempted and
+why the diagnostic was missing.
+
 ### 2026-05-23 (Phase J — pyCycle SFC drives aviary mission fuel flow)
 
 Run #19 (wandb exvhbrw3) wires pyCycle's externally computed cruise
