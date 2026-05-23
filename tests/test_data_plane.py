@@ -396,6 +396,96 @@ class TestPhaseHAeroInjection:
         assert "Mission.Design.LIFT_COEFFICIENT" not in out["parameters"]
         assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in out["parameters"]
 
+    # ── Phase J: pycycle SFC capture + scaler injection ─────────────
+
+    def test_capture_pycycle_sfc_from_run_cycle(self, fresh_state):
+        """``perf.TSFC`` off pyCycle's ``run_cycle`` response (under
+        ``outputs``) is stashed for later injection."""
+        response = {
+            "success": True,
+            "outputs": {
+                "perf.TSFC": 0.513,
+                "perf.Fn": 5900.0,
+                "inlet.Fl_O:stat:W": 409.1,
+            },
+        }
+        intercept_response("run_cycle", response)
+        assert fresh_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] \
+            == pytest.approx(0.513)
+
+    def test_capture_pycycle_sfc_from_get_outputs(self, fresh_state):
+        """Same capture works on ``get_outputs`` (under ``values``)."""
+        response = {
+            "values": {"perf.TSFC": 0.547, "perf.Fn": 5800.0}
+        }
+        intercept_response("get_outputs", response)
+        assert fresh_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] \
+            == pytest.approx(0.547)
+
+    def test_capture_rejects_unconverged_negative_sfc(self, fresh_state):
+        """Run #17 failure mode: pyCycle returned TSFC=-0.0029 because
+        the cycle didn't converge. The middleware must NOT stash
+        non-physical values — aviary would then over-correct fuel
+        flow into garbage."""
+        response = {"outputs": {"perf.TSFC": -0.0029, "perf.Fn": -2.6e19}}
+        intercept_response("run_cycle", response)
+        assert "pycycle_sfc_cruise_lb_per_hr_lbf" not in fresh_state.data_store
+
+    def test_inject_subsonic_fuel_flow_scaler(self, fresh_state):
+        """resolve_request on set_aircraft_parameters adds the
+        SUBSONIC_FUEL_FLOW_SCALER from the captured pyCycle SFC."""
+        fresh_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] = 0.513
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        params = out["parameters"]
+        # 0.513 / 0.544 ≈ 0.943 (within the clamp range)
+        assert params["Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER"] \
+            == pytest.approx(0.943, abs=0.005)
+
+    def test_inject_phase_j_does_not_overwrite_explicit_agent_value(
+        self, fresh_state,
+    ):
+        fresh_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] = 0.513
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s",
+             "parameters": {
+                 "Aircraft.Wing.AREA": 130.1,
+                 "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER": 1.5,
+             }},
+        )
+        # Agent's explicit 1.5 wins
+        assert out["parameters"]["Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER"] == 1.5
+
+    def test_inject_phase_j_noop_when_no_pycycle_sfc(self, fresh_state):
+        """If pyCycle never ran or returned a bad value, aviary
+        falls back to its default fuel-flow scaler of 1.0."""
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        assert "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER" not in out["parameters"]
+
+    def test_inject_phase_h_and_j_coexist(self, fresh_state):
+        """When both SU2 aero AND pyCycle SFC are captured, the
+        middleware injects all three Phase H+J keys in one call."""
+        fresh_state.data_store["aero_cl_cruise"] = 0.187
+        fresh_state.data_store["aero_cd_cruise"] = 0.0128
+        fresh_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] = 0.513
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        params = out["parameters"]
+        assert "Mission.Design.LIFT_COEFFICIENT" in params
+        assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" in params
+        assert "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER" in params
+
     def test_inject_coerces_json_string_parameters(self, fresh_state):
         """mcpadapt's anyOf gap sometimes lands `parameters` as a JSON
         string. Inject still works."""

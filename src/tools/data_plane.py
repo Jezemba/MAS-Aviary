@@ -183,6 +183,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_cpacs_path(tool_name, data)
                 _capture_mesh_markers(tool_name, data)
                 _capture_aero_coefficients(tool_name, data)
+                _capture_pycycle_performance(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -198,10 +199,54 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_cpacs_path(tool_name, response)
         _capture_mesh_markers(tool_name, response)
         _capture_aero_coefficients(tool_name, response)
+        _capture_pycycle_performance(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
     return response
+
+
+def _capture_pycycle_performance(tool_name: str, data: dict) -> None:
+    """Phase J: stash pyCycle's cruise SFC into data_store.
+
+    The propulsion agent reads ``perf.TSFC`` off pyCycle's
+    ``run_cycle`` and/or ``get_outputs`` responses; without a server-
+    side handoff the value never makes it to aviary's mission. Capture
+    it here so ``resolve_request`` can merge a matching
+    ``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`` into the next
+    ``set_aircraft_parameters`` call.
+    """
+    if _design_state is None:
+        return
+    if tool_name not in ("run_cycle", "get_outputs"):
+        return
+
+    # The response shape is {"outputs": {...}} from run_cycle and
+    # {"values": {...}} from get_outputs.
+    payload = data.get("outputs") or data.get("values")
+    if not isinstance(payload, dict):
+        return
+
+    sfc = payload.get("perf.TSFC")
+    if sfc is None:
+        return
+    try:
+        sfc_f = float(sfc)
+    except (TypeError, ValueError):
+        return
+    # Pycycle reports TSFC in lb/hr/lbf for HBTF; a negative or wildly
+    # non-physical value means the cycle didn't converge — ignore so
+    # the middleware doesn't poison the mission.
+    if not (0.2 < sfc_f < 1.5):
+        logger.info(
+            "Skipping pyCycle SFC=%.4f — outside [0.2, 1.5] sanity range "
+            "(likely unconverged cycle).",
+            sfc_f,
+        )
+        return
+
+    _design_state.data_store["pycycle_sfc_cruise_lb_per_hr_lbf"] = sfc_f
+    logger.info("Captured pyCycle cruise SFC: %.4f lb/hr/lbf", sfc_f)
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
@@ -477,11 +522,68 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             far_marker = _design_state.data_store.get("mesh_marker_farfield", "farfield")
             _fix_su2_markers(updates, wall_marker, far_marker)
 
-    # Phase H: merge SU2 CL/CD into set_aircraft_parameters
+    # Phase H + J: merge externally computed CL/CD/SFC into
+    # set_aircraft_parameters so aviary actually reflects the SU2
+    # + pyCycle results instead of its internal regression defaults.
     if tool_name == "set_aircraft_parameters" and _design_state:
         _inject_phase_h_aero(resolved)
+        _inject_phase_j_propulsion(resolved)
 
     return resolved
+
+
+# Aviary's bench engine deck (aircraft_for_bench_FwFm.csv) produces a
+# cruise SFC of ~0.544 lb/hr/lbf with the default fuel-flow scaler of
+# 1.0. Measured empirically on the bench aircraft via
+# extract_results.cruise_sfc_avg_lb_per_hr_lbf — see aviary-mcp
+# commit a64ea2f. The middleware uses this constant to translate
+# pyCycle's externally computed SFC into a SUBSONIC_FUEL_FLOW_SCALER
+# value aviary can apply.
+_AVIARY_BENCH_CRUISE_SFC_LB_PER_HR_LBF = 0.544
+
+
+def _inject_phase_j_propulsion(resolved: dict) -> None:
+    """Merge pyCycle's cruise SFC into a set_aircraft_parameters call.
+
+    Adds ``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`` to the
+    parameters dict (if not already set by the agent), scaled so that
+    aviary's cruise fuel flow lines up with what pyCycle's cycle
+    analysis predicted.
+
+    No-op when:
+      - pyCycle didn't run (no ``pycycle_sfc_cruise_lb_per_hr_lbf`` in
+        data_store)
+      - the agent already specified the scaler explicitly
+    """
+    if _design_state is None:
+        return
+
+    sfc = _design_state.data_store.get("pycycle_sfc_cruise_lb_per_hr_lbf")
+    if sfc is None:
+        return
+
+    parameters = resolved.get("parameters")
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(parameters, dict):
+        return
+
+    if "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER" in parameters:
+        return  # respect explicit agent override
+
+    scaler_raw = float(sfc) / _AVIARY_BENCH_CRUISE_SFC_LB_PER_HR_LBF
+    scaler = max(0.5, min(scaler_raw, 2.0))
+
+    parameters["Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER"] = scaler
+    resolved["parameters"] = parameters
+    logger.info(
+        "Phase J middleware injected SUBSONIC_FUEL_FLOW_SCALER=%.3f "
+        "(pyCycle SFC=%.4f / aviary bench SFC=%.4f)",
+        scaler, float(sfc), _AVIARY_BENCH_CRUISE_SFC_LB_PER_HR_LBF,
+    )
 
 
 def _inject_phase_h_aero(resolved: dict) -> None:

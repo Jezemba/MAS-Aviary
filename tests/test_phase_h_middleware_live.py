@@ -193,6 +193,121 @@ def test_middleware_captures_aero_and_injects_into_aviary():
     assert 0.5 < float(scale_entry["new_value"]) < 1.5
 
 
+def test_phase_j_middleware_injects_fuel_flow_scaler():
+    """Phase J counterpart of the above: pyCycle's ``perf.TSFC`` from a
+    real ``run_cycle`` call must be captured by the middleware and
+    show up as ``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`` in the
+    next ``set_aircraft_parameters`` ``applied`` echo from aviary-mcp.
+
+    Catches the same class of contract-mismatch failures Phase H v4
+    hit (e.g. an aviary whitelist that didn't recognize the new key).
+    """
+    cfg = AppConfig(
+        llm=LLMConfig(model_id="anthropic/claude-sonnet-4-20250514",
+                      backend="litellm", temperature=0.0, max_new_tokens=2048),
+        mcp=MCPConfig(mode="real", servers=[
+            MCPServerConfig(name="pycycle",
+                            url="http://127.0.0.1:8400/mcp",
+                            transport="streamable-http"),
+            MCPServerConfig(name="aviary",
+                            url="http://127.0.0.1:8600/mcp",
+                            transport="streamable-http"),
+        ]),
+    )
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        os.environ["ANTHROPIC_API_KEY"] = "sk-test-not-used"
+    tools = {t.name: t for t in load_tools_for_agent(
+        ["create_cycle_model", "get_design_inputs", "set_inputs",
+         "run_cycle", "get_outputs",
+         "create_session", "configure_mission", "set_aircraft_parameters"],
+        cfg,
+    )}
+    for name in ("create_cycle_model", "set_inputs", "run_cycle",
+                 "create_session", "configure_mission",
+                 "set_aircraft_parameters"):
+        if name not in tools:
+            pytest.skip(f"Tool {name!r} not loaded — required MCP not running")
+
+    # 1. Build a turbofan model and set the canonical design dials
+    create_cycle = tools["create_cycle_model"]
+    cycle_resp = create_cycle.forward(cycle_type="turbofan", mode="design")
+    cycle_data = (json.loads(cycle_resp) if isinstance(cycle_resp, str)
+                  else cycle_resp)
+    cycle_sid = cycle_data["session_id"]
+
+    set_inputs = tools["set_inputs"]
+    set_inputs.forward(
+        session_id=cycle_sid,
+        values={
+            "fc.alt": 33000.0,
+            "fc.MN": 0.78,
+            "splitter.BPR": 11.0,
+            "fan.PR": 1.45,
+        },
+    )
+
+    # 2. Run the cycle — middleware should grab perf.TSFC off the
+    #    outputs and stash it.
+    run_cycle = tools["run_cycle"]
+    run_resp = run_cycle.forward(
+        session_id=cycle_sid,
+        outputs_of_interest=["perf.TSFC", "perf.Fn"],
+    )
+    run_data = (json.loads(run_resp) if isinstance(run_resp, str)
+                else run_resp)
+    raw_sfc = run_data.get("outputs", {}).get("perf.TSFC")
+    assert raw_sfc is not None and 0.2 < raw_sfc < 1.5, (
+        f"Cycle didn't converge to a physical SFC: {raw_sfc!r}. "
+        "Cannot exercise Phase J injection without a captured value."
+    )
+
+    from src.tools.data_plane import get_design_state
+    ds = get_design_state()
+    assert ds is not None
+    assert ds.data_store.get("pycycle_sfc_cruise_lb_per_hr_lbf") \
+        == pytest.approx(raw_sfc, abs=1e-6), (
+        f"Phase J middleware did NOT capture pyCycle SFC. "
+        f"data_store keys: {sorted(ds.data_store)}"
+    )
+
+    # 3. Submit set_aircraft_parameters with no fuel-flow scaler —
+    #    middleware should add it.
+    create_av = tools["create_session"]
+    av_resp = create_av.forward()
+    av_data = (json.loads(av_resp) if isinstance(av_resp, str) else av_resp)
+    av_sid = av_data["session_id"]
+    tools["configure_mission"].forward(
+        session_id=av_sid, range_nmi=1500, num_passengers=162,
+        cruise_mach=0.785, cruise_altitude_ft=35000,
+    )
+
+    set_av = tools["set_aircraft_parameters"]
+    params_resp = set_av.forward(
+        session_id=av_sid,
+        parameters={
+            "Aircraft.Wing.AREA": 130.1,
+            "Aircraft.Engine.SCALE_FACTOR": 1.3,
+        },
+    )
+    resp_data = (json.loads(params_resp) if isinstance(params_resp, str)
+                 else params_resp)
+    applied = resp_data.get("applied", [])
+    applied_names = {entry["name"] for entry in applied
+                     if isinstance(entry, dict) and "name" in entry}
+
+    assert "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER" in applied_names, (
+        f"Phase J middleware did NOT inject SUBSONIC_FUEL_FLOW_SCALER. "
+        f"Aviary 'applied' list: {sorted(applied_names)}"
+    )
+    scaler_entry = next(
+        e for e in applied
+        if e.get("name") == "Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER"
+    )
+    # Expected scaler ≈ raw_sfc / 0.544 (aviary bench default)
+    expected = max(0.5, min(raw_sfc / 0.544, 2.0))
+    assert float(scaler_entry["new_value"]) == pytest.approx(expected, abs=0.01)
+
+
 @pytest.mark.live_mcp_llm
 def test_middleware_fires_through_real_agent_path():
     """Same contract as the no-LLM test, but driven by a real Claude
