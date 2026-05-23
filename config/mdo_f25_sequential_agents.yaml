@@ -718,6 +718,7 @@ templates:
         allowed_tools:
           - create_cycle_model
           - close_cycle_model
+          - get_design_inputs
           - list_variables
           - set_inputs
           - run_cycle
