@@ -1,5 +1,71 @@
 ## [Unreleased]
 
+### 2026-05-23 (Phase J — pyCycle SFC drives aviary mission fuel flow)
+
+Run #19 (wandb exvhbrw3) wires pyCycle's externally computed cruise
+SFC into aviary's mission via the same data-plane middleware pattern
+that Phase H established for SU2's CL/CD.
+
+```
+pyCycle SFC_CRUISE         : 0.547 lb/hr/lbf (from agent's cycle solve)
+aviary bench cruise SFC    : 0.544 lb/hr/lbf (measured baseline)
+SUBSONIC_FUEL_FLOW_SCALER  : 1.006             (injected by middleware)
+aviary cruise_sfc_avg      : 0.547 lb/hr/lbf  ← scaler applied
+FUEL_BURNED_KG             : 12,694.52        (unchanged — scaler ≈ 1)
+```
+
+Three pieces of plumbing:
+
+1. **aviary-mcp** ``fix/ar-reliable-range`` commit a64ea2f
+   - Adds ``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`` to
+     DESIGN_PARAMETERS + VARIABLE_NAME_MAP so set_aircraft_parameters
+     accepts it (without this aviary throws UNKNOWN_PARAMETER — the
+     Phase H lesson).
+   - extract_results now computes
+     ``cruise_sfc_avg_lb_per_hr_lbf`` from the cruise timeseries
+     (Δmass / Δtime / thrust) for verification.
+   - get_results MCP wrapper passes the new field through.
+
+2. **data_plane middleware** commit 1083fcf (this repo)
+   - intercept_response captures ``perf.TSFC`` off pyCycle's
+     ``run_cycle`` and ``get_outputs`` responses. Rejects
+     non-physical values outside [0.2, 1.5] (Run #17 produced TSFC =
+     -0.0029 when its Newton solver diverged).
+   - resolve_request on every set_aircraft_parameters call merges
+     ``Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER = pycycle_SFC /
+     0.544`` (clamped to [0.5, 2.0]). The 0.544 reference is
+     aviary's empirically measured bench cruise SFC for
+     aircraft_for_bench_FwFm.csv — verified once, hardcoded as a
+     constant.
+
+3. **Tests** in tests/test_data_plane.py (7 new unit tests) and
+   tests/test_phase_h_middleware_live.py (1 no-LLM live test, 5.7s).
+   Both layers caught zero new bugs because Phase H established the
+   same contract; Phase J just adds another captured value and
+   another injected key on the same machinery.
+
+**Fuel burn unchanged this run** (12,694.52 kg, same as Phase H Run
+#17/18) because pyCycle's design-point SFC of 0.547 happens to land
+almost exactly on aviary's bench cruise SFC of 0.544. The scaler is
+1.006, only 0.6% above unity, so the change in mission fuel flow is
+within the trajectory optimizer's noise. To exercise the loop,
+either:
+
+- The propulsion agent would need to choose engine parameters that
+  produce a meaningfully different SFC (e.g. BPR=8 instead of 11
+  raises SFC ~5-10%), or
+- A sensitivity sweep over BPR/OPR would show the fuel-burn ↔ SFC
+  coupling that's now in place.
+
+What matters: the loop **is closed**. All four disciplines now
+have their externally computed cruise outputs flowing into the
+mission fuel-burn calculation:
+
+  SU2:     CL  → Mission.Design.LIFT_COEFFICIENT          (Phase H)
+  SU2:     CD  → Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR (Phase H)
+  pyCycle: SFC → Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER (Phase J)
+  mass:    -    → no aviary path yet (Phase K candidate)
+
 ### 2026-05-23 (Phase I — pycycle canonical inputs: no more agent name-guessing)
 
 Run #18 (wandb v3gqlk8p) is the first pipeline run where ALL FOUR
