@@ -1,7 +1,9 @@
 """Generate a list of pre-validated parameter sets for Aviary runs.
 
 Generates random parameter combinations, creates MCP sessions, validates
-each via validate_parameters, and keeps only those that pass validation.
+each via set_aircraft_parameters' inline validation (the standalone
+validate_parameters tool was folded into set_aircraft_parameters on
+2026-05-23 — see aviary-mcp@535906f), and keeps only those that pass.
 Outputs a JSON file that stat_batch_runner can consume.
 
 Connects to MCP directly via HTTP (no smolagents/GPU needed), so it can
@@ -159,13 +161,10 @@ def validate_params(
     """
     settable = {k: v for k, v in params.items() if not k.startswith("_")}
 
-    # 1. Create session with initial parameters
-    resp = client.call_tool(
-        "create_session",
-        {
-            "initial_parameters": settable,
-        },
-    )
+    # 1. Create session with NO initial parameters — we set them below
+    #    so set_aircraft_parameters' inline validation fires on this
+    #    exact candidate.
+    resp = client.call_tool("create_session", {})
     session_id = resp.get("session_id")
     if not session_id:
         m = re.search(
@@ -189,12 +188,16 @@ def validate_params(
         },
     )
 
-    # 3. Validate
+    # 3. Set + validate in one call. set_aircraft_parameters folds the
+    #    static checks + ~5-10s Aviary model evaluation into its
+    #    response (the standalone validate_parameters tool was removed
+    #    2026-05-23 — see aviary-mcp@535906f).
     vresp = client.call_tool(
-        "validate_parameters",
+        "set_aircraft_parameters",
         {
             "session_id": session_id,
-            "timeout_seconds": timeout,
+            "parameters": settable,
+            "validate_timeout_seconds": timeout,
         },
         timeout=timeout + 10,
     )

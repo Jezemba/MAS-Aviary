@@ -264,8 +264,10 @@ def build_task_with_session(
             "initial baseline — they are valid but NOT optimized:\n"
             + "\n".join(lines)
             + "\nYour job is to IMPROVE these parameters to minimize fuel burn. "
-            "Call set_aircraft_parameters to adjust values, then validate_parameters "
-            "to verify, then run_simulation to measure fuel burn.\n"
+            "Call set_aircraft_parameters to adjust values (its response now "
+            "includes a 'valid' boolean — validation runs inline). If valid "
+            "is false, adjust and call set_aircraft_parameters again until "
+            "valid:true, then run_simulation to measure fuel burn.\n"
         )
 
     return (
