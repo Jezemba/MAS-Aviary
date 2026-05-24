@@ -29,7 +29,7 @@ networked:
       tools: ["create_session", "configure_mission"]
       board_key: "phase_session_setup"
     - name: "parameter_setting"
-      tools: ["get_design_space", "set_aircraft_parameters", "validate_parameters"]
+      tools: ["get_design_space", "set_aircraft_parameters"]
       board_key: "phase_parameter_setting"
     - name: "simulation"
       tools: ["run_simulation"]

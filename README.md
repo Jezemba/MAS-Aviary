@@ -195,9 +195,13 @@ pip install -r requirements.txt
 python server/aviary_mcp_server.py
 ```
 
-The server exposes 9 MCP tools: `get_design_space`, `create_session`,
-`set_aircraft_parameters`, `configure_mission`, `validate_parameters`,
-`run_simulation`, `get_results`, `get_trajectory`, `check_constraints`.
+The server exposes 8 MCP tools: `get_design_space`, `create_session`,
+`set_aircraft_parameters`, `configure_mission`, `run_simulation`,
+`get_results`, `get_trajectory`, `check_constraints`. `set_aircraft_parameters`
+runs validation (static checks + ~5-10s Aviary model eval) inline and
+returns a `valid` boolean — the standalone `validate_parameters` tool
+was removed 2026-05-23 to make the two-step "set then validate" protocol
+unnecessary.
 
 See the [Aviary README](https://github.com/cmudrc/aviary-mcp#readme) for full
 server documentation.

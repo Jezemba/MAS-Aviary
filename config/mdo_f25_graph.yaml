@@ -157,11 +157,13 @@ mdo_f25_graph:
         integrate all upstream discipline results.
 
         TOOLS: get_design_space, create_session, set_aircraft_parameters,
-        configure_mission, validate_parameters
+        configure_mission
 
         1. Call get_design_space() to confirm parameter names.
         2. Call create_session() → session_id.
-        3. Call set_aircraft_parameters(session_id, parameters={
+        3. Call configure_mission(session_id, range_nmi=2500, num_passengers=239,
+             cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
+        4. Call set_aircraft_parameters(session_id, parameters={
              "Aircraft.Wing.ASPECT_RATIO": 15.6,
              "Aircraft.Wing.AREA": 130.1,
              "Aircraft.Wing.SWEEP": 25.0,
@@ -173,11 +175,13 @@ mdo_f25_graph:
            })
            Adjust these based on upstream results and task requirements.
            COUPLING: Only set ONE of {AREA, SPAN, ASPECT_RATIO} per call.
-        4. Call configure_mission(session_id, range_nmi=2500, num_passengers=239,
-             cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
-        5. Call validate_parameters(session_id) — if invalid, adjust and retry.
+           The response includes a "valid" boolean — set_aircraft_parameters
+           runs the static checks + a ~5-10s Aviary model evaluation
+           automatically. If valid is false, adjust parameters and call
+           set_aircraft_parameters again until valid is true.
 
-        State "success" if validate_parameters returns valid. State "fail" otherwise.
+        State "success" only if the last set_aircraft_parameters call
+        returned valid: true. State "fail" otherwise.
         Include SESSION_ID: <uuid> in your output.
       description: "Mission configuration and parameter integration via Aviary"
       transitions:

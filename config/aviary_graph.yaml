@@ -43,14 +43,14 @@ aviary_graph:
 
         1. Call get_design_space to check parameter bounds.
         2. Call set_aircraft_parameters with session_id="{session_id}" and
-           a SCALE_FACTOR value within the returned bounds.
-        3. Call validate_parameters with session_id="{session_id}" to verify
-           the parameter combination is valid.
-        4. If valid is false, adjust SCALE_FACTOR and repeat steps 2-3
-           until valid is true.
+           a SCALE_FACTOR value within the returned bounds. The response
+           includes a "valid" boolean — validation runs automatically.
+        3. If valid is false, adjust SCALE_FACTOR and call
+           set_aircraft_parameters again until valid is true.
 
-        CRITICAL: You must state "success" ONLY if validate_parameters
-        returned valid: true. State "fail" if you cannot get valid: true.
+        CRITICAL: You must state "success" ONLY if the last
+        set_aircraft_parameters call returned valid: true. State "fail"
+        if you cannot get valid: true.
 
         Include SESSION_ID: {session_id} in your output.
       description: "Engine-only parameter set for simple tasks"
@@ -70,13 +70,14 @@ aviary_graph:
         2. Call set_aircraft_parameters with session_id="{session_id}" to
            optimise wing geometry (ASPECT_RATIO, AREA, SWEEP, TAPER_RATIO).
            SPAN is read-only (derived as sqrt(AR × AREA)) — do not set it.
-        3. Call validate_parameters with session_id="{session_id}" to verify
-           the parameter combination is valid.
-        4. If valid is false, adjust your parameters and repeat steps 2-3
-           until valid is true.
+           The response includes a "valid" boolean — validation runs
+           automatically.
+        3. If valid is false, adjust your parameters and call
+           set_aircraft_parameters again until valid is true.
 
-        CRITICAL: You must state "success" ONLY if validate_parameters
-        returned valid: true. State "fail" if you cannot get valid: true.
+        CRITICAL: You must state "success" ONLY if the last
+        set_aircraft_parameters call returned valid: true. State "fail"
+        if you cannot get valid: true.
 
         Include SESSION_ID: {session_id} in your output.
       description: "Wing geometry optimisation for moderate tasks"
@@ -97,13 +98,14 @@ aviary_graph:
            set BOTH wing AND fuselage geometry.
            Wing: ASPECT_RATIO, AREA, SWEEP, TAPER_RATIO are settable.
            SPAN is read-only (derived as sqrt(AR × AREA)) — do not set it.
-        3. Call validate_parameters with session_id="{session_id}" to verify
-           the full parameter combination is valid.
-        4. If valid is false, adjust your parameters and repeat steps 2-3
-           until valid is true.
+           The response includes a "valid" boolean — validation runs
+           automatically on the full parameter combination.
+        3. If valid is false, adjust your parameters and call
+           set_aircraft_parameters again until valid is true.
 
-        CRITICAL: You must state "success" ONLY if validate_parameters
-        returned valid: true. State "fail" if you cannot get valid: true.
+        CRITICAL: You must state "success" ONLY if the last
+        set_aircraft_parameters call returned valid: true. State "fail"
+        if you cannot get valid: true.
 
         Include SESSION_ID: {session_id} in your output.
       description: "Wing + fuselage geometry for complex tasks"
@@ -143,14 +145,15 @@ aviary_graph:
 
         1. Call get_design_space to check parameter bounds.
         2. Call set_aircraft_parameters with session_id="{session_id}" and
-           a SCALE_FACTOR value within the returned bounds.
-        3. Call validate_parameters with session_id="{session_id}" to verify
-           the full parameter combination is valid.
-        4. If valid is false, adjust SCALE_FACTOR and repeat steps 2-3
-           until valid is true.
+           a SCALE_FACTOR value within the returned bounds. The response
+           validates the full parameter combination (wing + fuselage +
+           engine) — read the "valid" boolean.
+        3. If valid is false, adjust SCALE_FACTOR and call
+           set_aircraft_parameters again until valid is true.
 
-        CRITICAL: You must state "success" ONLY if validate_parameters
-        returned valid: true. State "fail" if you cannot get valid: true.
+        CRITICAL: You must state "success" ONLY if the last
+        set_aircraft_parameters call returned valid: true. State "fail"
+        if you cannot get valid: true.
 
         Include SESSION_ID: {session_id} in your output.
       description: "Engine SCALE_FACTOR optimisation"

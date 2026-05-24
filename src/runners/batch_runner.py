@@ -554,7 +554,7 @@ _VERDICT_RE = re.compile(
 )
 
 
-_METRIC_TOOL_NAMES = frozenset(("get_results", "run_simulation", "validate_parameters"))
+_METRIC_TOOL_NAMES = frozenset(("get_results", "run_simulation", "set_aircraft_parameters"))
 
 _METRIC_KEYS = ("fuel_burned_kg", "gtow_kg", "wing_mass_kg", "reserve_fuel_kg", "zero_fuel_weight_kg")
 
@@ -585,10 +585,12 @@ def _extract_from_tool_outputs(messages: list[AgentMessage]) -> dict | None:
     """Extract Aviary metrics from MCP tool call outputs (ground truth).
 
     Scans tool calls for ``get_results``, ``run_simulation``, or
-    ``validate_parameters`` outputs. Uses ``raw_decode()`` to recover
-    partial data from truncated JSON. Returns ``None`` for metrics not
-    found (never coerces to 0.0 — callers must distinguish missing from
-    zero).
+    ``set_aircraft_parameters`` outputs. ``set_aircraft_parameters``
+    nests model-eval metrics under ``model_eval.outputs`` because the
+    standalone validate_parameters tool was folded into it 2026-05-23.
+    Uses ``raw_decode()`` to recover partial data from truncated JSON.
+    Returns ``None`` for metrics not found (never coerces to 0.0 —
+    callers must distinguish missing from zero).
     """
     fuel = gtow = wing = reserve = zfw = None
     converged = None
@@ -605,7 +607,9 @@ def _extract_from_tool_outputs(messages: list[AgentMessage]) -> dict | None:
             # run_simulation nests metrics inside a "summary" dict.
             if "summary" in data and isinstance(data["summary"], dict):
                 data = {**data, **data["summary"]}
-            # validate_parameters nests metrics inside "model_eval.outputs".
+            # set_aircraft_parameters nests model-eval metrics under
+            # "model_eval.outputs" (inline validation, replaces the
+            # deprecated standalone validate_parameters tool).
             model_eval = data.get("model_eval")
             if isinstance(model_eval, dict):
                 outputs = model_eval.get("outputs")

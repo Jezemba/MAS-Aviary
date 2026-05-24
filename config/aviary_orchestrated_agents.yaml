@@ -54,9 +54,11 @@ agents:
       Available Aviary tools (workers will see these via list_available_tools):
         get_design_space        — returns all tuneable parameters and ranges
         create_session          — starts a new simulation session (returns session_id)
-        set_aircraft_parameters — sets wing/fuselage/engine parameters
+        set_aircraft_parameters — sets wing/fuselage/engine parameters AND
+                                  runs validation (static checks + ~5-10s
+                                  Aviary model eval). Response includes a
+                                  "valid" boolean.
         configure_mission       — sets range, passengers, cruise Mach/altitude
-        validate_parameters     — checks parameter consistency and runs quick model eval (~8s)
         run_simulation          — runs the Aviary optimisation (requires session)
         get_results             — retrieves output metrics from a completed run
         check_constraints       — validates outputs against user constraints
@@ -66,14 +68,15 @@ agents:
         It returns a session_id that MUST be passed to every subsequent call.
       - set_aircraft_parameters and configure_mission must both complete
         BEFORE run_simulation is called.
-      - CRITICAL VALIDATION GATE: Every parameter-setting worker MUST call
-        validate_parameters after setting parameters. If it returns
-        valid: false, the worker MUST adjust parameters and call
-        validate_parameters again. This loop MUST repeat until valid: true.
-        NEVER proceed to run_simulation with invalid parameters — the
-        simulation WILL fail with solver errors (NaN/inf residuals).
-        Instruct parameter workers: "Keep adjusting and re-validating until
-        validate_parameters returns valid: true. You have up to 20 steps."
+      - CRITICAL VALIDATION GATE: Every set_aircraft_parameters call
+        returns a "valid" boolean (validation runs automatically). If it
+        is false, the worker MUST adjust parameters and call
+        set_aircraft_parameters again. This loop MUST repeat until
+        valid: true. NEVER proceed to run_simulation with invalid
+        parameters — the simulation WILL fail with solver errors
+        (NaN/inf residuals). Instruct parameter workers: "Keep adjusting
+        until set_aircraft_parameters returns valid: true. You have up
+        to 20 steps."
       - check_constraints must only be called AFTER run_simulation completes.
       - Output variables use gtow_kg (not gross_mass_kg) in check_constraints.
       - Do NOT hardcode any parameter value — always instruct workers to call
@@ -123,16 +126,17 @@ agents:
       Fuselage: LENGTH (28–50 m), MAX_HEIGHT (3–5.5 m), MAX_WIDTH (3–5.5 m).
       Engine: SCALE_FACTOR (0.8–1.5).
       IMPORTANT: Use Aircraft.Engine.SCALE_FACTOR, NOT SCALED_SLS_THRUST.
-      After setting parameters, workers MUST call validate_parameters to
-      verify the combination is valid before handing off to simulation.
+      Every set_aircraft_parameters call returns a "valid" boolean inline —
+      workers MUST keep adjusting until valid: true before handing off to
+      simulation. No separate validate step exists.
 
       GRAPH ROLE TOOL REQUIREMENTS:
       When list_graph_roles returns role names, assign tools to each role
       based on what it needs to do in the design workflow:
       - mission_architect: create_session, configure_mission
         (this role initialises the session and configures the mission)
-      - aerodynamics_analyst: get_design_space, set_aircraft_parameters, validate_parameters
-      - propulsion_analyst: get_design_space, set_aircraft_parameters, validate_parameters
+      - aerodynamics_analyst: get_design_space, set_aircraft_parameters
+      - propulsion_analyst: get_design_space, set_aircraft_parameters
       - weights_analyst: (no tools — text-based analysis only)
       - simulation_executor: run_simulation, get_results, create_session
       - mdo_integrator: check_constraints, get_results

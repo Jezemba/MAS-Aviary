@@ -234,8 +234,10 @@ templates:
              - What tradeoff it creates with structural weight
           3. Call set_aircraft_parameters with ONLY wing geometry variables.
              Change at most ONE of {AREA, SPAN, ASPECT_RATIO} per call.
-          4. Call validate_parameters to verify the parameter combination is
-             valid. If valid: false, adjust your parameters and retry.
+             The response includes a "valid" boolean — set_aircraft_parameters
+             now runs the static checks + a ~5-10s Aviary model evaluation
+             automatically. If valid: false, adjust parameters and call
+             set_aircraft_parameters again until valid: true.
 
           Do not change fuselage or engine parameters.
 
@@ -247,7 +249,6 @@ templates:
           EXPECTED_FUEL_BURN_DIRECTION: <increase/decrease/neutral>
         allowed_tools:
           - set_aircraft_parameters
-          - validate_parameters
         interface_output: "Wing geometry parameters set with aerodynamic rationale"
 
       - name: "weights_analyst"
@@ -357,11 +358,12 @@ templates:
              - Has the aero analyst increased wing area significantly?
                Higher gross mass at lift-off → may need more thrust.
              - Is minimizing fuel burn the priority? Scale toward 0.8.
-          2. Call set_aircraft_parameters with SCALE_FACTOR only.
-          3. Call validate_parameters to verify the full parameter combination
-             (wing + fuselage + engine) is valid. If valid: false, adjust
-             SCALE_FACTOR and retry. If valid: true, report the summary.
-          4. State the propulsion reasoning and convergence risk.
+          2. Call set_aircraft_parameters with SCALE_FACTOR only. The
+             response validates the full parameter combination (wing +
+             fuselage + engine) and includes a "valid" boolean. If
+             valid: false, adjust SCALE_FACTOR and call again. If
+             valid: true, report the summary.
+          3. State the propulsion reasoning and convergence risk.
 
           ── REQUIRED OUTPUT FORMAT ──────────────────────────────────────────────
 
@@ -371,7 +373,6 @@ templates:
           CONVERGENCE_RISK: <low/medium/high>
         allowed_tools:
           - set_aircraft_parameters
-          - validate_parameters
         interface_output: "Engine scale factor set with propulsion rationale and convergence risk assessment"
 
       - name: "simulation_executor"

@@ -122,9 +122,13 @@ class StagedPipelineHandler(ExecutionHandler):
             "TASK_COMPLETE",
         )
 
-        # TEMPORARY FLAG: abort pipeline early when a stage exhausts all its
-        # validate_parameters attempts without ever getting valid=true.
-        # Set to False to restore original unconditional-advance behaviour.
+        # Abort pipeline early when a stage exhausts all its
+        # set_aircraft_parameters attempts without ever getting valid=true.
+        # set_aircraft_parameters runs the static checks + Aviary model
+        # evaluation inline, so the "valid" boolean lives on every set
+        # response (the standalone validate_parameters tool was removed
+        # 2026-05-23).  Set to False to restore the original
+        # unconditional-advance behaviour.
         self._abort_on_validation_exhaustion: bool = config.get(
             "abort_on_validation_exhaustion",
             True,
@@ -409,9 +413,10 @@ class StagedPipelineHandler(ExecutionHandler):
             if self._termination_keyword and self._termination_keyword in content:
                 break
 
-            # TEMPORARY: abort if stage called validate_parameters but never
-            # got valid=true (all attempts exhausted).  Avoids wasting time
-            # running simulation with known-bad parameters.
+            # Abort if stage called set_aircraft_parameters but never
+            # got valid=true on its inline validation (all attempts
+            # exhausted). Avoids wasting time running simulation with
+            # known-bad parameters.
             if self._abort_on_validation_exhaustion and self._validation_exhausted(tool_calls):
                 msg.metadata["early_abort"] = "validation_exhausted"
                 break
@@ -579,13 +584,18 @@ class StagedPipelineHandler(ExecutionHandler):
 
     @staticmethod
     def _validation_exhausted(tool_calls: list[ToolCallRecord]) -> bool:
-        """Return True if validate_parameters was called but never returned valid=true."""
+        """Return True if set_aircraft_parameters was called but never returned valid=true.
+
+        set_aircraft_parameters runs the inline static-check + Aviary
+        model-evaluation validation that the deprecated validate_parameters
+        tool used to do, and surfaces the result on its "valid" field.
+        """
         import json
 
-        vp_calls = [tc for tc in tool_calls if tc.tool_name == "validate_parameters"]
-        if not vp_calls:
+        sp_calls = [tc for tc in tool_calls if tc.tool_name == "set_aircraft_parameters"]
+        if not sp_calls:
             return False
-        for tc in vp_calls:
+        for tc in sp_calls:
             try:
                 parsed = json.loads(tc.output) if tc.output else {}
             except (json.JSONDecodeError, TypeError):

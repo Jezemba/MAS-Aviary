@@ -58,9 +58,10 @@ peer_template:
          Params: AR (15.6), AREA (130.1 m²), SPAN (45m), SWEEP (25 deg), TAPER (0.278),
                  Fuselage.LENGTH (37.79m), MAX_HEIGHT (4.06m), MAX_WIDTH (3.76m),
                  Engine.SCALE_FACTOR (1.0). COUPLING: only set one of {AR, SPAN, AREA} per call.
+         RESPONSE: includes "valid" boolean + ~5-10s Aviary model-eval result.
+         If valid is false, adjust parameters and call again until valid.
        configure_mission(session_id, range_nmi=2500, num_passengers=239,
                         cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
-       validate_parameters(session_id) → 6-9s quick eval
        run_simulation(session_id, timeout_seconds=300) → ~40-60s
        get_results(session_id) → fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg
        get_trajectory(session_id) → timeseries per phase
@@ -161,7 +162,7 @@ workflow_phases:
     tools: ["create_cycle_model", "close_cycle_model", "list_variables", "set_inputs", "run_cycle", "get_outputs", "get_cycle_summary"]
     board_key: "phase_propulsion_analysis"
   - name: "mission_setup"
-    tools: ["get_design_space", "create_session", "set_aircraft_parameters", "configure_mission", "validate_parameters"]
+    tools: ["get_design_space", "create_session", "set_aircraft_parameters", "configure_mission"]
     board_key: "phase_mission_setup"
   - name: "simulation"
     tools: ["run_simulation", "get_results", "get_trajectory"]

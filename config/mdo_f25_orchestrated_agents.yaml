@@ -98,13 +98,16 @@ agents:
          sweep_inputs(session_id, sweep=[...]) → parametric study
          NOTE: May be running as stub — if ImportError, use F25 reference values.
 
-      5. Aviary MCP (Mission — port 8600, 9 tools):
+      5. Aviary MCP (Mission — port 8600, 8 tools):
          get_design_space(category) → 10 parameters with defaults, ranges, units
          create_session(initial_parameters) → session_id (30-min timeout)
-         set_aircraft_parameters(session_id, parameters={"Aircraft.Wing.ASPECT_RATIO": 15.6, ...})
+         set_aircraft_parameters(session_id, parameters={"Aircraft.Wing.ASPECT_RATIO": 15.6, ...},
+                                 validate_timeout_seconds=30)
+           → applies params AND runs validation (static checks + ~5-10s
+             Aviary model eval). Response includes "valid" boolean.
+             If valid is false, adjust parameters and call again until valid.
          configure_mission(session_id, range_nmi=2500, num_passengers=239,
                           cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
-         validate_parameters(session_id, timeout_seconds=30)
          run_simulation(session_id, timeout_seconds=300) → ~40-60s for 200 iterations
          get_results(session_id) → fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg
          get_trajectory(session_id) → altitude, Mach, mass, throttle vs time
@@ -129,7 +132,7 @@ agents:
       - propulsion_analyst: create_cycle_model, close_cycle_model, list_variables, set_inputs,
         run_cycle, get_outputs, get_cycle_summary
       - mission_architect: get_design_space, create_session, set_aircraft_parameters,
-        configure_mission, validate_parameters
+        configure_mission
       - simulation_executor: run_simulation, get_results, get_trajectory
       - mdo_integrator: check_constraints, get_results
 

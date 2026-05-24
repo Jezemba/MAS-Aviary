@@ -480,9 +480,12 @@ class NetworkedStrategy(CoordinationStrategy):
 
         # Check each incomplete phase: if any of its tools were called,
         # mark the phase complete.  Special case: parameter_setting phase
-        # requires validate_parameters to return valid:true before the
-        # phase advances — calling set_aircraft_parameters alone is not
-        # enough (params may be invalid, causing simulation failure).
+        # requires set_aircraft_parameters to return valid:true before
+        # the phase advances. set_aircraft_parameters runs the inline
+        # validation (static checks + ~5-10s Aviary model eval) that
+        # the deprecated validate_parameters tool used to do, so its
+        # "valid" field is the gate — calling it once with invalid
+        # values does NOT advance the phase.
         for phase in self._workflow_phases:
             board_key = phase["board_key"]
             if self._blackboard.get(board_key) is not None:
@@ -491,15 +494,15 @@ class NetworkedStrategy(CoordinationStrategy):
             if not (called_tools & phase_tools):
                 continue
 
-            # Gate: if this phase includes validate_parameters, only
-            # auto-complete when validation returned valid:true.
-            if "validate_parameters" in phase_tools:
+            # Gate: if this phase includes set_aircraft_parameters, only
+            # auto-complete when its inline validation returned valid:true.
+            if "set_aircraft_parameters" in phase_tools:
                 validation_passed = False
                 for tc in tool_calls:
                     tc_name = getattr(tc, "tool_name", None) or getattr(tc, "name", "")
                     tc_output = getattr(tc, "output", "") or ""
                     normalized = tc_output.replace(" ", "").replace("'", '"')
-                    if tc_name == "validate_parameters" and '"valid":true' in normalized:
+                    if tc_name == "set_aircraft_parameters" and '"valid":true' in normalized:
                         validation_passed = True
                         break
                 if not validation_passed:
@@ -864,8 +867,8 @@ class NetworkedStrategy(CoordinationStrategy):
                 f"You can ONLY use tools for this phase. Complete it and "
                 f"post results to the blackboard.\n\n"
                 f"FULL WORKFLOW:\n{phase_map}\n"
-                f"NOTE: parameter_setting phase requires validate_parameters "
-                f"to return valid:true before advancing."
+                f"NOTE: parameter_setting phase requires set_aircraft_parameters "
+                f"to return valid:true before advancing (validation runs inline)."
             )
         elif active_phase:
             parts.append(

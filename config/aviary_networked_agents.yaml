@@ -22,9 +22,11 @@ peer_template:
     Available Aviary tools:
       create_session          — starts a new simulation session (returns session_id)
       configure_mission       — sets range, passengers, cruise Mach/altitude
-      set_aircraft_parameters — sets wing/fuselage/engine parameters
+      set_aircraft_parameters — sets wing/fuselage/engine parameters AND
+                                runs validation (static checks + ~5-10s
+                                Aviary model eval). Response includes a
+                                "valid" boolean.
       get_design_space        — returns all tuneable parameters and ranges
-      validate_parameters     — checks parameter consistency and runs quick model eval (~8s)
       run_simulation          — runs the Aviary optimisation (requires session)
       get_results             — retrieves output metrics from a completed run
       check_constraints       — validates outputs against user constraints
@@ -34,9 +36,9 @@ peer_template:
       It returns a session_id that MUST be passed to every subsequent call.
     - set_aircraft_parameters and configure_mission must both complete
       BEFORE run_simulation is called.
-    - validate_parameters MUST be called after all parameters are set and
-      BEFORE run_simulation. If it returns valid: false, fix the parameters
-      before proceeding.
+    - Every set_aircraft_parameters call returns a "valid" boolean. If it
+      is false, fix the parameters and call set_aircraft_parameters again
+      until it returns valid: true BEFORE moving on to run_simulation.
     - check_constraints must only be called AFTER run_simulation completes.
     - Output variables use gtow_kg (not gross_mass_kg) in check_constraints.
 
@@ -68,8 +70,9 @@ peer_template:
       Range 0.8–1.5
       Engine thrust scaling. Use SCALE_FACTOR, NOT SCALED_SLS_THRUST (read-only).
 
-    Always call validate_parameters after setting parameters to verify
-    the combination is valid before proceeding to simulation.
+    set_aircraft_parameters returns the validation result inline — read
+    the "valid" boolean on every call and keep adjusting parameters until
+    it is true before proceeding to simulation.
 
     SESSION_ID COORDINATION:
     Only ONE agent should call create_session. After calling it, post the
@@ -82,7 +85,9 @@ peer_template:
     The system enforces a phased pipeline. Each turn, you will only have
     access to tools for the CURRENT phase. The phases are:
       Phase 1 — Session setup: create_session + configure_mission
-      Phase 2 — Parameter setting: get_design_space + set_aircraft_parameters + validate_parameters
+      Phase 2 — Parameter setting: get_design_space + set_aircraft_parameters
+                (set_aircraft_parameters now returns "valid" inline; no
+                separate validate call)
       Phase 3 — Simulation: run_simulation
       Phase 4 — Evaluation: get_results + check_constraints
     Phases unlock in order. You can only use the tools available to you

@@ -554,8 +554,10 @@ class OrchestratedStrategy(CoordinationStrategy):
             "The parameter combination set by your workers was invalid. "
             "Re-assign parameter agents (aerodynamics_analyst, "
             "propulsion_analyst) with corrected instructions. They should "
-            "call validate_parameters and fix any issues before handing "
-            "off to simulation_executor again.\n\n" + self._format_context_for_orchestrator(history)
+            "read the 'valid' boolean returned by set_aircraft_parameters "
+            "(validation runs inline) and adjust parameters until valid:true "
+            "before handing off to simulation_executor again.\n\n"
+            + self._format_context_for_orchestrator(history)
         )
         self._orchestrator_turns_used += 1
 

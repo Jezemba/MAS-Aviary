@@ -75,11 +75,13 @@ def extract_feedback(message, attempt_number: int = 0) -> AttemptFeedback:
         parsed = _parse_tool_output(tc.output)
 
         # Determine success: explicit "success" key, absence of error, or
-        # return_code == 0.  Also check "valid" key — tools like
-        # validate_parameters return {"success": true, "valid": false}
-        # where "success" means the tool ran but "valid" means the
-        # domain-level check failed.  Treat valid=false as a failure so
-        # the retry loop keeps the agent working until validation passes.
+        # return_code == 0.  Also check "valid" key — set_aircraft_parameters
+        # returns {"success": true, "valid": false} when the parameter
+        # combination fails the inline static checks or model evaluation.
+        # "success" means the tool ran; "valid" means the domain-level
+        # check passed. Treat valid=false as a failure so the retry loop
+        # keeps the agent calling set_aircraft_parameters with adjusted
+        # values until validation passes.
         if tc.error:
             success = False
         elif isinstance(parsed, dict) and "success" in parsed:
@@ -110,7 +112,8 @@ def extract_feedback(message, attempt_number: int = 0) -> AttemptFeedback:
 
         if not success and not tc.error and not error_type:
             # Tool returned failure but no explicit error string.
-            # Check for validation errors first (validate_parameters).
+            # Check for validation errors first (now from
+            # set_aircraft_parameters' inline validation).
             if isinstance(parsed, dict) and "valid" in parsed and not parsed["valid"]:
                 val_errors = parsed.get("errors", [])
                 if val_errors:

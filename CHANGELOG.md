@@ -1,5 +1,71 @@
 ## [Unreleased]
 
+### 2026-05-23 — Drop validate_parameters from MAS-Aviary surface
+
+**Why.** Companion to the aviary-mcp change that folded
+`validate_parameters` into `set_aircraft_parameters`. MAS-Aviary had the
+tool name baked into agent prompts, tool-allowlists, phase definitions,
+and two pieces of gate logic. Leaving the references in place would
+have caused tool-not-found errors on every parameter-setting agent.
+
+**Change.**
+- **YAML prompts (10 files).** `aviary_staged_pipeline.yaml`,
+  `aviary_networked.yaml`, `aviary_networked_agents.yaml`,
+  `aviary_orchestrated_agents.yaml`, `aviary_graph.yaml`,
+  `mdo_f25_graph.yaml`, `mdo_f25_networked_agents.yaml`,
+  `mdo_f25_orchestrated_agents.yaml`, `sequential_agents.yaml`,
+  `mdo_f25_sequential_agents.yaml` — removed `validate_parameters` from
+  tool allowlists; rewrote agent step lists from "call
+  set_aircraft_parameters then call validate_parameters" to "call
+  set_aircraft_parameters; read the `valid` field on its response".
+  Workflow gating language updated.
+- **Handlers.**
+  - `src/coordination/staged_pipeline_handler.py::_validation_exhausted`
+    now watches `set_aircraft_parameters` outputs instead of
+    `validate_parameters` outputs.
+  - `src/coordination/strategies/networked.py` phase-completion gate
+    now requires `set_aircraft_parameters` to return `valid:true`
+    (was previously gated on `validate_parameters` returning that).
+    Status banner in the phase prompt updated.
+  - `src/runners/batch_runner.py::_METRIC_TOOL_NAMES` swaps
+    `validate_parameters` for `set_aircraft_parameters` so the metric
+    extractor still finds `model_eval.outputs`.
+  - `src/coordination/feedback_extraction.py` and
+    `src/coordination/strategies/orchestrated.py` — comments + retry
+    prompts updated to reference set_aircraft_parameters' inline `valid`.
+- **README.md.** Tool count 9 → 8, listing dropped.
+
+**Why this matters.** Every parameter-setting worker is now a single
+tool call away from a verdict. No more "set, then forget to validate,
+then run_simulation and watch SLSQP NaN at 40 s" failure pattern.
+
+**Validation.** Local unit tests touching the modified handlers all
+green:
+- `tests/test_data_plane.py` — 42/42
+- `tests/test_feedback_extraction.py` — 26/26
+- `tests/test_networked_strategy.py` — 59/59
+- `tests/test_orchestrated_strategy.py` — 28/28
+- `tests/test_iterative_feedback_handler.py` — 30/30
+Total 185/185 in the targeted suite.
+
+New regression test `tests/test_validate_merge_agent.py` drives a
+real Claude Sonnet 4 agent against the running aviary-mcp on :8600
+(`@pytest.mark.live_mcp_llm`, ~$0.10, ~1 min). Two cases pass on
+the live tool:
+- `test_good_params_return_valid_inline` — one `set_aircraft_parameters`
+  call with AR=11/AREA=130.1/SCALE=1.0 returned `valid:true`,
+  populated `model_eval.outputs`, ~1s `runtime_seconds`. No follow-up
+  validate call was attempted.
+- `test_agent_reads_warnings_and_retries` — first call with AR=20
+  returned the two expected warnings (advisory range + reliable
+  range). The agent read the response, adjusted to AR=10.5, and
+  re-called `set_aircraft_parameters` to get a clean valid response.
+
+The aviary-mcp side reports 24/24 unit-test passes for
+`set_aircraft_parameters` returning the merged validation payload —
+see the aviary-mcp CHANGELOG entry of the same date for the
+server-side change.
+
 ### 2026-05-23 (Phase K — mass-mcp closes the structures + propulsion-input loops)
 
 Run #20 (wandb r58n9eew) wires the structures discipline into both

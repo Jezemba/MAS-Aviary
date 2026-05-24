@@ -44,8 +44,9 @@ aviary_pipeline:
            and report "No wing adjustments needed" — the pipeline will
            advance to the next stage.
         3. Otherwise, call set_aircraft_parameters with your chosen values.
-        4. Call validate_parameters to verify validity. If invalid, adjust
-           and retry.
+           The response includes a "valid" boolean and a "violations" list —
+           if valid is false, adjust parameters and call set_aircraft_parameters
+           again until valid is true.
 
         Include SESSION_ID: <value> in your output.
 
@@ -65,9 +66,10 @@ aviary_pipeline:
         - Engine scale factor vs aircraft size
         - No extreme values outside design space bounds
 
-        If any parameters need adjustment, call set_aircraft_parameters
-        and validate_parameters. You can adjust wing, fuselage, or engine
-        parameters as needed.
+        If any parameters need adjustment, call set_aircraft_parameters.
+        Its response carries a "valid" boolean — keep adjusting until
+        valid is true. You can change wing, fuselage, or engine parameters
+        as needed.
 
         When done, output WEIGHT_PARAMETERS_SET on its own line.
         Include SESSION_ID: <value> in your output.
@@ -96,10 +98,11 @@ aviary_pipeline:
            you may skip changes and report "No engine adjustments needed"
            — the pipeline will advance to the next stage.
         3. Otherwise, call set_aircraft_parameters with your chosen values.
-        4. Call validate_parameters to verify the full parameter combination
-           (wing + fuselage + engine) is valid.
-           If valid: false, adjust parameters and retry.
-           If valid: true, report the validation summary.
+           The response validates the full parameter combination (wing +
+           fuselage + engine) — read the "valid" boolean and "summary"
+           fields. If valid: false, adjust parameters and call
+           set_aircraft_parameters again until valid: true, then report
+           the validation summary.
 
         Include SESSION_ID: <value> in your output.
 

@@ -900,12 +900,14 @@ templates:
              values, USE the F25 baseline values from the "else" column
              — do NOT propagate null/None to set_aircraft_parameters.
 
-          5. Call validate_parameters(session_id) to catch bad inputs.
+          5. set_aircraft_parameters runs validation automatically — its
+             response includes a "valid" boolean and a "summary" field.
              If valid: false, surface the validation messages in the
              VALIDATION_STATUS field of your DESIGN_STATE output and
-             STOP — do not loop on validation. Re-running validate
-             three times does not fix the parameters; the upstream
-             stage that produced the bad value must be re-run instead.
+             STOP — do not loop calling set_aircraft_parameters with
+             the same bad values. Re-running validation three times
+             does not fix the parameters; the upstream stage that
+             produced the bad value must be re-run instead.
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 
@@ -924,7 +926,6 @@ templates:
           - create_session
           - set_aircraft_parameters
           - configure_mission
-          - validate_parameters
         interface_output: "Aviary session ID, mission configured, parameters set and validated"
 
       # ══════════════════════════════════════════════════════════════════
