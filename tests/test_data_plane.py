@@ -510,6 +510,80 @@ class TestPhaseHAeroInjection:
         )
         assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 0.5
 
+    # ── Phase K-B: mass-mcp MTOM → pycycle Fn_DES ────────────────────
+
+    def test_capture_mtom_from_estimate_mass(self, fresh_state):
+        """mass_breakdown.mTOM_kg is stashed for K-B injection."""
+        response = {
+            "mass_breakdown": {
+                "mTOM_kg": 73000.0,
+                "components": {
+                    "mWing_kg": 7677.4, "mWing_source": "flops"
+                },
+            },
+        }
+        intercept_response("estimate_mass", response)
+        assert fresh_state.data_store["mass_mtom_kg"] == pytest.approx(73000.0)
+
+    def test_inject_fn_des_into_pycycle_set_inputs(self, fresh_state):
+        """resolve_request on pycycle's set_inputs adds Fn_DES from
+        captured MTOM. Formula: MTOM × 0.0811."""
+        from src.tools.data_plane import _tool_server_map
+        _tool_server_map["set_inputs"] = "pycycle"
+        try:
+            fresh_state.data_store["mass_mtom_kg"] = 73000.0
+            out = resolve_request(
+                "set_inputs",
+                {"session_id": "s", "values": {"fan.PR": 1.45}},
+            )
+            # 73000 × 0.0811 = 5920 lbf
+            assert out["values"]["Fn_DES"] == pytest.approx(5920.3, abs=1.0)
+        finally:
+            _tool_server_map.pop("set_inputs", None)
+
+    def test_inject_fn_des_does_not_overwrite_explicit_value(
+        self, fresh_state,
+    ):
+        from src.tools.data_plane import _tool_server_map
+        _tool_server_map["set_inputs"] = "pycycle"
+        try:
+            fresh_state.data_store["mass_mtom_kg"] = 73000.0
+            out = resolve_request(
+                "set_inputs",
+                {"session_id": "s",
+                 "values": {"Fn_DES": 7500.0, "fan.PR": 1.45}},
+            )
+            assert out["values"]["Fn_DES"] == 7500.0
+        finally:
+            _tool_server_map.pop("set_inputs", None)
+
+    def test_inject_fn_des_only_on_pycycle_mcp(self, fresh_state):
+        """set_inputs is a generic name — only inject for pycycle, not
+        other MCPs that might happen to have the same tool name."""
+        from src.tools.data_plane import _tool_server_map
+        _tool_server_map["set_inputs"] = "other_mcp"
+        try:
+            fresh_state.data_store["mass_mtom_kg"] = 73000.0
+            out = resolve_request(
+                "set_inputs",
+                {"session_id": "s", "values": {"fan.PR": 1.45}},
+            )
+            assert "Fn_DES" not in out["values"]
+        finally:
+            _tool_server_map.pop("set_inputs", None)
+
+    def test_inject_fn_des_noop_without_mtom(self, fresh_state):
+        from src.tools.data_plane import _tool_server_map
+        _tool_server_map["set_inputs"] = "pycycle"
+        try:
+            out = resolve_request(
+                "set_inputs",
+                {"session_id": "s", "values": {"fan.PR": 1.45}},
+            )
+            assert "Fn_DES" not in out["values"]
+        finally:
+            _tool_server_map.pop("set_inputs", None)
+
     def test_inject_coerces_json_string_parameters(self, fresh_state):
         """mcpadapt's anyOf gap sometimes lands `parameters` as a JSON
         string. Inject still works."""

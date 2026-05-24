@@ -257,6 +257,19 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         wing_f, components.get("mWing_source"),
     )
 
+    # Phase K-B: also stash MTOM for pycycle Fn_DES injection
+    mtom_kg = breakdown.get("mTOM_kg")
+    if mtom_kg is not None:
+        try:
+            mtom_f = float(mtom_kg)
+            if 20_000.0 <= mtom_f <= 200_000.0:
+                _design_state.data_store["mass_mtom_kg"] = mtom_f
+                logger.info(
+                    "Captured MTOM from estimate_mass: %.1f kg", mtom_f,
+                )
+        except (TypeError, ValueError):
+            pass
+
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     """Phase H: stash CL/CD from SU2's read_history_csv into data_store.
@@ -532,17 +545,17 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _fix_su2_markers(updates, wall_marker, far_marker)
 
     # Phase H + K-A: merge externally computed CL/CD/wing-mass into
-    # set_aircraft_parameters so aviary actually reflects the SU2 and
-    # mass-mcp outputs instead of its internal regression defaults.
+    # aviary's set_aircraft_parameters. Phase K-B: merge mass-mcp's
+    # MTOM into pycycle's set_inputs (Fn_DES sizing).
     #
-    # Phase J (pyCycle SFC → SUBSONIC_FUEL_FLOW_SCALER) was reverted
-    # in 2026-05-23 after sensitivity validation proved the scaler
-    # has no effect on the FwFm bench's tabular engine deck. Phase K-A
-    # was validated BEFORE shipping (Wing.MASS_SCALER moves fuel burn
-    # +7% for a +1.5× scaler) so it lands without that risk.
+    # Phase J was reverted 2026-05-23 — SUBSONIC_FUEL_FLOW_SCALER had
+    # no effect on the FwFm bench's tabular engine deck. K-A and K-B
+    # were validated BEFORE shipping.
     if tool_name == "set_aircraft_parameters" and _design_state:
         _inject_phase_h_aero(resolved)
         _inject_phase_k_wing_mass(resolved)
+    if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
+        _inject_phase_k_b_fn_des(resolved)
 
     return resolved
 
@@ -553,6 +566,63 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 # as the reference to translate mass-mcp's externally computed wing
 # mass into a scaler relative to aviary's own buildup.
 _AVIARY_BENCH_WING_MASS_KG = 5998.0
+
+
+# Phase K-B: per-engine cruise-climb thrust ≈ MTOM · g / (L/D · N_eng)
+# with a climb margin. Coefficient derived as
+#   0.0811 = 9.81 / 17.0 / 2.0 / 4.448 * 1.25
+# (g=9.81 m/s², L/D=17 conservative narrow-body, 2 engines, N→lbf,
+# 1.25× climb thrust margin). For MTOM=73 t → 5,920 lbf, matching
+# pycycle HBTF's default Fn_DES of 5,900 lbf within 0.3%.
+_FN_DES_PER_KG_LBF = 0.0811
+
+
+def _inject_phase_k_b_fn_des(resolved: dict) -> None:
+    """Merge mass-mcp's MTOM into pycycle's ``set_inputs`` as Fn_DES.
+
+    The propulsion-weight snowball: heavier aircraft needs more
+    thrust, bigger engine sizes itself for that thrust, engine mass
+    feeds back into airframe mass. This closes one side of the loop
+    by sizing the design-point thrust to the externally computed
+    MTOM rather than letting the propulsion agent default to 5,900
+    lbf regardless of airframe.
+
+    No-op when:
+      - mass-mcp didn't run (no ``mass_mtom_kg`` in data_store)
+      - the agent already specified Fn_DES explicitly
+      - the set_inputs call doesn't target the pycycle MCP
+    """
+    if _design_state is None:
+        return
+
+    mtom_kg = _design_state.data_store.get("mass_mtom_kg")
+    if mtom_kg is None:
+        return
+
+    values = resolved.get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(values, dict):
+        return
+
+    if "Fn_DES" in values:
+        return  # respect explicit agent override
+
+    fn_des_lbf = float(mtom_kg) * _FN_DES_PER_KG_LBF
+    # Sanity envelope — anything outside [2000, 25000] lbf is a
+    # narrow-body class mismatch, not what this coupling is for.
+    fn_des_lbf = max(2000.0, min(fn_des_lbf, 25000.0))
+
+    values["Fn_DES"] = fn_des_lbf
+    resolved["values"] = values
+    logger.info(
+        "Phase K-B middleware injected Fn_DES=%.0f lbf "
+        "(mass-mcp MTOM=%.1f kg)",
+        fn_des_lbf, float(mtom_kg),
+    )
 
 
 def _inject_phase_k_wing_mass(resolved: dict) -> None:
