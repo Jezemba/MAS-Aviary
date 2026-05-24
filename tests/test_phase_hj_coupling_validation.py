@@ -148,6 +148,45 @@ def test_phase_h_drag_factor_changes_fuel_burn():
     )
 
 
+def test_phase_k_wing_mass_changes_fuel_burn():
+    """Sweep three mass-mcp wing-mass values. Middleware injects
+    ``Aircraft.Wing.MASS_SCALER = wing_kg / 5998``. Higher wing mass
+    → larger scaler → heavier MTOM → more fuel.
+
+    Direct sanity-test of the target knob produced
+    MASS_SCALER ∈ {0.5, 1.0, 1.5} → fuel 9.7t/10.0t/10.4t
+    on the bench (verified before shipping K-A middleware).
+    """
+    tools = _load_aviary_tools()
+    if "run_simulation" not in tools:
+        pytest.skip("aviary-mcp not loaded")
+
+    wing_kg_levels = [3000.0, 6000.0, 9000.0]
+    fuel_burns: dict[float, float] = {}
+    scalers: dict[float, float] = {}
+
+    for wing_kg in wing_kg_levels:
+        result = _run_aviary_with_seeded_data(
+            tools, {"mass_wing_kg": wing_kg},
+        )
+        fuel_burns[wing_kg] = result.get("fuel_burned_kg")
+        params = (result.get("design_parameters", {})
+                  .get("aircraft_params", {}))
+        scalers[wing_kg] = params.get("Aircraft.Wing.MASS_SCALER")
+
+    print(f"\n  wing_kg   scaler   fuel_burn_kg")
+    for w in wing_kg_levels:
+        print(f"  {w:7.0f}   {scalers[w]:.3f}    {fuel_burns[w]:.1f}")
+
+    assert scalers[wing_kg_levels[0]] < scalers[wing_kg_levels[1]] < scalers[wing_kg_levels[2]], (
+        f"MASS_SCALER isn't monotone in wing_kg: {scalers}"
+    )
+    assert fuel_burns[wing_kg_levels[0]] < fuel_burns[wing_kg_levels[1]] < fuel_burns[wing_kg_levels[2]], (
+        f"Phase K-A coupling silent — fuel burn doesn't respond to "
+        f"wing mass: {fuel_burns}"
+    )
+
+
 @pytest.mark.xfail(
     reason=(
         "Phase J reverted 2026-05-23. SUBSONIC_FUEL_FLOW_SCALER has no "

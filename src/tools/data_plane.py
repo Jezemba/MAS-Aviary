@@ -183,6 +183,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_cpacs_path(tool_name, data)
                 _capture_mesh_markers(tool_name, data)
                 _capture_aero_coefficients(tool_name, data)
+                _capture_wing_mass_from_mass_estimate(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -198,10 +199,63 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_cpacs_path(tool_name, response)
         _capture_mesh_markers(tool_name, response)
         _capture_aero_coefficients(tool_name, response)
+        _capture_wing_mass_from_mass_estimate(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
     return response
+
+
+def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
+    """Phase K-A: stash mass-mcp's wing mass for later injection.
+
+    mass-mcp's ``estimate_mass`` returns a structured ``mass_breakdown``
+    block with ``components.mWing_kg`` carrying the FLOPS-sourced wing
+    mass (in Aviary Wing.MASS scope after the wwr fix in mass-mcp
+    commit bb99056). Without a server-side handoff that number stays
+    inside the structures stage's text output — aviary then computes
+    its OWN wing mass from internal FLOPS and ignores the external
+    discipline. resolve_request injects a matching
+    ``Aircraft.Wing.MASS_SCALER`` into the next
+    ``set_aircraft_parameters`` so aviary's mission reflects the
+    coupled wing mass.
+    """
+    if _design_state is None or tool_name != "estimate_mass":
+        return
+
+    breakdown = data.get("mass_breakdown")
+    if not isinstance(breakdown, dict):
+        return
+    components = breakdown.get("components")
+    if not isinstance(components, dict):
+        return
+
+    wing_kg = components.get("mWing_kg")
+    if wing_kg is None:
+        return
+    try:
+        wing_f = float(wing_kg)
+    except (TypeError, ValueError):
+        return
+    # Sanity bracket — a 70-tonne narrow-body wing is ~5,000-12,000 kg
+    # structural. Anything outside [1000, 30000] is almost certainly a
+    # parsing accident.
+    if not (1000.0 <= wing_f <= 30000.0):
+        logger.info(
+            "Skipping mass-mcp wing mass=%.1f kg — outside [1k, 30k] "
+            "sanity bracket.",
+            wing_f,
+        )
+        return
+
+    _design_state.data_store["mass_wing_kg"] = wing_f
+    _design_state.data_store["mass_wing_source"] = str(
+        components.get("mWing_source", "unknown")
+    )
+    logger.info(
+        "Captured wing mass from estimate_mass: %.1f kg (source=%s)",
+        wing_f, components.get("mWing_source"),
+    )
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
@@ -477,23 +531,74 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             far_marker = _design_state.data_store.get("mesh_marker_farfield", "farfield")
             _fix_su2_markers(updates, wall_marker, far_marker)
 
-    # Phase H: merge externally computed CL/CD into
-    # set_aircraft_parameters so aviary actually reflects the SU2
-    # results instead of its internal regression defaults.
+    # Phase H + K-A: merge externally computed CL/CD/wing-mass into
+    # set_aircraft_parameters so aviary actually reflects the SU2 and
+    # mass-mcp outputs instead of its internal regression defaults.
     #
     # Phase J (pyCycle SFC → SUBSONIC_FUEL_FLOW_SCALER) was reverted
-    # in 2026-05-23 after the sensitivity validation in
-    # tests/test_phase_hj_coupling_validation.py proved the scaler
-    # has no effect on the FwFm bench's tabular engine deck. The
-    # value lands in aviary's applied list but isn't read during the
-    # trajectory simulation — a coupling silent on this aircraft. To
-    # actually pipe SFC into the bench mission we'd need to either
-    # switch to a GASP analytic engine model or replace the engine
-    # deck file at runtime; neither has happened yet.
+    # in 2026-05-23 after sensitivity validation proved the scaler
+    # has no effect on the FwFm bench's tabular engine deck. Phase K-A
+    # was validated BEFORE shipping (Wing.MASS_SCALER moves fuel burn
+    # +7% for a +1.5× scaler) so it lands without that risk.
     if tool_name == "set_aircraft_parameters" and _design_state:
         _inject_phase_h_aero(resolved)
+        _inject_phase_k_wing_mass(resolved)
 
     return resolved
+
+
+# Aviary's FLOPS Wing.MASS on the default bench geometry (no
+# overrides) is 5,998 kg — measured locally via aviary_runner with
+# MASS_SCALER=1.0 and AREA=124.6, AR=11.22. The middleware uses this
+# as the reference to translate mass-mcp's externally computed wing
+# mass into a scaler relative to aviary's own buildup.
+_AVIARY_BENCH_WING_MASS_KG = 5998.0
+
+
+def _inject_phase_k_wing_mass(resolved: dict) -> None:
+    """Merge mass-mcp's wing mass into a set_aircraft_parameters call.
+
+    Adds ``Aircraft.Wing.MASS_SCALER`` to the parameters dict (if not
+    already set by the agent), scaled so that aviary's structural
+    wing mass lines up with mass-mcp's externally computed value.
+
+    No-op when:
+      - mass-mcp didn't run (no ``mass_wing_kg`` in data_store)
+      - the agent already specified the scaler explicitly
+
+    Validated end-to-end before shipping (Avion 2026-05-23):
+    MASS_SCALER ∈ {0.5, 1.0, 1.5} on the bench moves fuel burn from
+    9,733 → 10,047 → 10,423 kg — a real, monotonic coupling.
+    """
+    if _design_state is None:
+        return
+
+    wing_kg = _design_state.data_store.get("mass_wing_kg")
+    if wing_kg is None:
+        return
+
+    parameters = resolved.get("parameters")
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(parameters, dict):
+        return
+
+    if "Aircraft.Wing.MASS_SCALER" in parameters:
+        return  # respect explicit agent override
+
+    scaler_raw = float(wing_kg) / _AVIARY_BENCH_WING_MASS_KG
+    scaler = max(0.5, min(scaler_raw, 2.0))
+
+    parameters["Aircraft.Wing.MASS_SCALER"] = scaler
+    resolved["parameters"] = parameters
+    logger.info(
+        "Phase K-A middleware injected Aircraft.Wing.MASS_SCALER=%.3f "
+        "(mass-mcp wing=%.1f kg / aviary bench=%.1f kg)",
+        scaler, float(wing_kg), _AVIARY_BENCH_WING_MASS_KG,
+    )
 
 
 def _inject_phase_h_aero(resolved: dict) -> None:

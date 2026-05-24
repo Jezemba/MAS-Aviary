@@ -407,6 +407,109 @@ class TestPhaseHAeroInjection:
     # engine model OR replaces the engine deck file at runtime — both
     # of which the test will catch with a direct sensitivity sweep.
 
+    # ── Phase K-A: mass-mcp wing mass → Aircraft.Wing.MASS_SCALER ──
+
+    def test_capture_wing_mass_from_estimate_mass(self, fresh_state):
+        """estimate_mass response payload's mass_breakdown.components
+        .mWing_kg is stashed for later injection."""
+        response = {
+            "status": "success",
+            "mass_breakdown": {
+                "components": {
+                    "mWing_kg": 7677.4,
+                    "mWing_source": "flops",
+                    "mFuselage_kg": 3557.0,
+                },
+            },
+        }
+        intercept_response("estimate_mass", response)
+        assert fresh_state.data_store["mass_wing_kg"] == pytest.approx(7677.4)
+        assert fresh_state.data_store["mass_wing_source"] == "flops"
+
+    def test_capture_rejects_implausible_wing_mass(self, fresh_state):
+        """Reject obvious parsing accidents — a 70-tonne narrow-body
+        wing isn't 150 kg or 200,000 kg."""
+        for nonsense in [0.0, 150.0, 200_000.0]:
+            response = {"mass_breakdown": {"components": {
+                "mWing_kg": nonsense, "mWing_source": "flops",
+            }}}
+            intercept_response("estimate_mass", response)
+            assert "mass_wing_kg" not in fresh_state.data_store, (
+                f"Captured implausible wing mass {nonsense}"
+            )
+
+    def test_inject_wing_mass_scaler(self, fresh_state):
+        """resolve_request on set_aircraft_parameters adds the
+        Wing.MASS_SCALER from the captured mass-mcp wing mass."""
+        fresh_state.data_store["mass_wing_kg"] = 7677.4
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        params = out["parameters"]
+        # 7677.4 / 5998 ≈ 1.280 (within clamp range)
+        assert params["Aircraft.Wing.MASS_SCALER"] == pytest.approx(
+            1.280, abs=0.005
+        )
+
+    def test_inject_phase_k_does_not_overwrite_explicit_value(
+        self, fresh_state,
+    ):
+        fresh_state.data_store["mass_wing_kg"] = 7677.4
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s",
+             "parameters": {
+                 "Aircraft.Wing.AREA": 130.1,
+                 "Aircraft.Wing.MASS_SCALER": 1.5,
+             }},
+        )
+        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 1.5
+
+    def test_inject_phase_k_noop_when_no_wing_mass(self, fresh_state):
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        assert "Aircraft.Wing.MASS_SCALER" not in out["parameters"]
+
+    def test_inject_phase_h_and_k_coexist(self, fresh_state):
+        """When both SU2 aero AND mass-mcp wing mass are captured, the
+        middleware injects all three Phase H+K keys in one call."""
+        fresh_state.data_store["aero_cl_cruise"] = 0.187
+        fresh_state.data_store["aero_cd_cruise"] = 0.0128
+        fresh_state.data_store["mass_wing_kg"] = 7677.4
+
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        params = out["parameters"]
+        assert "Mission.Design.LIFT_COEFFICIENT" in params
+        assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" in params
+        assert "Aircraft.Wing.MASS_SCALER" in params
+
+    def test_inject_clamps_extreme_wing_mass_scaler(self, fresh_state):
+        """A mass-mcp number outside the clamp range still produces a
+        bounded scaler — protects aviary from runaway parameters."""
+        # 20,000 kg / 5998 = 3.33 → should clamp to 2.0
+        fresh_state.data_store["mass_wing_kg"] = 20000.0
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 2.0
+
+        # 2,000 kg / 5998 = 0.33 → should clamp to 0.5
+        del fresh_state.data_store["mass_wing_kg"]
+        fresh_state.data_store["mass_wing_kg"] = 2000.0
+        out = resolve_request(
+            "set_aircraft_parameters",
+            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+        )
+        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 0.5
+
     def test_inject_coerces_json_string_parameters(self, fresh_state):
         """mcpadapt's anyOf gap sometimes lands `parameters` as a JSON
         string. Inject still works."""
