@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+### 2026-05-23 — Known limitation: middleware uses FLOPS primary even when out-of-range
+
+Surfaced while reviewing the full-pipeline run on D150 (wandb
+`iepdeu70`, fuel = 12,755.86 kg). On non-A320-class geometries where
+FLOPS is flagged out-of-valid-range, the middleware still routes the
+FLOPS-sourced primary `components.mWing_kg` into aviary's
+`Aircraft.Wing.MASS_SCALER`.
+
+**Concrete numbers from the D150 run:**
+
+```
+                       value      method      flagged?
+components.mWing_kg    7,677 kg   FLOPS       taper 0.176 out of FLOPS range
+oas_comparison
+  .mWing_scaled_kg     9,546 kg   OAS×wwr     no flag, in Wing.MASS scope
+captured by middleware → 7,677 kg → MASS_SCALER = 7,677/5,998 = 1.28
+```
+
+The Phase K `oas_wing_weight_ratio` 1.25 → 2.31 calibration (mass-mcp
+commit bb99056) brought OAS into the same scope as aviary's
+`Aircraft.Wing.MASS`. It did NOT add agent-side or middleware-side
+*selection* logic to prefer OAS when FLOPS is flagged invalid for the
+geometry. The structures_analyst reports the discrepancy in its
+`STRUCTURAL_WARNINGS` text but doesn't override the captured primary.
+
+**Why this is OK to leave as-is for now:**
+- For FwFm-class geometries (where the wwr was calibrated) FLOPS ≈
+  OAS-scaled at ~7,500 kg both, so the captured FLOPS primary is the
+  right answer.
+- For D150 and other non-A320 geometries, this means the 5-MCP
+  pipeline's wing-mass coupling silently prefers the empirical fit
+  that's outside its own validity range. Fuel-burn results from these
+  runs should be treated as a lower bound on what the OAS-coupled
+  version would produce.
+
+**Future work (not built yet, not currently authorized):** add a
+middleware rule that picks `oas_comparison.mWing_scaled_kg` when the
+mass-mcp response carries a `FLOPS-out-of-range` warning AND the OAS
+value is present and within the [1,000, 30,000] kg sanity bracket. OR
+edit the structures_analyst prompt to request `wing_mass_method="oas"`
+for non-FwFm CPACS files. Either is a single-file change once the
+team decides which lever to pull.
+
 ### 2026-05-23 — Drop validate_parameters from MAS-Aviary surface
 
 **Why.** Companion to the aviary-mcp change that folded
