@@ -1,5 +1,107 @@
 ## [Unreleased]
 
+### 2026-05-23 (Phase K — mass-mcp closes the structures + propulsion-input loops)
+
+Run #20 (wandb r58n9eew) wires the structures discipline into both
+aviary and pycycle via the same data-plane middleware pattern that
+Phases H and G.3 established. Two new injections:
+
+```
+Phase K-A: mass-mcp mWing_kg → Aircraft.Wing.MASS_SCALER
+           on aviary's set_aircraft_parameters
+Phase K-B: mass-mcp mTOM_kg  → Fn_DES (lbf)
+           on pycycle's set_inputs
+```
+
+**Run #20 result vs Run #18 (Phase I baseline):**
+
+```
+                  Run #18 (Phase I)   Run #20 (Phase K)
+MASS_SCALER       1.0 (default)       1.280  (injected)
+GROSS_MASS_KG     73,721              74,155  (+434 kg)
+FUEL_BURNED_KG    12,694.52           12,755.86  (+61 kg, +0.5%)
+OPR (propulsion)  40                  58
+CYCLE_CONVERGED   true                true
+```
+
+The wing-mass coupling has real but small effect on this aircraft —
++1.28× wing mass adds ~430 kg to MTOM (wing mass shows up directly
+in OEM), and aviary's optimizer adapts the trajectory to burn +61 kg
+more fuel for the heavier airframe. Same direction and magnitude as
+the direct sensitivity sweep predicted
+(6.0 → 9.0 t wing on the bench → +233 kg fuel, ~7% per 50%).
+
+**Three coupling steps shipped this phase:**
+
+1. **mass-mcp ``oas_wing_weight_ratio`` 1.25 → 2.31** (mass-mcp
+   commit bb99056). The earlier 1.25 default came from the OAS
+   uCRM example, which targets "wingbox primary" scope; aviary's
+   ``Aircraft.Wing.MASS`` is broader (bending + shear control +
+   misc structural). Empirical measurement on the FwFm bench:
+   ``Wing.MASS / BENDING_MATERIAL_MASS = 7,513 / 3,249 = 2.31``.
+   With the new default, mass-mcp's OAS and FLOPS numbers
+   cross-validate (~7,500 kg both) instead of looking like a 44%
+   discrepancy — that was the "different scopes" trap, not a
+   real disagreement.
+
+2. **aviary-mcp ``Aircraft.Wing.MASS_SCALER`` whitelisted**
+   (aviary-mcp commit 0993c0f). Pre-validated with a direct
+   sensitivity sweep — MASS_SCALER ∈ {0.5, 1.0, 1.5} produces
+   fuel ∈ {6.8, 7.0, 7.2} t. Not silent like Phase J was.
+
+3. **Data-plane middleware** (this repo, commits 57eade6 +
+   7392d15):
+   - intercept_response captures ``mWing_kg`` and ``mTOM_kg`` from
+     estimate_mass responses; sanity-bracketed.
+   - resolve_request on aviary's set_aircraft_parameters merges
+     ``Aircraft.Wing.MASS_SCALER = mWing_kg / 5998`` clamped to
+     [0.5, 2.0].
+   - resolve_request on **pycycle's** set_inputs (gated on
+     mcp_name == "pycycle" to avoid colliding with other MCPs that
+     might have a same-named tool) merges
+     ``Fn_DES_lbf = MTOM_kg × 0.0811``, where 0.0811 = g / L_D /
+     N_eng / N→lbf × climb_margin (1.25), clamped to [2000, 25000]
+     lbf. The coefficient lines up with pycycle's bench default of
+     5,900 lbf at MTOM=73 t within 0.3% — designs with different
+     MTOM move Fn_DES proportionally.
+
+**Reference review before shipping:** read upstream OAS
+``weight.py`` source (spar-element-only sum), aviary's
+``WingTotalMass`` FLOPS component (bending + shear + misc + bwb
+aftbody), and walked the variable hierarchy to confirm Wing.MASS
+scope excludes HIGH_LIFT / SURFACE_CONTROL / FOLD. Both numbers
+verified against the aviary bench measurement before the
+middleware was written.
+
+**Validation test added before middleware:**
+``test_phase_hj_coupling_validation.py::test_phase_k_wing_mass_changes_fuel_burn``
+pre-seeds data_store with mass_wing_kg ∈ {3,000, 6,000, 9,000} kg
+and asserts aviary's fuel_burn responds monotonically. Passes:
+6,765 → 6,959 → 7,192 kg. The same kind of sensitivity test that
+caught Phase J's silent failure runs green here.
+
+**Phase K-B has no analog sensitivity test because Fn_DES IS
+pycycle's main design dial** — varying it always moves the
+converged SFC and BPR. The Phase J trap (a knob that aviary
+accepts but never reads) can't repeat for Fn_DES because pycycle's
+whole cycle solve is sized around it.
+
+**Coupling map after Phase K:**
+
+| Discipline | External output | Aviary / pycycle target | Status |
+|---|---|---|---|
+| SU2 aero (CL) | CL_CRUISE | Mission.Design.LIFT_COEFFICIENT | ✅ Phase H |
+| SU2 aero (CD) | CD_CRUISE | Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR | ✅ Phase H |
+| mass (wing) | mWing_kg | Aircraft.Wing.MASS_SCALER | ✅ Phase K-A |
+| mass (MTOM) | mTOM_kg | pycycle Fn_DES | ✅ Phase K-B |
+| pyCycle (SFC) | perf.TSFC | Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER | ❌ reverted (FwFm tabular deck no-op) |
+
+All shipped without prompt changes — the middleware injection
+pattern keeps the agent doing its discipline-native work while the
+framework handles cross-discipline plumbing. Three of the four
+coupling targets are validated by sensitivity sweep; Phase J's
+silent target is guarded by an xfail regression.
+
 ### 2026-05-23 (Phase H/J coupling validation — Phase J reverted)
 
 User asked for sensitivity tests proving the H/J wiring actually
