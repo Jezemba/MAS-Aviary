@@ -86,20 +86,78 @@ peer_template:
     - Aviary session must be created before simulation.
     - Constraints checked only after simulation completes.
 
-    PHASE-GATED WORKFLOW:
-    The system enforces phased execution. Each turn you only have access
-    to tools for the CURRENT phase. Phases unlock in order when the
-    previous phase's board_key exists on the blackboard.
+    COORDINATION PROTOCOL (no orchestrator, no phase gating — peers
+    self-organize):
+    You and the other peers all have access to all 54 MCP tools
+    plus four peer-coordination tools: read_blackboard,
+    write_blackboard, spawn_peer, mark_task_done. There is no
+    manager, no phase enforcement, and no fixed execution order.
+    The blackboard is your only coordination channel.
+    1. Call read_blackboard FIRST every turn to see what other
+       peers have already claimed, run, or posted.
+    2. Pick the most useful next step given what's already done.
+       Some discipline work that's already complete on the
+       blackboard doesn't need to be redone.
+    3. Soft-claim your subtask (entry_type "claim") so peers can
+       see what you're working on. Duplicates are warned but allowed.
+    4. Extract upstream data from the blackboard
+       (mesh paths/refs, CL/CD values, mass values, session_id,
+       etc.) — DO NOT re-derive what another peer already produced.
+    5. Execute your chosen MCP tool(s).
+    6. Post results with write_blackboard (entry_type "result")
+       including the data downstream peers will need to consume.
+    7. Finish your turn — any other peer (or you on a later turn)
+       picks up from there.
 
-    COORDINATION PROTOCOL:
-    1. Call read_blackboard to see what other agents have done.
-    2. Check which phase you are in (your available tools tell you).
-    3. Extract upstream data from the blackboard (mesh paths, aero
-       coefficients, mass values, session_id, etc.).
-    4. Execute your phase's tools.
-    5. Post results with write_blackboard (entry_type "result") including
-       all data the next phase needs.
-    6. Finish your turn — another agent handles the next phase.
+    TEAM SIZE — DYNAMIC, NOT FIXED:
+    The team starts with 3 peers but you can call spawn_peer at any
+    time to add another peer up to the configured max_agents limit.
+    Spawn a peer when:
+    - Several major discipline areas are unclaimed and you can't
+      cover them all from your own turns.
+    - A specific peer keeps failing the same subtask and a fresh
+      peer might approach it differently.
+    - The blackboard is getting noisy with stale claims and you
+      want a peer dedicated to a specific discipline.
+    Don't spawn for trivial reasons — each peer costs LLM turns and
+    can interfere with existing claims. Read the blackboard first;
+    only spawn if the existing team is genuinely under-staffed for
+    the remaining work.
+
+    DATA-PLANE COUPLING — what the framework does silently:
+    The framework's data plane captures certain values from one
+    discipline's tool output and injects them into the next
+    discipline's tool input automatically. Knowing this lets you
+    avoid passing those values manually through the blackboard:
+    - SU2 `read_history_csv` -> captures CL/CD ->
+      injected into aviary `set_aircraft_parameters` as
+      Mission.Design.LIFT_COEFFICIENT and
+      Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR.
+    - mass-mcp `estimate_mass` -> captures mWing_kg / mTOM_kg ->
+      injected into aviary `set_aircraft_parameters` as
+      Aircraft.Wing.MASS_SCALER, and into pyCycle `set_inputs`
+      as Fn_DES_lbf.
+    - pyCycle SFC currently has NO downstream effect on aviary
+      mission fuel (aviary uses an FwFm tabular engine deck that
+      ignores the SUBSONIC_FUEL_FLOW_SCALER scaler — Phase J
+      reverted).
+    The injection only fires if the producing tool runs BEFORE
+    the consuming tool. If you call aviary `set_aircraft_parameters`
+    before SU2's `read_history_csv` and mass-mcp's `estimate_mass`,
+    the data store is empty and aviary uses its defaults.
+
+    MCP-NATIVE GUIDANCE — call these BEFORE blindly setting inputs:
+    - pyCycle: call `get_design_inputs(session_id)` to get the
+      curated short list of settable design dials (e.g.
+      splitter.BPR, fan.PR, Fn_DES). Calling `list_variables`
+      returns ~900 promoted names with no design-dial markers and
+      you will guess wrong, leaving BPR unset and producing
+      garbage (perf.Fn = -2.6e+19 lbf).
+    - SU2: call `get_valid_config_options()` before
+      `update_config_entries` to find compatible option pairings
+      (e.g. CONV_NUM_METHOD_FLOW="JST" requires MUSCL_FLOW="NO").
+      Without it the solver errors out with "Centered schemes do
+      not use MUSCL reconstruction".
 
     SESSION / STATE COORDINATION:
     Only ONE agent should call create_session. Post the session_id to the
@@ -148,25 +206,12 @@ peer_template:
     will do next and why. Post your prediction with entry_type "prediction"
     and key "prediction_{your_name}_about_{other_agent}".
 
-workflow_phases:
-  - name: "geometry_setup"
-    tools: ["open_cpacs", "close_cpacs", "set_high_level_parameters", "get_high_level_parameters", "get_wing_summary", "get_fuselage_summary", "get_configuration_summary", "list_geometric_components", "export_component_mesh", "generate_volume_mesh"]
-    board_key: "phase_geometry_setup"
-  - name: "aerodynamic_analysis"
-    tools: ["create_su2_session", "close_su2_session", "set_mesh", "update_config_entries", "run_su2_solver", "read_history_csv", "sample_surface_solution", "list_result_files", "get_su2_status"]
-    board_key: "phase_aerodynamic_analysis"
-  - name: "mass_estimation"
-    tools: ["validate_cpacs_inputs", "estimate_mass", "get_cpacs_mass_breakdown"]
-    board_key: "phase_mass_estimation"
-  - name: "propulsion_analysis"
-    tools: ["create_cycle_model", "close_cycle_model", "list_variables", "set_inputs", "run_cycle", "get_outputs", "get_cycle_summary"]
-    board_key: "phase_propulsion_analysis"
-  - name: "mission_setup"
-    tools: ["get_design_space", "create_session", "set_aircraft_parameters", "configure_mission"]
-    board_key: "phase_mission_setup"
-  - name: "simulation"
-    tools: ["run_simulation", "get_results", "get_trajectory"]
-    board_key: "phase_simulation"
-  - name: "evaluation"
-    tools: ["check_constraints", "get_results"]
-    board_key: "phase_evaluation"
+# NOTE: a workflow_phases block previously lived here, but it was
+# dormant — the networked strategy reads workflow_phases from the
+# COORDINATION YAML (config/aviary_mdo_f25_networked.yaml), not from
+# this agents file. For the MDO F25 networked combo we deliberately
+# leave workflow_phases empty in the coord YAML so peers can see all
+# 54 MCP tools and self-organize via the blackboard, matching the
+# networked strategy's design intent ("no structure, no orchestrator,
+# all peers see all tools"). Phase gating would defeat that purpose;
+# if you want enforcement, use sequential or orchestrated instead.

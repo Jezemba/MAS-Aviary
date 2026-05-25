@@ -1,0 +1,62 @@
+strategy: "networked"
+
+networked:
+  # 3 peer agents at startup. Each peer has access to ALL tools (the
+  # networked strategy is intentionally structure-less — peers self-
+  # organize via the blackboard, no orchestrator, no phase gating).
+  # The peer_template in config/mdo_f25_networked_agents.yaml gives
+  # each peer the MDO discipline knowledge they need to claim and
+  # execute the right MCP tools.
+  initial_agents: 3
+
+  # Allow the team to spawn additional peers as work expands. The
+  # F25 pipeline naturally splits into 7 discipline areas
+  # (geometry / aero / mass / propulsion / mission / sim / eval) so
+  # an upper bound of 7 lets the team grow to one peer per area
+  # without unbounded spawning.
+  max_agents: 7
+
+  # Each peer's ReAct budget. F25 disciplines need room for read +
+  # claim + tool call + write_blackboard at minimum, often with a
+  # retry. 15 steps is enough for several round-trips per peer turn.
+  agent_max_steps: 15
+
+  # Soft claiming: peers announce intent on the blackboard but
+  # duplicates are warned, not blocked. With 3 peers and 7 work
+  # areas, soft claiming avoids deadlock when two peers happen to
+  # claim adjacent work.
+  claiming_mode: "soft"
+
+  # NO workflow_phases — networked peers should see all 54 MCP tools
+  # and figure out coordination from the blackboard + the discipline
+  # knowledge in their peer_template. Phase gating would defeat the
+  # purpose of the strategy.
+
+  # Peers can see each other's evaluation metrics on the blackboard
+  # so they can decide who to retry or build on.
+  peer_monitoring_visible: true
+
+  # Reasoning explanations on result entries are visible — helps
+  # downstream peers understand why an upstream design choice was
+  # made (e.g., "AR=15 picked to match F25 spec" vs blind retry).
+  trans_specialist_knowledge: true
+
+  # Predictive knowledge off for now — adds prompt overhead, only
+  # useful for explicit "what will B do next?" coordination.
+  predictive_knowledge: false
+
+execution_handler: "iterative_feedback"
+
+# Primary termination: any peer can call mark_task_done writing
+# "DONE" to the blackboard, detected by NetworkedStrategy.is_complete().
+# Fallback: TASK_COMPLETE keyword in last message content. max_turns
+# is generous because the 5-MCP F25 pipeline has more steps than the
+# default aviary-only flow.
+termination:
+  keyword: "TASK_COMPLETE"
+  max_turns: 60
+  max_consecutive_errors: 3
+
+context:
+  max_recent_messages: 15
+  max_context_tokens: 4000

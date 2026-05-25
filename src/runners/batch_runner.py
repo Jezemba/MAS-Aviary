@@ -53,6 +53,7 @@ _STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
 _MDO_F25_STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
     "sequential": ("config/mdo_f25_sequential_agents.yaml", "config/aviary_mdo_f25_sequential.yaml"),
     "orchestrated": ("config/mdo_f25_orchestrated_agents.yaml", "config/orchestrated.yaml"),
+    "networked": ("config/mdo_f25_networked_agents.yaml", "config/aviary_mdo_f25_networked.yaml"),
 }
 
 
@@ -166,6 +167,19 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # validation per-call, so the per-worker retry-on-warnings behavior
         # the iterative_feedback handler provides is preserved.
         strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
+    ),
+    CombinationConfig(
+        "mdo_f25_networked_iterative_feedback",
+        "networked",
+        "iterative_feedback",
+        # Networked is intentionally structure-less: 3 peers, all with
+        # access to all 54 MCP tools, coordinating via the blackboard.
+        # No phase gating, no orchestrator. The MDO knowledge lives in
+        # the peer_template in config/mdo_f25_networked_agents.yaml.
+        # Whether the data-plane middleware (Phase H/K) actually fires
+        # depends on whether the peers happen to read_history_csv /
+        # estimate_mass before any peer calls set_aircraft_parameters.
+        # That's part of what this combo measures.
     ),
 ]
 
