@@ -112,12 +112,24 @@ def _attribute_agent(
     """Best-effort attribution. Prefer signals from the observation
     (which names the acting agent for the TODO-API tools), then fall back
     to the most recent 'New run' banner."""
-    # 1. Try the observation for an explicit 'agent_X' mention.
+    # 1. TODO-claim tools carry an explicit `attempted_by` field in their
+    # JSON response (added 2026-05-25). This is the only reliable signal
+    # under concurrent contention — a REJECTED claim_todo's message
+    # names the winner, not the caller, so regexing the message would
+    # mis-attribute the event to the wrong peer.
+    if tool in ("claim_todo", "mark_todo_done", "mark_todo_failed"):
+        parsed = _safe_parse_json_msg(observation_text)
+        if parsed and isinstance(parsed.get("attempted_by"), str):
+            return parsed["attempted_by"]
+
+    # 2. Otherwise fall back to the first 'agent_X' mention in the
+    # observation. Works for legacy logs and for tools whose response
+    # names the acting agent inline (e.g. read_todos rendering).
     obs_match = _AGENT_MENTION_RE.search(observation_text)
     if obs_match:
         return obs_match.group(1)
 
-    # 2. write_blackboard often encodes the author in the key field.
+    # 3. write_blackboard often encodes the author in the key field.
     if tool == "write_blackboard":
         # args_text looks like: {'key': 'agent_3_status', 'value': '...', ...}
         key_match = re.search(r"'key':\s*'([^']+)'", args_text)
@@ -126,7 +138,7 @@ def _attribute_agent(
             if prefix_match:
                 return prefix_match.group(1)
 
-    # 3. Fall back to the most-recent New run banner.
+    # 4. Fall back to the most-recent New run banner.
     return last_run_banner_agent or "unknown"
 
 

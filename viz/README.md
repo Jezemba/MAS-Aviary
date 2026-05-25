@@ -9,8 +9,8 @@ Open any of these directly in a browser — no server needed:
 
 | File | Run | Notes |
 |---|---|---|
-| [`run_4o22y281.html`](./run_4o22y281.html) | wandb [`4o22y281`](https://wandb.ai/jessicae/mas-aviary-stat/runs/4o22y281) | post-extractor-fix concurrent_blackboard rerun. wandb correctly reports fuel = 11,615.86 kg. 5 of 7 TODOs marked done. |
-| [`run_clogb51u.html`](./run_clogb51u.html) | wandb [`clogb51u`](https://wandb.ai/jessicae/mas-aviary-stat/runs/clogb51u) | first concurrent_blackboard run (pre-extractor-fix). Includes `agent_4` which was dynamically spawned mid-run via `spawn_peer`. |
+| [`run_4o22y281.html`](./run_4o22y281.html) | wandb [`4o22y281`](https://wandb.ai/jessicae/mas-aviary-stat/runs/4o22y281) | post-extractor-fix concurrent_blackboard rerun. wandb correctly reports fuel = 11,615.86 kg. 5 of 7 TODOs marked done. Pre-attribution-fix log — rejected `claim_todo` events are mis-attributed to the winner (see "Attribution caveat"). |
+| [`run_clogb51u.html`](./run_clogb51u.html) | wandb [`clogb51u`](https://wandb.ai/jessicae/mas-aviary-stat/runs/clogb51u) | first concurrent_blackboard run (pre-extractor-fix). Includes `agent_4` which was dynamically spawned mid-run via `spawn_peer`. Pre-attribution-fix log — same caveat. |
 
 ## What you see
 
@@ -39,11 +39,28 @@ PYTHONPATH=. python scripts/visualize_run.py <log_file>
 ## Attribution caveat
 
 Concurrent peer threads can interleave their smolagents stdout output at
-the line level. The parser uses two signals to attribute each tool call
-to a peer: (1) explicit agent name in the tool's response message —
-reliable, used for `claim_todo`, `mark_todo_done`, `mark_todo_failed`,
-and `write_blackboard` when the key is prefixed with `agent_<N>_`; (2)
-the most-recent `New run - agent_X` smolagents banner in the log —
-heuristic, used for `read_blackboard` / `read_todos`. The action itself
-and the observation text are always correct; the attribution is
-occasionally fuzzy when threads have heavily interleaved output.
+the line level. The parser attributes each tool call to a peer using
+this priority:
+
+1. **Structured `attempted_by` field** in the JSON response (added
+   2026-05-25). The `claim_todo` / `mark_todo_done` / `mark_todo_failed`
+   tools wrap their response with the caller's `agent_name` so a rejected
+   claim attributes to the CALLER, not the winner named in the message.
+2. **Inline `'agent_X'` mention** in the response — used as a fallback
+   for legacy logs (pre-2026-05-25) and for tools that name the acting
+   agent inline (e.g. `read_todos` rendering).
+3. **`write_blackboard` key prefix** (`agent_<N>_status` etc.).
+4. **Most-recent `New run - agent_X` banner** in the log — used for
+   `read_blackboard` and other tools whose response carries no peer
+   identity. This is the fuzziest signal under heavy thread interleave.
+
+Pre-2026-05-25 logs (including `run_4o22y281.html` and `run_clogb51u.html`)
+don't carry `attempted_by` in their `claim_todo` responses, so rejected
+claims fall back to rule 2 and show up attributed to the WINNER of the
+race instead of the caller. This makes the timeline read as if the same
+peer rejected itself; in reality three peers raced for the same TODO and
+the rejection messages name the winner. Runs captured AFTER the fix will
+render correctly because the response payload includes the structured
+caller identity.
+
+The action itself and the observation text are always correct.

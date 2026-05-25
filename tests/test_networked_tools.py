@@ -416,6 +416,39 @@ class TestClaimTodo:
         assert result["success"] is False
         assert "agent_1" in result["message"]
 
+    def test_success_response_includes_attempted_by(self, context):
+        # Regression: under concurrent stdout interleaving the viz needs
+        # a structured signal for which peer issued the claim. The winner
+        # also needs to be discoverable from the response payload alone.
+        import json
+
+        from src.tools.networked_tools import ClaimTodo
+
+        context.blackboard.seed_todos([("geometry", "x")])
+        result = json.loads(
+            ClaimTodo(context, agent_name="agent_3").forward(todo_name="geometry")
+        )
+        assert result["success"] is True
+        assert result["attempted_by"] == "agent_3"
+        assert result["current_owner"] == "agent_3"
+
+    def test_contested_response_distinguishes_caller_and_owner(self, context):
+        # The crucial case for the viz: a rejected claim's response must
+        # name the CALLER (attempted_by) distinctly from the WINNER
+        # (current_owner) so the timeline attributes the event correctly.
+        import json
+
+        from src.tools.networked_tools import ClaimTodo
+
+        context.blackboard.seed_todos([("aero", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="aero")
+        result = json.loads(
+            ClaimTodo(context, agent_name="agent_2").forward(todo_name="aero")
+        )
+        assert result["success"] is False
+        assert result["attempted_by"] == "agent_2"
+        assert result["current_owner"] == "agent_1"
+
     def test_unknown_todo_name_returns_error(self, context):
         import json
 

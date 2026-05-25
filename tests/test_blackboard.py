@@ -450,6 +450,19 @@ class TestTodoBoard:
         t = bb_soft.read_todos()[0]
         assert t.assigned_to == "agent_1"
 
+    def test_claim_rejection_message_names_caller(self, bb_soft):
+        # Regression: under concurrent contention three peers may all
+        # claim the same TODO. The rejection message must name BOTH the
+        # current owner AND the caller so interleaved-stdout logs are
+        # unambiguous (the viz attribution heuristic also relies on the
+        # caller name appearing in the message).
+        bb_soft.seed_todos([("mission", "x")])
+        bb_soft.claim_todo("mission", "agent_1")
+        ok, msg = bb_soft.claim_todo("mission", "agent_2")
+        assert not ok
+        assert "agent_1" in msg
+        assert "agent_2" in msg
+
     def test_claim_idempotent_for_same_agent(self, bb_soft):
         bb_soft.seed_todos([("mass", "x")])
         ok1, _ = bb_soft.claim_todo("mass", "agent_1")

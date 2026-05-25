@@ -385,7 +385,25 @@ class ClaimTodo(Tool):
 
     def forward(self, todo_name: str) -> str:  # type: ignore[override]
         ok, msg = self._context.blackboard.claim_todo(todo_name, self._agent_name)
-        return json.dumps({"success": ok, "todo_name": todo_name, "message": msg})
+        # Resolve the current owner from the blackboard so the response
+        # carries it as a structured field. Under concurrent stdout
+        # interleaving the viz attribution heuristic needs `attempted_by`
+        # to distinguish a rejected claim's caller from the winner the
+        # message names.
+        current_owner: str | None = None
+        for todo in self._context.blackboard.read_todos():
+            if todo.name == todo_name:
+                current_owner = todo.assigned_to or None
+                break
+        return json.dumps(
+            {
+                "success": ok,
+                "todo_name": todo_name,
+                "attempted_by": self._agent_name,
+                "current_owner": current_owner,
+                "message": msg,
+            }
+        )
 
 
 class MarkTodoDone(Tool):

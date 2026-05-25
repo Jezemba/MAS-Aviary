@@ -1,5 +1,68 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L Job 1: claim_todo caller attribution
+
+Followup on the user-reported "self-rejecting claim" pattern observed
+in viz `run_4o22y281.html`. Root cause is NOT a code bug — the
+framework's at-most-one-winner property is intact and the existing
+`test_claim_idempotent_for_same_agent` regression test still holds.
+What's actually happening is concurrent contention working correctly:
+three peers spawn in parallel, all independently pick the same TODO
+(e.g. `mission`) first, all call `claim_todo` at the same Step depth,
+the Blackboard's `RLock` serializes them, one wins and the other two
+get rejected. The apparent self-rejection is an attribution artifact
+in the visualizer.
+
+Two contributing factors:
+1. The rejection message named only the current owner ("currently
+   claimed by 'agent_2'"), not the caller. Under interleaved stdout
+   the raw log read ambiguously.
+2. The viz attribution heuristic (`_attribute_agent` in
+   `scripts/visualize_run.py`) regexed the observation text for the
+   first `agent_X` mention. For a REJECTED claim, the only agent
+   named in the message is the winner, so `agent_1`'s rejected claim
+   got rendered as `agent_2`'s — visually identical to "agent_2
+   claimed and then rejected itself."
+
+Fix:
+- `src/coordination/blackboard.py:claim_todo()` — rejection message
+  now names both the owner AND the caller: `"TODO 'mission' is
+  currently claimed by 'agent_1' — 'agent_2', pick a different
+  TODO"`. Existing tests assert the substring `"claimed by
+  'agent_1'"` and continue to pass.
+- `src/tools/networked_tools.py:ClaimTodo.forward()` — response JSON
+  now includes `attempted_by` (the caller's `agent_name`) and
+  `current_owner` (read from the blackboard post-call). Existing
+  `success` / `todo_name` / `message` fields preserved for backward
+  compatibility with the smolagents prompt context.
+- `scripts/visualize_run.py:_attribute_agent()` — for `claim_todo`,
+  `mark_todo_done`, `mark_todo_failed`, the parser now prefers the
+  structured `attempted_by` field from the response JSON before
+  falling back to the legacy regex match. Pre-2026-05-25 logs (which
+  lack `attempted_by`) fall back to legacy behavior — back-compat
+  preserved.
+- `viz/README.md` updated to document the new attribution priority
+  and the legacy-log caveat. Existing pre-fix logs (`run_4o22y281`,
+  `run_clogb51u`) still show the apparent self-rejection because
+  their source data lacks the disambiguating field; fresh runs after
+  this commit will render correctly.
+
+Tests added (8 new, all passing under the regular unit marker):
+- `tests/test_blackboard.py::test_claim_rejection_message_names_caller`
+- `tests/test_networked_tools.py::test_success_response_includes_attempted_by`
+- `tests/test_networked_tools.py::test_contested_response_distinguishes_caller_and_owner`
+- `tests/test_visualize_run.py` (5 cases, new file)
+
+Verification:
+- Unit suite: 1,413/1,413 passed (was 1,405 baseline; +8 new tests).
+- Cheap live test `tests/test_phase_l_mdo_networked_wiring.py`
+  (`-m live_mcp_llm`): 1 passed in 16.88 s.
+
+No framework behavior change; the at-most-one-winner property,
+RLock, and idempotent-same-agent semantics are unchanged. This is
+purely an observability/legibility fix.
+
+
 ### 2026-05-25 (later) — Phase L follow-up: metric extractor fix verified live
 
 Verification run for the `_extract_from_tool_outputs` fix landed in

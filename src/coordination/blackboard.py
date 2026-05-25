@@ -314,7 +314,7 @@ class Blackboard:
                 return (
                     False,
                     f"TODO {name!r} is currently claimed by {todo.assigned_to!r} — "
-                    "try a different TODO",
+                    f"{agent!r}, pick a different TODO",
                 )
             # Allow re-claim by the same agent (idempotent) and fresh
             # claim of a previously-failed TODO.
