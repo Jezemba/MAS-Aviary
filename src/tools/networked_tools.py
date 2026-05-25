@@ -18,7 +18,17 @@ from smolagents.models import Model
 
 from src.coordination.blackboard import Blackboard
 
-PEER_TOOL_NAMES = frozenset({"read_blackboard", "write_blackboard", "spawn_peer", "mark_task_done"})
+PEER_TOOL_NAMES = frozenset({
+    "read_blackboard",
+    "write_blackboard",
+    "spawn_peer",
+    "mark_task_done",
+    # TODO-claim tools for the concurrent-blackboard selection mode.
+    "read_todos",
+    "claim_todo",
+    "mark_todo_done",
+    "mark_todo_failed",
+})
 
 
 @dataclass
@@ -302,3 +312,150 @@ class MarkTaskDone(Tool):
                 "summary": summary,
             }
         )
+
+
+# -- TODO claim tools (concurrent-blackboard selection mode) ------------------
+#
+# These tools support the CodeCRDT-style coordination pattern
+# (arxiv 2510.18893) used by NetworkedStrategy.selection_mode =
+# "concurrent_blackboard". Multiple peer threads race to claim TODOs
+# from the shared blackboard. The atomic claim_todo() / complete_todo()
+# primitives on Blackboard give at-most-one-winner safety.
+#
+# Workflow each peer follows in its ReAct loop:
+#   1. read_blackboard (or read_todos) -> see what's pending / claimed / done
+#   2. claim_todo(name) -> atomic check-and-set
+#   3. if claim succeeded: execute the discipline work via MCP tools
+#   4. mark_todo_done(name, result) -> record completion
+#   5. (loop until no pending TODOs remain)
+
+
+class ReadTodos(Tool):
+    """Render the TODO board so a peer can decide what to claim next."""
+
+    name = "read_todos"
+    description = (
+        "Show the current TODO board: every TODO, its status (pending / "
+        "claimed / done / failed), which peer claimed it (if any), and the "
+        "stored result. Use this BEFORE claim_todo so you pick a pending "
+        "TODO that no other peer is already doing. The TODO list itself is "
+        "seeded once at run start; you cannot create new TODOs."
+    )
+    inputs: dict = {}
+    output_type = "string"
+
+    def __init__(self, context: NetworkedContext, **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+
+    def forward(self) -> str:  # type: ignore[override]
+        return self._context.blackboard.render_todos()
+
+
+class ClaimTodo(Tool):
+    """Atomically claim a pending TODO for this peer.
+
+    Returns success=true if THIS peer is the one recorded as assigned_to
+    after the call; success=false if another peer beat you to it (in
+    which case call read_todos and try a different TODO — do NOT retry
+    the same one in a loop).
+    """
+
+    name = "claim_todo"
+    description = (
+        "Atomically claim a pending TODO for yourself. Returns success=true "
+        "with a confirmation message if you got the claim, success=false "
+        "if another peer is already on it. If your claim fails, call "
+        "read_todos and pick a different TODO; do NOT retry the same one. "
+        "After a successful claim, execute the discipline work and then "
+        "call mark_todo_done (or mark_todo_failed if you have to give up)."
+    )
+    inputs: dict = {
+        "todo_name": {
+            "type": "string",
+            "description": "The name field of a TODO from the board.",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, context: NetworkedContext, agent_name: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+        self._agent_name = agent_name
+
+    def forward(self, todo_name: str) -> str:  # type: ignore[override]
+        ok, msg = self._context.blackboard.claim_todo(todo_name, self._agent_name)
+        return json.dumps({"success": ok, "todo_name": todo_name, "message": msg})
+
+
+class MarkTodoDone(Tool):
+    """Mark a TODO as completed with its result."""
+
+    name = "mark_todo_done"
+    description = (
+        "Record a TODO as done. Only the peer that successfully claimed "
+        "the TODO can mark it done. The result string is the short summary "
+        "that downstream peers will read off the blackboard (e.g. "
+        '"CL=0.589, CD=0.0303, L/D=19.4" for an aero TODO).'
+    )
+    inputs: dict = {
+        "todo_name": {
+            "type": "string",
+            "description": "Name of the TODO you completed.",
+        },
+        "result": {
+            "type": "string",
+            "description": "Short result summary to post on the blackboard.",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, context: NetworkedContext, agent_name: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+        self._agent_name = agent_name
+
+    def forward(self, todo_name: str, result: str) -> str:  # type: ignore[override]
+        ok, msg = self._context.blackboard.complete_todo(
+            todo_name, self._agent_name, result
+        )
+        return json.dumps({"success": ok, "todo_name": todo_name, "message": msg})
+
+
+class MarkTodoFailed(Tool):
+    """Release a claim with a failure reason so another peer can retry.
+
+    Use this when you've claimed a TODO but realize you can't make
+    progress (e.g. an MCP tool keeps erroring). The claim is released
+    so another peer can pick up the same TODO.
+    """
+
+    name = "mark_todo_failed"
+    description = (
+        "Release a TODO claim with a failure reason. Use this when you "
+        "claimed a TODO but cannot complete it (an MCP tool keeps "
+        "failing, the data is bad, etc.) and want another peer to try. "
+        "Only the peer that claimed it can fail it."
+    )
+    inputs: dict = {
+        "todo_name": {
+            "type": "string",
+            "description": "Name of the TODO you are giving up.",
+        },
+        "reason": {
+            "type": "string",
+            "description": "Short failure reason for the board.",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, context: NetworkedContext, agent_name: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+        self._agent_name = agent_name
+
+    def forward(self, todo_name: str, reason: str) -> str:  # type: ignore[override]
+        ok, msg = self._context.blackboard.fail_todo(
+            todo_name, self._agent_name, reason
+        )
+        return json.dumps({"success": ok, "todo_name": todo_name, "message": msg})

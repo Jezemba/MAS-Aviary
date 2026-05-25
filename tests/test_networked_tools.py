@@ -342,4 +342,154 @@ class TestMarkTaskDone:
 
 class TestPeerToolNames:
     def test_contains_expected_names(self):
-        assert PEER_TOOL_NAMES == {"read_blackboard", "write_blackboard", "spawn_peer", "mark_task_done"}
+        assert PEER_TOOL_NAMES == {
+            "read_blackboard",
+            "write_blackboard",
+            "spawn_peer",
+            "mark_task_done",
+            # TODO-claim tools added 2026-05-25 for the concurrent-blackboard
+            # selection mode (arxiv 2510.18893).
+            "read_todos",
+            "claim_todo",
+            "mark_todo_done",
+            "mark_todo_failed",
+        }
+
+
+# ---- TODO-claim tools (concurrent-blackboard mode) --------------------------
+
+
+class TestReadTodos:
+    def test_renders_empty_board(self, context):
+        from src.tools.networked_tools import ReadTodos
+
+        tool = ReadTodos(context)
+        out = tool.forward()
+        assert "empty" in out.lower()
+
+    def test_renders_seeded_todos(self, context):
+        from src.tools.networked_tools import ReadTodos
+
+        context.blackboard.seed_todos([("geometry", "x"), ("aero", "y")])
+        out = ReadTodos(context).forward()
+        assert "geometry" in out
+        assert "aero" in out
+        assert "pending" in out
+
+    def test_shows_claim_and_done_status(self, context):
+        from src.tools.networked_tools import ReadTodos
+
+        context.blackboard.seed_todos([("mass", "x")])
+        context.blackboard.claim_todo("mass", "agent_1")
+        out = ReadTodos(context).forward()
+        assert "claimed" in out
+        assert "agent_1" in out
+        context.blackboard.complete_todo("mass", "agent_1", "wing=7200 kg")
+        out = ReadTodos(context).forward()
+        assert "done" in out
+        assert "wing=7200 kg" in out
+
+
+class TestClaimTodo:
+    def test_success_returns_success_true(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo
+
+        context.blackboard.seed_todos([("geometry", "x")])
+        tool = ClaimTodo(context, agent_name="agent_1")
+        result = json.loads(tool.forward(todo_name="geometry"))
+        assert result["success"] is True
+        assert result["todo_name"] == "geometry"
+
+    def test_contested_returns_success_false(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo
+
+        context.blackboard.seed_todos([("aero", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="aero")
+        # agent_2 tries the same — should fail with a hint to pick another.
+        result = json.loads(
+            ClaimTodo(context, agent_name="agent_2").forward(todo_name="aero")
+        )
+        assert result["success"] is False
+        assert "agent_1" in result["message"]
+
+    def test_unknown_todo_name_returns_error(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo
+
+        tool = ClaimTodo(context, agent_name="agent_1")
+        result = json.loads(tool.forward(todo_name="not-a-real-todo"))
+        assert result["success"] is False
+        assert "no such TODO" in result["message"]
+
+
+class TestMarkTodoDone:
+    def test_success_when_claimed_by_same_agent(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo, MarkTodoDone
+
+        context.blackboard.seed_todos([("mission", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="mission")
+        done = json.loads(
+            MarkTodoDone(context, agent_name="agent_1").forward(
+                todo_name="mission", result="session=abc"
+            )
+        )
+        assert done["success"] is True
+
+    def test_rejects_when_not_claimant(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo, MarkTodoDone
+
+        context.blackboard.seed_todos([("evaluation", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="evaluation")
+        # agent_2 tries to mark agent_1's TODO done — rejected.
+        result = json.loads(
+            MarkTodoDone(context, agent_name="agent_2").forward(
+                todo_name="evaluation", result="r"
+            )
+        )
+        assert result["success"] is False
+        assert "agent_1" in result["message"]
+
+
+class TestMarkTodoFailed:
+    def test_release_allows_other_agent_to_claim(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo, MarkTodoFailed
+
+        context.blackboard.seed_todos([("propulsion", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="propulsion")
+        # agent_1 gives up.
+        failed = json.loads(
+            MarkTodoFailed(context, agent_name="agent_1").forward(
+                todo_name="propulsion", reason="pyCycle stub error"
+            )
+        )
+        assert failed["success"] is True
+        # agent_2 can now claim it.
+        re_claim = json.loads(
+            ClaimTodo(context, agent_name="agent_2").forward(todo_name="propulsion")
+        )
+        assert re_claim["success"] is True
+
+    def test_rejects_when_not_claimant(self, context):
+        import json
+
+        from src.tools.networked_tools import ClaimTodo, MarkTodoFailed
+
+        context.blackboard.seed_todos([("simulation", "x")])
+        ClaimTodo(context, agent_name="agent_1").forward(todo_name="simulation")
+        result = json.loads(
+            MarkTodoFailed(context, agent_name="agent_2").forward(
+                todo_name="simulation", reason="not mine"
+            )
+        )
+        assert result["success"] is False

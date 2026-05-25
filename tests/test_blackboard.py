@@ -397,3 +397,195 @@ class TestCounters:
         bb_soft.write("a", "v1", "agent_1", "status")
         bb_soft.write("a", "v2", "agent_1", "status")  # update
         assert bb_soft.write_count == 2
+
+
+# -- TODO board + concurrent claim semantics ----------------------------------
+#
+# Regression for the concurrent-blackboard selection mode added 2026-05-25.
+# The TODO list is a separate data structure from entries; peers atomically
+# claim a TODO via claim_todo() (check-and-set under the blackboard lock)
+# and complete it via complete_todo(). The at-most-one-winner property is
+# what enables truly parallel peer execution without duplicating work.
+
+
+class TestTodoBoard:
+    """Tests for the new TODO list API used by concurrent-blackboard mode."""
+
+    def test_seed_todos_idempotent(self, bb_soft):
+        n1 = bb_soft.seed_todos([("geometry", "open cpacs"), ("aero", "su2")])
+        n2 = bb_soft.seed_todos([("geometry", "different desc")])
+        assert n1 == 2
+        # geometry already present; not re-seeded (existing entry preserved).
+        assert n2 == 0
+        todos = bb_soft.read_todos()
+        assert {t.name for t in todos} == {"geometry", "aero"}
+        # Original description preserved (idempotent on duplicates).
+        geo = next(t for t in todos if t.name == "geometry")
+        assert geo.description == "open cpacs"
+
+    def test_read_todos_returns_defensive_copy(self, bb_soft):
+        bb_soft.seed_todos([("a", "x")])
+        snap1 = bb_soft.read_todos()
+        # Mutating the snapshot must not affect the board.
+        snap1[0].status = "claimed"
+        snap2 = bb_soft.read_todos()
+        assert snap2[0].status == "pending"
+
+    def test_claim_unclaimed_succeeds(self, bb_soft):
+        bb_soft.seed_todos([("geometry", "x")])
+        ok, msg = bb_soft.claim_todo("geometry", "agent_1")
+        assert ok
+        assert "successfully claimed" in msg
+        t = bb_soft.read_todos()[0]
+        assert t.status == "claimed"
+        assert t.assigned_to == "agent_1"
+
+    def test_claim_already_claimed_rejected(self, bb_soft):
+        bb_soft.seed_todos([("aero", "x")])
+        bb_soft.claim_todo("aero", "agent_1")
+        ok, msg = bb_soft.claim_todo("aero", "agent_2")
+        assert not ok
+        assert "claimed by 'agent_1'" in msg
+        # The original claim is preserved.
+        t = bb_soft.read_todos()[0]
+        assert t.assigned_to == "agent_1"
+
+    def test_claim_idempotent_for_same_agent(self, bb_soft):
+        bb_soft.seed_todos([("mass", "x")])
+        ok1, _ = bb_soft.claim_todo("mass", "agent_1")
+        ok2, _ = bb_soft.claim_todo("mass", "agent_1")
+        assert ok1 and ok2
+
+    def test_claim_nonexistent_returns_error(self, bb_soft):
+        ok, msg = bb_soft.claim_todo("doesntexist", "agent_1")
+        assert not ok
+        assert "no such TODO" in msg
+
+    def test_claim_done_todo_rejected(self, bb_soft):
+        bb_soft.seed_todos([("mission", "x")])
+        bb_soft.claim_todo("mission", "agent_1")
+        bb_soft.complete_todo("mission", "agent_1", "done")
+        ok, msg = bb_soft.claim_todo("mission", "agent_2")
+        assert not ok
+        assert "already done" in msg
+
+    def test_complete_by_non_claimant_rejected(self, bb_soft):
+        bb_soft.seed_todos([("eval", "x")])
+        bb_soft.claim_todo("eval", "agent_1")
+        ok, msg = bb_soft.complete_todo("eval", "agent_2", "result")
+        assert not ok
+        assert "claimed by 'agent_1'" in msg
+        # Status unchanged.
+        t = bb_soft.read_todos()[0]
+        assert t.status == "claimed"
+
+    def test_fail_releases_claim_for_retry(self, bb_soft):
+        bb_soft.seed_todos([("propulsion", "x")])
+        bb_soft.claim_todo("propulsion", "agent_1")
+        ok, _ = bb_soft.fail_todo("propulsion", "agent_1", "ran out of time")
+        assert ok
+        t = bb_soft.read_todos()[0]
+        assert t.status == "failed"
+        assert t.assigned_to is None  # claim released
+        # Another agent can now claim it.
+        ok2, _ = bb_soft.claim_todo("propulsion", "agent_2")
+        assert ok2
+
+    def test_all_todos_done_false_when_pending(self, bb_soft):
+        bb_soft.seed_todos([("a", "x"), ("b", "y")])
+        bb_soft.claim_todo("a", "agent_1")
+        bb_soft.complete_todo("a", "agent_1", "result a")
+        # 'b' still pending.
+        assert not bb_soft.all_todos_done()
+
+    def test_all_todos_done_true_when_all_complete(self, bb_soft):
+        bb_soft.seed_todos([("a", "x"), ("b", "y")])
+        bb_soft.claim_todo("a", "agent_1")
+        bb_soft.complete_todo("a", "agent_1", "ra")
+        bb_soft.claim_todo("b", "agent_2")
+        bb_soft.complete_todo("b", "agent_2", "rb")
+        assert bb_soft.all_todos_done()
+
+    def test_all_todos_done_false_when_empty(self, bb_soft):
+        # Vacuously-false: an empty TODO board hasn't completed anything.
+        assert not bb_soft.all_todos_done()
+
+    def test_read_pending_filters_correctly(self, bb_soft):
+        bb_soft.seed_todos([("a", ""), ("b", ""), ("c", "")])
+        bb_soft.claim_todo("a", "agent_1")
+        bb_soft.complete_todo("a", "agent_1", "ra")
+        bb_soft.claim_todo("b", "agent_2")
+        pending = bb_soft.read_pending_todos()
+        assert {t.name for t in pending} == {"c"}
+
+
+class TestConcurrentClaimSafety:
+    """Stress test the at-most-one-winner safety property under thread
+    contention. Spawn N threads that all try to claim the same TODO; only
+    ONE may succeed (this is the CodeCRDT formal property)."""
+
+    def test_only_one_winner_under_contention(self, bb_soft):
+        import threading
+
+        bb_soft.seed_todos([("contested", "only one peer can win")])
+        results: list[bool] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(8)
+
+        def try_claim(agent_name: str) -> None:
+            barrier.wait()  # release all threads simultaneously
+            ok, _ = bb_soft.claim_todo("contested", agent_name)
+            with lock:
+                results.append(ok)
+
+        threads = [
+            threading.Thread(target=try_claim, args=(f"agent_{i}",))
+            for i in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Exactly one of the 8 racers must have won.
+        wins = sum(1 for r in results if r)
+        assert wins == 1, f"expected exactly 1 winner under contention, got {wins}"
+
+    def test_many_distinct_todos_no_double_assign(self, bb_soft):
+        """Multiple peers across multiple TODOs — no TODO ever ends up
+        with two distinct assigned_to values, and no peer claims a TODO
+        another already owns."""
+        import threading
+
+        n_todos = 20
+        bb_soft.seed_todos([(f"todo_{i}", "") for i in range(n_todos)])
+        peers = [f"agent_{i}" for i in range(4)]
+        round_results: list[tuple[str, str, bool]] = []
+        lock = threading.Lock()
+
+        def peer_loop(peer_name: str) -> None:
+            # Each peer tries to claim every TODO; only one should win each.
+            for i in range(n_todos):
+                ok, _ = bb_soft.claim_todo(f"todo_{i}", peer_name)
+                with lock:
+                    round_results.append((peer_name, f"todo_{i}", ok))
+
+        threads = [threading.Thread(target=peer_loop, args=(p,)) for p in peers]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Per-TODO: exactly one peer should have won (claimed first).
+        per_todo_wins: dict[str, list[str]] = {}
+        for peer, todo, ok in round_results:
+            if ok:
+                per_todo_wins.setdefault(todo, []).append(peer)
+        for todo_name, winners in per_todo_wins.items():
+            # Same-peer re-claims are allowed (idempotent), but only ONE
+            # distinct peer should have won each TODO.
+            assert len(set(winners)) == 1, (
+                f"TODO {todo_name!r} ended up with multiple distinct winners: {set(winners)}"
+            )
+        # All 20 TODOs got claimed (no orphan).
+        assert len(per_todo_wins) == n_todos

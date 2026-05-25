@@ -583,11 +583,26 @@ class NetworkedStrategy(CoordinationStrategy):
 
     def _build_tool_list(self, agent_name: str) -> list:
         """Build domain tools + per-agent peer tools."""
+        from src.tools.networked_tools import (
+            ClaimTodo,
+            MarkTodoDone,
+            MarkTodoFailed,
+            ReadTodos,
+        )
+
         peer_tools = [
             ReadBlackboard(self._context),
             WriteBlackboard(self._context, agent_name=agent_name),
             SpawnPeer(self._context, agent_name=agent_name),
             MarkTaskDone(self._context, agent_name=agent_name),
+            # TODO-claim tools for the concurrent-blackboard selection mode.
+            # Carried by every peer regardless of selection_mode so a YAML
+            # tweak alone is enough to switch modes; the tools are no-ops
+            # if the TODO board is empty.
+            ReadTodos(self._context),
+            ClaimTodo(self._context, agent_name=agent_name),
+            MarkTodoDone(self._context, agent_name=agent_name),
+            MarkTodoFailed(self._context, agent_name=agent_name),
         ]
         return list(self._domain_tools) + peer_tools
 
