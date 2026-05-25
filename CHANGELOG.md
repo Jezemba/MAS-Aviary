@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L follow-up: metric extractor fix verified live
+
+Verification run for the `_extract_from_tool_outputs` fix landed in
+commit 569d401. Re-ran `mdo_f25_networked_iterative_feedback` with
+the fix in place.
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/4o22y281
+  wandb-reported fuel:         **11,615.86 kg** (no longer "zero fuel"
+                                 error — extractor correctly skipped
+                                 the 0.0 placeholder from
+                                 set_aircraft_parameters' inline
+                                 model_eval and pulled the real value
+                                 from run_simulation.summary)
+  vs F25 spec block fuel:      -4.0% (11,615.86 vs 12,100)
+  TODOs marked done:           5 of 7 (mission, geometry, mass,
+                                 evaluation, propulsion) — improvement
+                                 over previous run's 4 of 7
+  Distinct active peers:       agent_1, agent_2, agent_3 (all three)
+  Claim contention observed:   yes (multiple "TODO X is currently
+                                 claimed by 'agent_Y' — try a
+                                 different TODO" responses, peers
+                                 rotated to other TODOs without
+                                 thrashing)
+
+**Wandb side-by-side, networked combo only:**
+
+| Networked run | wandb | wandb-reported fuel_kg | TODOs done | mark_todo_done calls | Status |
+|---|---|---|---|---|---|
+| pre-extractor-fix (clogb51u) | clogb51u | "zero fuel" error (real 12,088 masked on blackboard) | 4 | 4 | FAILED (extractor bug) |
+| **post-extractor-fix (4o22y281)** | **4o22y281** | **11,615.86** | **5** | **5** | **OK (real value)** |
+
+End of Phase L for the networked combo. The CodeCRDT pattern is
+live, peer rotation works, claim contention is enforced, and the
+metric extractor now reports the correct fuel value. Two remaining
+issues from the design (aero claim still occasionally stays
+in-flight when SU2 errors out, agent_max_steps budget) are tuning
+matters and not blocking; left for a future commit.
+
 ### 2026-05-25 (late evening) — Phase L day-2 part 5: networked overhauled to CodeCRDT-style concurrent peers
 
 Closes out the user's correction on the networked combo. wandb
