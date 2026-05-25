@@ -527,3 +527,61 @@ class TestTurnNumbering:
         )
         # 3 messages, turns 1, 2, 3
         assert [m.turn_number for m in msgs] == [1, 2, 3]
+
+
+class TestFailureRegexWordBoundaries:
+    """Regression for the 2026-05-25 bug where _FAILURE_RE.search matched
+    'inf' inside 'INFORMATION'/'CONFIGURATION'/'infrastructure', cascading
+    bogus UPSTREAM_ERROR notes to every downstream worker. Discovered via
+    wandb run bpkm3zm4, which had geometry_engineer produce a real 186 MB
+    mesh + a markdown report starting with '## SESSION INFORMATION' — the
+    bare `inf` token matched 'INF' and flagged geometry as failed."""
+
+    _SUCCESS_TEXTS_THAT_MUST_NOT_FIRE = [
+        "## SESSION INFORMATION",
+        "Configuration loaded successfully",
+        "Mission configuration applied",
+        "openmdao.utils.assert_utils.assert_no_warning_match(...)",
+        "infrastructure check passed",
+        "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR set",
+        "Volume Mesh Successfully Generated",
+        "infinitive verbs are fine",  # contains 'infi' but as a word, fine
+    ]
+
+    _FAILURE_TEXTS_THAT_MUST_STILL_FIRE = [
+        "fuel_burned_kg = NaN",
+        "got nan in residuals",
+        "perf.Fn = inf",
+        "value reached infinity",
+        "infinite loop in solver",
+        "AVIARY_SETUP_ERROR: missing parameter",
+        "Solver did not converge after 200 iter",
+        "residuals contain inf",
+        "Simulation failed at climb segment",
+    ]
+
+    def test_success_outputs_do_not_trigger_failure_regex(self):
+        from src.coordination.iterative_feedback_handler import IterativeFeedbackHandler
+
+        for text in self._SUCCESS_TEXTS_THAT_MUST_NOT_FIRE:
+            m = IterativeFeedbackHandler._FAILURE_RE.search(text)
+            assert m is None, (
+                f"_FAILURE_RE falsely matched a successful-stage output:\n"
+                f"  text   = {text!r}\n"
+                f"  match  = {m.group(0)!r} at offset {m.start()}\n"
+                "The most likely cause is an unanchored 'inf' or 'nan' token; "
+                "use word boundaries (\\binf\\b)."
+            )
+
+    def test_real_failure_outputs_still_trigger_failure_regex(self):
+        from src.coordination.iterative_feedback_handler import IterativeFeedbackHandler
+
+        for text in self._FAILURE_TEXTS_THAT_MUST_STILL_FIRE:
+            m = IterativeFeedbackHandler._FAILURE_RE.search(text)
+            assert m is not None, (
+                f"_FAILURE_RE failed to detect a real failure signal:\n"
+                f"  text = {text!r}\n"
+                "The regex was tightened with word boundaries to fix a "
+                "false-positive on 'inf' inside 'INFORMATION'; make sure the "
+                "tightening didn't drop any genuine failure pattern."
+            )

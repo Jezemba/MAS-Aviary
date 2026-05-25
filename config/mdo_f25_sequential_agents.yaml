@@ -481,6 +481,12 @@ templates:
           - close_su2_session
           - set_mesh
           - update_config_entries
+          # get_valid_config_options returns the option combinations
+          # SU2 will actually accept (e.g. CONV_NUM_METHOD_FLOW="JST"
+          # requires MUSCL_FLOW="NO"). Call it before update_config_entries
+          # to avoid run_su2_solver erroring on "Centered schemes do not
+          # use MUSCL reconstruction".
+          - get_valid_config_options
           - run_su2_solver
           - read_history_csv
           - sample_surface_solution

@@ -127,10 +127,21 @@ agents:
       - geometry_engineer: open_cpacs, close_cpacs, set_high_level_parameters, get_high_level_parameters,
         get_wing_summary, get_fuselage_summary, get_configuration_summary, list_geometric_components, export_component_mesh, generate_volume_mesh
       - aerodynamics_analyst: create_su2_session, close_su2_session, set_mesh, update_config_entries,
-        run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status
+        get_valid_config_options, run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status
+        (call get_valid_config_options BEFORE update_config_entries so you
+         pick option combinations that pass SU2's static checks — e.g.
+         CONV_NUM_METHOD_FLOW="JST" requires MUSCL_FLOW="NO". Without it
+         the agent has to guess and SU2 errors with "Centered schemes do
+         not use MUSCL reconstruction".)
       - structures_analyst: validate_cpacs_inputs, estimate_mass, get_cpacs_mass_breakdown
-      - propulsion_analyst: create_cycle_model, close_cycle_model, list_variables, set_inputs,
-        run_cycle, get_outputs, get_cycle_summary
+      - propulsion_analyst: create_cycle_model, close_cycle_model, get_design_inputs, list_variables,
+        set_inputs, run_cycle, get_outputs, get_cycle_summary
+        (call get_design_inputs FIRST — it returns the short curated list
+         of settable design dials with exact paths (e.g. splitter.BPR,
+         fan.PR, Fn_DES). list_variables returns ~900 promoted names with
+         no design-dial markers; if you rely on it you will guess paths
+         like fan.BPR and silently leave BPR unset, producing garbage
+         outputs like perf.Fn = -2.6e+19 lbf.)
       - mission_architect: get_design_space, create_session, set_aircraft_parameters,
         configure_mission
       - simulation_executor: run_simulation, get_results, get_trajectory

@@ -151,9 +151,16 @@ class IterativeFeedbackHandler(ExecutionHandler):
     # Cross-stage error forwarding
     # ------------------------------------------------------------------
 
+    # NOTE: `inf` is anchored with word boundaries because a bare `inf`
+    # match was firing on substrings like "INFORMATION", "configuration",
+    # "infrastructure", etc. Geometry/aero/mass workers all emit headings
+    # like "## SESSION INFORMATION" — the unanchored regex falsely flagged
+    # successful stages as failures, cascading bogus UPSTREAM_ERROR notes
+    # to every downstream worker. Discovered 2026-05-25 via wandb bpkm3zm4.
     _FAILURE_RE = re.compile(
-        r"(?:NaN|inf|not converge|did not converge|AVIARY_SETUP_ERROR|"
-        r"simulation failed|failed to converge|residuals contain)",
+        r"(?:\bNaN\b|\binf(?:inity|inite)?\b|not converge|did not converge|"
+        r"AVIARY_SETUP_ERROR|simulation failed|failed to converge|"
+        r"residuals contain)",
         re.IGNORECASE,
     )
 
