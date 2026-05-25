@@ -9,6 +9,7 @@ Open any of these directly in a browser — no server needed:
 
 | File | Run | Notes |
 |---|---|---|
+| [`run_gi0kt8cr.html`](./run_gi0kt8cr.html) | wandb [`gi0kt8cr`](https://wandb.ai/jessicae/mas-aviary-stat/runs/gi0kt8cr) | **Post-attribution-fix verification run** (Job 1, 2026-05-25). Fuel = 11,974.55 kg (-1.0% vs F25 spec). Every rejected `claim_todo` event is correctly attributed to the caller (not the winner named in the message). |
 | [`run_4o22y281.html`](./run_4o22y281.html) | wandb [`4o22y281`](https://wandb.ai/jessicae/mas-aviary-stat/runs/4o22y281) | post-extractor-fix concurrent_blackboard rerun. wandb correctly reports fuel = 11,615.86 kg. 5 of 7 TODOs marked done. Pre-attribution-fix log — rejected `claim_todo` events are mis-attributed to the winner (see "Attribution caveat"). |
 | [`run_clogb51u.html`](./run_clogb51u.html) | wandb [`clogb51u`](https://wandb.ai/jessicae/mas-aviary-stat/runs/clogb51u) | first concurrent_blackboard run (pre-extractor-fix). Includes `agent_4` which was dynamically spawned mid-run via `spawn_peer`. Pre-attribution-fix log — same caveat. |
 

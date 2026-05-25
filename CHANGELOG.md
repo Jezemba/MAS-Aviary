@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L Job 1 verified live with fresh pipeline run
+
+End-to-end verification of the claim_todo attribution fix from the
+previous CHANGELOG entry. Launched a fresh `mdo_f25_networked_iterative
+_feedback` run with the fix in place.
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/gi0kt8cr
+  wandb-reported fuel:         **11,974.55 kg**
+  vs F25 spec block fuel:      -1.0% (11,974.55 vs 12,100)
+  Distinct active peers:       agent_1, agent_2, agent_3 (all three)
+  Concurrent contention:       yes (multiple "TODO X is currently
+                                 claimed by 'agent_Y' — 'agent_Z',
+                                 pick a different TODO" rejections)
+  claim_todo response shape:   includes structured `attempted_by` and
+                                 `current_owner` fields in every
+                                 response (verified at log lines
+                                 265, 281, 321, 414, 664, ...)
+  Viz attribution check:       rejected claim events now correctly
+                                 attribute to the caller, not the
+                                 winner. Specifically:
+                                 - #009 agent_1 rejected claim on
+                                   geometry (winner=agent_3)
+                                 - #010 agent_1 rejected claim on
+                                   mission (winner=agent_2)
+                                 - #014 agent_2 rejected claim on
+                                   geometry (winner=agent_3)
+                                 - #022 agent_3 rejected claim on
+                                   aero (winner=agent_1)
+                                 Pre-fix viz would have shown each
+                                 of these as the WINNER's event.
+
+New visualization committed at [`viz/run_gi0kt8cr.html`](viz/run_gi0kt8cr.html).
+Both pre-fix viz files (`run_4o22y281.html`, `run_clogb51u.html`)
+remain in place for reference; the README documents the legacy-log
+caveat.
+
+Status: Job 1 acceptance fully met. The framework's at-most-one
+-winner property is intact (no regression), the response payload
+now carries structured caller identity, the rejection message names
+both peers, and the visualizer correctly attributes every rejected
+claim under heavy thread interleave.
+
+
 ### 2026-05-25 (later) — Phase L Job 1: claim_todo caller attribution
 
 Followup on the user-reported "self-rejecting claim" pattern observed
