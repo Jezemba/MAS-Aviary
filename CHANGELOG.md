@@ -1,5 +1,128 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L day-2 part 2: three bugs surfaced by bpkm3zm4 run, fixed and verified
+
+Investigating yesterday's wandb bpkm3zm4 pipeline run (which
+produced the 12,518 kg result) surfaced three separate bugs.
+All three are now fixed in one commit and verified against a
+fresh pipeline run, wandb **krlbsfgx**.
+
+**Bug 1 — `_FAILURE_RE` matched `inf` inside `INFORMATION`.**
+
+`src/coordination/iterative_feedback_handler.py::_FAILURE_RE`
+listed `inf` as a bare alternative (intending to catch Python's
+`float('inf')`). The `re.IGNORECASE` regex matched `INF` inside
+common worker output headings — most notably the geometry_engineer's
+`## SESSION INFORMATION` block. The handler then injected
+`UPSTREAM_ERROR: geometry_engineer failed` into every downstream
+worker's context, even though geometry had actually succeeded
+(186 MB SU2 mesh, 476,853 nodes). The aero, structures, and
+propulsion workers then wasted retries thinking the mesh had
+failed. Fix: word-anchor the `inf` token (and `NaN` for
+symmetry) so it only matches the genuine Python float repr
+(`inf`, `infinity`, `infinite`).
+
+Regression: `tests/test_iterative_feedback_handler.py::TestFailureRegexWordBoundaries`:
+- 8 success-text fixtures (`"## SESSION INFORMATION"`,
+  `"Mission configuration applied"`,
+  `"Volume Mesh Successfully Generated"`, `"infrastructure check
+  passed"`, etc.) MUST NOT trigger the regex.
+- 9 real-failure fixtures (`"perf.Fn = inf"`, `"got nan in
+  residuals"`, `"value reached infinity"`, `"AVIARY_SETUP_ERROR"`,
+  etc.) MUST still trigger it.
+
+**Bug 2 — orchestrated propulsion_analyst missing
+`get_design_inputs` (the Phase I tool).**
+
+`config/mdo_f25_orchestrated_agents.yaml` listed
+`create_cycle_model, close_cycle_model, list_variables,
+set_inputs, run_cycle, get_outputs, get_cycle_summary` for
+propulsion_analyst — missing `get_design_inputs`. The Phase I
+2026-05-23 fix added `get_design_inputs` to pycycle-mcp so the
+agent doesn't have to guess from `list_variables`'s ~900
+promoted names. Sequential's YAML had it; orchestrated's did
+not. Result on bpkm3zm4: propulsion_analyst called
+`list_variables` 18 times trying to find BPR. Fix: add the
+tool to the orchestrated role mapping with an inline note on
+why `list_variables` alone is insufficient.
+
+**Bug 3 — aerodynamics_analyst missing `get_valid_config_options`
+on BOTH agent files.**
+
+`su2-mcp` exposes a `get_valid_config_options` tool that returns
+the option combinations SU2 will actually accept (e.g.
+`CONV_NUM_METHOD_FLOW="JST"` requires `MUSCL_FLOW="NO"`). It
+was never added to either `mdo_f25_sequential_agents.yaml` nor
+`mdo_f25_orchestrated_agents.yaml`. On bpkm3zm4 the
+aerodynamics_analyst guessed incompatible combinations and
+`run_su2_solver` errored 17 times with messages like "Centered
+schemes do not use MUSCL reconstruction" and "mesh.su2 is not
+an SU2 mesh file or has the wrong format". (Note: a chunk of
+those failures were also a cascade from bug 1's false-positive
+on the geometry output.) Fix: add the tool to both YAMLs with
+an inline note on the call-order expectation.
+
+**Verification — re-launched the same orchestrated pipeline run
+with the three fixes in place.**
+
+  wandb run:                       https://wandb.ai/jessicae/mas-aviary-stat/runs/krlbsfgx
+  fuel_burned_kg:                  7,607.88
+  MTOM_kg (= gtow_kg):             76,693.17
+  VERDICT:                         COMPLETE
+
+  Bug-fix delta vs bpkm3zm4 (pre-fix run):
+    UPSTREAM_ERROR cascades        5   →  0
+    get_valid_config_options calls 0   →  5  (bug 3 fix engaged)
+    get_design_inputs calls        0   →  5  (bug 2 fix engaged)
+    list_variables (guessing)      18  →  0  (Phase I now works)
+    SU2 Error Exit failures        17  →  0  (no SU2 retries)
+
+  Unit suite:                      1,348 → 1,350 (added 2 regression
+                                   tests for bug 1).
+
+**What this run does NOT prove.**
+
+The data-plane middleware coupling is still bypassed in this
+run for the same reason as day 2 part 1 — the orchestrator
+created `mission_architect` first, so aviary integrated before
+any upstream discipline could deposit values into the
+data_store. fuel = 7,607.88 kg (back to the un-coupled regime;
+Claude's non-determinism, the agent picked a lower-AR design
+this run instead of the AR=15-ish one from bpkm3zm4). MTOM is
+still the reported figure of merit; the structured output
+contract is honoured.
+
+The remaining fix is at the **execution layer**, not the prompt
+or tool layer — `setup_only` runs workers in agent-creation
+order, and the orchestrator's preferred creation order is
+top-level integrator first. Day-3 candidates (per the user's
+no-process constraint):
+
+1. Topo-sort workers in `_setup_only_execution` based on the
+   discipline information-dependency graph (geometry → aero,
+   geometry → mass, aero → mission, mass → mission, propulsion
+   → mission). Framework-level change in
+   `src/coordination/strategies/orchestrated.py`.
+
+2. Revert the `setup_only` override and rely on active-mode
+   iter 2 (more expensive, but iter 2 couples).
+
+3. Leave it as-is and treat fuel/MTOM convergence as a
+   per-run-non-deterministic outcome.
+
+**Files touched in this commit.**
+- `src/coordination/iterative_feedback_handler.py` —
+  `_FAILURE_RE` word-boundary fix + comment explaining why.
+- `tests/test_iterative_feedback_handler.py` —
+  `TestFailureRegexWordBoundaries` with positive + negative
+  fixtures.
+- `config/mdo_f25_orchestrated_agents.yaml` — add
+  `get_design_inputs` + `get_valid_config_options` to the
+  respective role allowlists with inline notes.
+- `config/mdo_f25_sequential_agents.yaml` — add
+  `get_valid_config_options` to aerodynamics_analyst's
+  `allowed_tools` (sequential was missing it too).
+
 ### 2026-05-25 — Phase L day-2: orchestrator gets DLR-F25 design context, fuel lands within 2% of sequential baseline
 
 Day 2 of Phase L. Yesterday's diagnosis was: the orchestrator's
