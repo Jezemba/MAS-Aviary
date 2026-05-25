@@ -1,5 +1,179 @@
 ## [Unreleased]
 
+### 2026-05-25 (late evening) — Phase L day-2 part 5: networked overhauled to CodeCRDT-style concurrent peers
+
+Closes out the user's correction on the networked combo. wandb
+6fhhcem3 (the first networked run, 2026-05-25 evening) ran 37
+disciplinary tool calls with only agent_1 active — agent_2 and
+agent_3 stayed idle and spawn_peer was never called. The user
+flagged that this is not a true blackboard collaboration and that
+"peers should be able to read what one agent is doing and pick up
+work that's left in real time" — a structural change, not a prompt
+tweak. Researched the established pattern, landed it as
+selection_mode="concurrent_blackboard".
+
+**Research sources** (all cited in PR description / branch commits):
+- arxiv 2510.18893 CodeCRDT (Oct 2025): formal TODO-claim protocol
+  with at-most-one-winner safety under CRDT consistency.
+- arxiv 2510.01285 LbMAS (Oct 2025): "central agent posts requests,
+  autonomous subordinate agents volunteer".
+- arxiv 2507.01701 Blackboard MAS for LLMs: "agents that will take
+  actions are selected based on current content of the blackboard".
+- AutoGen GroupChatManager: LLM-based selector per turn, anti-
+  monopoly rule on consecutive same-agent picks.
+
+The CodeCRDT pattern (parallel threads + atomic shared-state
+claims) most closely matched the user's framing.
+
+**Prototype first** (commit acc08d6 on branch
+feat/phase-l-networked-concurrent-prototype). Standalone Python
+script at scripts/prototype_concurrent_blackboard.py spawns 3
+smolagents ToolCallingAgents in threads with mocked discipline
+tools. Verified the pattern works in our codebase BEFORE touching
+production code:
+- All 7 TODOs done, no duplicates.
+- agent_1 -> {geometry, propulsion, evaluation}; agent_2 -> {mass,
+  simulation}; agent_3 -> {aero, mission}.
+- Wall clock 26.3s; sum of agent durations 74.6s -> 2.84x speedup.
+- At-most-one-winner safety held under contention.
+
+**Phase 1+2 — Blackboard primitives + peer tools (commit 53d185c).**
+
+- Added threading.RLock to Blackboard; all public methods now
+  hold it. Existing aviary-only combos continue to work unchanged
+  (the lock is transparent under sequential access).
+- New TodoEntry dataclass and TODO board API:
+  seed_todos / read_todos / read_pending_todos / claim_todo /
+  complete_todo / fail_todo / all_todos_done / render_todos.
+- New peer tools: ReadTodos, ClaimTodo, MarkTodoDone,
+  MarkTodoFailed. PEER_TOOL_NAMES widened 4 -> 8. The tools are
+  attached to every peer regardless of selection_mode so a YAML
+  flip alone is enough to switch modes.
+- 15 new unit tests including two thread-contention stress cases
+  with threading.Barrier:
+    8 racing threads on one TODO -> exactly 1 winner
+    4 peers x 20 TODOs simultaneously -> no double-assign
+
+**Phase 3+4 — Strategy mode + Coordinator parallel_run (commit dfe7734).**
+
+- selection_mode="concurrent_blackboard" added to
+  NetworkedStrategy alongside existing "round_robin" and
+  "volunteer".
+- On initialize(): seeds the TODO list from networked.todo_seed
+  (coord YAML).
+- New CoordinationAction type "parallel_run". next_step() returns
+  this single action per turn with metadata.peers listing every
+  initial peer + spawned peer.
+- max_concurrent_runs (default 2) bounds the number of parallel
+  cycles before the strategy gives up if peers haven't closed out
+  the board.
+- is_complete() now short-circuits on
+  blackboard.all_todos_done() — the run terminates as soon as
+  every TODO is in done status.
+- Coordinator._execute_parallel_run launches all peers via
+  ThreadPoolExecutor; one AgentMessage per peer is appended to
+  history with metadata.parallel_cycle = N. Missing peers and
+  per-peer exceptions are caught into AgentMessage.error rather
+  than propagating.
+- 10 new tests including:
+    test_runs_concurrently_not_serially — 3 x 0.3s peers in <0.6s
+    test_peer_exception_caught_not_propagated — other peers
+      complete even if one crashes
+    test_max_concurrent_runs_then_terminate — clean termination
+      on the cycle budget.
+
+**Phase 5 — F25 wiring (commit dfe7734).**
+
+- config/aviary_mdo_f25_networked.yaml: selection_mode set to
+  "concurrent_blackboard", max_concurrent_runs=2, and a todo_seed
+  with the 7 F25 disciplines (geometry, aero, mass, propulsion,
+  mission, simulation, evaluation) — each description cross-
+  references the Phase H/K data-plane couplings so peers know
+  which captures fire on which tool calls.
+- config/mdo_f25_networked_agents.yaml peer_template rewritten:
+  CONCURRENT-BLACKBOARD COORDINATION PROTOCOL teaches the
+  read_todos -> claim_todo -> execute -> mark_todo_done loop, and
+  explicitly tells peers to call mark_todo_failed (releases the
+  claim) instead of looping retry inside a single ReAct turn.
+
+**Phase 6 — Live cheap test passes in 13s** (was 25s under the
+previous volunteer mode), 1398/1398 total unit tests pass.
+
+**Phase 7 — Full pipeline run** (this entry).
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/clogb51u
+  Total wall clock:            ~13 min
+  Active peers in this run:    agent_1, agent_2, agent_3 (each
+                                 running its full ReAct loop twice,
+                                 once per parallel_run cycle) +
+                                 agent_4 (spawned mid-run by an
+                                 existing peer via spawn_peer —
+                                 first time we have observed
+                                 dynamic peer growth on a real F25
+                                 run)
+  TODOs marked done:           4 of 7 (geometry, mass, mission,
+                                 simulation) by agent_2 + agent_3
+                                 (the rest were in-flight claims
+                                 that hit the agent_max_steps
+                                 budget without reaching
+                                 mark_todo_done)
+  Best fuel_burned_kg:         12,088.1 (-0.1% from F25 spec
+                                 block fuel of 12,100 kg —
+                                 closest of any run so far across
+                                 sequential / orchestrated /
+                                 networked)
+  Best gtow_kg:                78,948
+  Framework eval status:       FAILED — same eval_classifier
+                                 metric-extraction bug we hit
+                                 before (reads the LAST tool's
+                                 inline model_eval fuel = 0.0
+                                 instead of the BEST
+                                 run_simulation.summary fuel).
+                                 Not blocking; will fix in a
+                                 follow-up commit.
+
+**Run-over-run comparison for the networked combo:**
+
+| Run | wandb | distinct active peers | best fuel_kg | mark_todo_done | spawn_peer |
+|---|---|---|---|---|---|
+| volunteer mode (deprecated) | 6fhhcem3 | 1 (agent_1 monopoly) | 12,197 | 0 (no TODOs) | 0 |
+| **concurrent_blackboard** | **clogb51u** | **3 + 1 spawned** | **12,088** | **4** | **1** |
+
+The 12,088 best fuel is the closest any combo has come to the F25
+spec on a real run. Sequential baseline 12,755.86 was on a
+different (default) mission and is not directly comparable to v4's
+2500-nmi / 239-PAX mission setup.
+
+**Known limitations recorded but not fixed in this commit:**
+
+1. eval_classifier metric extractor reads the LAST tool's fuel
+   output, which is the inline 0.0 placeholder from
+   set_aircraft_parameters' model_eval, not the BEST result from
+   run_simulation.summary. Affects every networked / orchestrated
+   run that ends on a set_aircraft_parameters call. Same general
+   class as the iterative_feedback_handler regex bug fixed in
+   commit 8ec40ba (\\binf\\b boundary).
+2. 3 of 7 TODOs were claimed but never reached mark_todo_done in
+   this run because the agent_max_steps=15 ReAct budget ran out
+   mid-work. Two fixes possible: (a) increase max_concurrent_runs
+   from 2 to 4 so peers get more cycles to resume; (b) raise
+   agent_max_steps; (c) instruct peers in the template to call
+   mark_todo_failed if they're near step exhaustion. None are
+   structural — all are tuning.
+3. The eval_classifier issue masked the actual improvement —
+   wandb reports "error zero fuel_burned_kg" even though the best
+   on-the-board number was 12,088. The CHANGELOG entry above is
+   the authoritative reading of the run.
+
+**Acceptance — the user's original complaint is resolved.** Three
+distinct peer agents participated in the run, real claim contention
+happened (visible "TODO 'X' is currently claimed by 'agent_Y' — try
+a different TODO" responses in the log), and one peer dynamically
+invoked spawn_peer to grow the team. The CodeCRDT-style pattern is
+live in NetworkedStrategy and gated behind the YAML knob
+selection_mode="concurrent_blackboard" so existing aviary-only
+combos continue to use round-robin unchanged.
+
 ### 2026-05-25 (evening) — Phase L day-2 part 4: mdo_f25_networked_iterative_feedback wired and exercised
 
 Third MDO-F25 combination — networked org structure with the
