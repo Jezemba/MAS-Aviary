@@ -32,6 +32,18 @@ networked:
   # knowledge in their peer_template. Phase gating would defeat the
   # purpose of the strategy.
 
+  # selection_mode: "volunteer" enables parallel peer voting per turn.
+  # Each strategy turn the strategy queries every idle peer (not the
+  # just-acted one) with a short "Should YOU act next?" prompt + the
+  # current blackboard summary. Each peer replies VOTE: YES|NO + a
+  # SCORE; the strongest YES is invoked. This matches the academic
+  # blackboard MAS pattern (arxiv 2510.01285 / 2507.01701) and AutoGen's
+  # GroupChatManager idea of picking the next speaker based on the
+  # conversation rather than fixed rotation. Default is "round_robin"
+  # to keep existing aviary-only combos unaffected; opt in here for the
+  # MDO F25 task. See src/coordination/strategies/networked.py.
+  selection_mode: "volunteer"
+
   # Peers can see each other's evaluation metrics on the blackboard
   # so they can decide who to retry or build on.
   peer_monitoring_visible: true
@@ -46,6 +58,19 @@ networked:
   predictive_knowledge: false
 
 execution_handler: "iterative_feedback"
+
+# iterative_feedback retries stay at the framework default (20). The
+# multi-peer rotation problem from wandb 6fhhcem3 was not a retry
+# problem — it was a selection problem (round-robin doesn't read the
+# blackboard). The new `networked.selection_mode: "volunteer"` below
+# handles "who acts next" by polling peers in parallel and reading
+# their blackboard awareness. Within a single peer's turn, the
+# handler's normal retry behavior is still useful (it lets that one
+# peer recover from its own validation errors / NaN trips / etc).
+# Once that peer's task is done (success OR exhausted retries) the
+# next strategy turn fires the volunteer broadcast again, which
+# excludes the just-acted peer and picks a fresh one based on the
+# updated blackboard state.
 
 # Primary termination: any peer can call mark_task_done writing
 # "DONE" to the blackboard, detected by NetworkedStrategy.is_complete().

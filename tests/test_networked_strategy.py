@@ -485,3 +485,177 @@ class TestToggleCombinations:
         # Can produce a next_step action.
         action = strategy.next_step([], {"task": "Test task"})
         assert action.action_type == "invoke_agent"
+
+
+# ---- Volunteer-broadcast selection (the 2026-05-25 blackboard fix) ----------
+
+
+class _ScriptedVoteModel(Model):
+    """Model that returns canned vote responses keyed by peer name.
+
+    Pass a dict like {"agent_1": "VOTE: YES\\nSCORE: 0.8\\nREASON: ..."}.
+    The model picks the response that matches a peer name mentioned in the
+    last user message. Lets us assert deterministic vote outcomes without
+    paying for real LLM calls."""
+
+    def __init__(self, responses_by_peer: dict[str, str]):
+        super().__init__(model_id="scripted-vote-model")
+        self._responses = responses_by_peer
+        self.calls: list[str] = []  # last user message per call
+
+    def generate(self, messages, stop_sequences=None, response_format=None, tools_to_call_from=None, **kwargs):
+        from smolagents.types import ChatMessage
+
+        # smolagents passes messages as either ChatMessage objects or dicts;
+        # the volunteer prompt is in the last user message.
+        content = ""
+        if messages:
+            last = messages[-1]
+            if isinstance(last, dict):
+                content = str(last.get("content", ""))
+            else:
+                content = str(getattr(last, "content", ""))
+        self.calls.append(content)
+        for peer_name, response in self._responses.items():
+            if peer_name in content:
+                return ChatMessage(role="assistant", content=response)
+        return ChatMessage(role="assistant", content="VOTE: NO")
+
+
+class TestVolunteerSelection:
+    """Regression for the 2026-05-25 networked overhaul: round-robin
+    couldn't pick agents based on blackboard state, so agent_1 monopolized
+    wandb 6fhhcem3. The volunteer broadcast mode broadcasts a vote prompt
+    to all idle peers in parallel and picks the strongest YES."""
+
+    def test_parse_vote_yes_with_score(self):
+        strategy = NetworkedStrategy()
+        name, score, reason = strategy._parse_vote(
+            "agent_1",
+            "VOTE: YES\nSCORE: 0.85\nREASON: I have a clear next step.",
+        )
+        assert name == "agent_1"
+        assert score == pytest.approx(0.85)
+        assert "clear next step" in reason
+
+    def test_parse_vote_no_returns_zero_score(self):
+        strategy = NetworkedStrategy()
+        _, score, reason = strategy._parse_vote(
+            "agent_2", "VOTE: NO\nREASON: nothing new for me."
+        )
+        assert score == 0.0
+        assert "voted NO" in reason or "NO" in reason
+
+    def test_parse_vote_yes_without_score_defaults_to_half(self):
+        strategy = NetworkedStrategy()
+        _, score, _ = strategy._parse_vote("agent_1", "VOTE: YES")
+        assert score == pytest.approx(0.5)
+
+    def test_parse_vote_clamps_to_one(self):
+        strategy = NetworkedStrategy()
+        _, score, _ = strategy._parse_vote("a", "VOTE: YES\nSCORE: 2.0")
+        assert score == pytest.approx(1.0)
+
+    def test_parse_vote_clamps_minimum_yes_to_nonzero(self):
+        # A YES with SCORE: 0 should still beat a NO; clamp to 0.01.
+        strategy = NetworkedStrategy()
+        _, score, _ = strategy._parse_vote("a", "VOTE: YES\nSCORE: 0.0")
+        assert score == pytest.approx(0.01)
+
+    def test_parse_vote_empty_string(self):
+        strategy = NetworkedStrategy()
+        _, score, _ = strategy._parse_vote("a", "")
+        assert score == 0.0
+
+    def test_volunteer_picks_highest_score(self, worker_tools):
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="volunteer",
+        )
+        # Scripted responses: agent_2 votes the highest, should win.
+        model = _ScriptedVoteModel(
+            {
+                "agent_1": "VOTE: YES\nSCORE: 0.4\nREASON: weak fit",
+                "agent_2": "VOTE: YES\nSCORE: 0.9\nREASON: strong fit",
+                "agent_3": "VOTE: YES\nSCORE: 0.6\nREASON: ok",
+            }
+        )
+        agents = {}
+        # Need a single agent of name 'orchestrator' or any name as the
+        # initial seed; the strategy spawns peers internally.
+        strategy = NetworkedStrategy()
+        # Hook the model so the strategy uses _ScriptedVoteModel for peers.
+        config["_model"] = model
+        strategy.initialize(agents, config)
+        # The strategy's volunteer_model is set from context.model which
+        # is loaded from config["_model"] inside initialize.
+        assert strategy._volunteer_model is model
+
+        history = [
+            AgentMessage(
+                agent_name="agent_1",  # excluded from next pick
+                content="I just configured the mission.",
+                turn_number=1,
+                timestamp=time.time(),
+            )
+        ]
+        picked = strategy._select_via_volunteer(history, {})
+        assert picked == "agent_2", (
+            f"Expected agent_2 (highest score 0.9) but got {picked}. "
+            f"Votes called: {len(model.calls)}"
+        )
+        # agent_1 must NOT be queried (it just acted).
+        for prompt in model.calls:
+            assert "You are agent_1" not in prompt, (
+                "Just-acted peer should be excluded from vote — but a "
+                "prompt was sent to agent_1."
+            )
+
+    def test_volunteer_falls_back_when_all_vote_no(self, worker_tools):
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="volunteer",
+        )
+        model = _ScriptedVoteModel(
+            {
+                "agent_1": "VOTE: NO",
+                "agent_2": "VOTE: NO",
+                "agent_3": "VOTE: NO",
+            }
+        )
+        config["_model"] = model
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+
+        history = [
+            AgentMessage(
+                agent_name="agent_1",
+                content="done",
+                turn_number=1,
+                timestamp=time.time(),
+            )
+        ]
+        picked = strategy._select_via_volunteer(history, {})
+        # All voted NO, so fall back to first idle candidate (not agent_1).
+        assert picked == "agent_2", (
+            f"Expected fallback to first idle candidate (agent_2), got {picked}"
+        )
+
+    def test_volunteer_default_is_round_robin(self, worker_tools):
+        """Sanity: existing combos without selection_mode should keep
+        round-robin behavior. Volunteer must be opt-in."""
+        config = _make_config(worker_tools, initial_agents=3)
+        # No selection_mode set, no _model override needed for round-robin.
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+
+        assert strategy._selection_mode == "round_robin"
+        assert strategy._volunteer_model is None
+        # First call picks agent_1.
+        a1 = strategy.next_step([], {"task": "t"})
+        assert a1.agent_name == "agent_1"
+        # Second call picks agent_2 (rotation, NOT volunteer).
+        a2 = strategy.next_step([], {"task": "t"})
+        assert a2.agent_name == "agent_2"

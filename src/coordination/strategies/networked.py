@@ -78,6 +78,16 @@ class NetworkedStrategy(CoordinationStrategy):
         self._graph_state_dict: dict = {}
         self._graph_complete: bool = False
 
+        # Volunteer-broadcast selection (optional, set in coord YAML as
+        # networked.selection_mode: "volunteer"). When enabled, replaces
+        # the default round-robin with parallel "want to act next?" votes
+        # to each idle peer, picking the strongest YES. Closer to the
+        # arxiv 2510.01285 / 2507.01701 blackboard MAS pattern and to
+        # AutoGen's GroupChatManager than fixed rotation. The default
+        # stays round-robin so existing aviary-only combos are unaffected.
+        self._selection_mode: str = "round_robin"
+        self._volunteer_model = None  # Shared LLM for vote prompts.
+
     def initialize(self, agents: dict, config: dict) -> None:
         """Set up strategy from agents dict and coordination config.
 
@@ -95,6 +105,7 @@ class NetworkedStrategy(CoordinationStrategy):
         self._peer_monitoring_visible = net_config.get("peer_monitoring_visible", True)
         self._trans_specialist_knowledge = net_config.get("trans_specialist_knowledge", True)
         self._predictive_knowledge = net_config.get("predictive_knowledge", False)
+        self._selection_mode = net_config.get("selection_mode", "round_robin")
 
         term_config = config.get("termination", {})
         self._termination_keyword = term_config.get("keyword", "TASK_COMPLETE")
@@ -177,6 +188,12 @@ class NetworkedStrategy(CoordinationStrategy):
             name = f"agent_{i}"
             self._context.agent_counter = i
             self._create_peer_agent(name)
+
+        # Volunteer-broadcast needs a shared model handle for the
+        # parallel vote calls. All peers were constructed with the same
+        # self._context.model so any one works as the vote model.
+        if self._selection_mode == "volunteer":
+            self._volunteer_model = self._context.model
 
         # Set all_tools in context for future spawns (includes peer tools).
         # The peer tool instances in all_tools are templates; SpawnPeer
@@ -295,12 +312,26 @@ class NetworkedStrategy(CoordinationStrategy):
         new_names = [n for n in self._agents if n not in current_names and n != "system"]
         self._agent_order = current_names + new_names
 
-        # Placeholder rotation: simple round-robin.
-        if self._rotation_index >= len(self._agent_order):
-            self._rotation_index = 0
-
-        agent_name = self._agent_order[self._rotation_index]
-        self._rotation_index += 1
+        # Selection: volunteer broadcast OR round-robin.
+        if self._selection_mode == "volunteer" and self._volunteer_model is not None:
+            picked = self._select_via_volunteer(history, current_state)
+            if picked is None:
+                # Couldn't pick (e.g. no candidates). Fall back to round-robin.
+                if self._rotation_index >= len(self._agent_order):
+                    self._rotation_index = 0
+                agent_name = self._agent_order[self._rotation_index]
+                self._rotation_index += 1
+            else:
+                agent_name = picked
+                # Keep rotation_index advancing too so any code that reads
+                # it (metrics, snapshots) sees forward progress.
+                self._rotation_index = (self._rotation_index + 1) % max(1, len(self._agent_order))
+        else:
+            # Placeholder rotation: simple round-robin.
+            if self._rotation_index >= len(self._agent_order):
+                self._rotation_index = 0
+            agent_name = self._agent_order[self._rotation_index]
+            self._rotation_index += 1
 
         # Snapshot toolset for newly spawned agents (phase gating needs it).
         if self._workflow_phases and agent_name not in self._full_toolsets:
@@ -559,6 +590,158 @@ class NetworkedStrategy(CoordinationStrategy):
             MarkTaskDone(self._context, agent_name=agent_name),
         ]
         return list(self._domain_tools) + peer_tools
+
+    # ------------------------------------------------------------------
+    # Volunteer-broadcast selection (selection_mode == "volunteer")
+    # ------------------------------------------------------------------
+    #
+    # Replaces the default round-robin pick with a parallel "do you want
+    # to act next?" vote sent to every idle peer. Each peer reads a
+    # compact blackboard snapshot + the last completed action and casts
+    # VOTE: YES/NO + SCORE + REASON. The strongest YES is invoked.
+    # Closer to the academic blackboard MAS pattern (arxiv 2510.01285 /
+    # 2507.01701) and to AutoGen's GroupChatManager than fixed rotation.
+    # Discovered 2026-05-25 after wandb 6fhhcem3 showed fixed round-robin
+    # interacts badly with the iterative_feedback handler's per-turn
+    # retries — agent_1 monopolized all 37 disciplinary calls because the
+    # handler kept retrying it within a single strategy turn. Combined
+    # fix: set iterative_feedback.max_retries: 1 for networked combos
+    # AND use volunteer selection so the next strategy turn picks a
+    # different peer based on what's on the blackboard, not the previous
+    # turn's rotation index.
+
+    _VOTE_PROMPT_TEMPLATE = (
+        "You are {peer_name}, one of {peer_count} peer agents collaborating on "
+        "a multi-disciplinary aircraft design task via a shared blackboard. "
+        "There is NO orchestrator and NO fixed execution order. Each turn, "
+        "every peer votes on whether to take the next action.\n\n"
+        "Recent blackboard activity (most recent first):\n{board_summary}\n\n"
+        "Last completed action (by another peer):\n{last_content}\n\n"
+        "Should YOU act next? Vote honestly:\n"
+        "- Vote YES with a HIGH score (0.7-1.0) if you have a clearly useful "
+        "next step the team needs and no other peer has obviously claimed it.\n"
+        "- Vote YES with a LOW score (0.3-0.6) if you could act but another "
+        "peer might also be a fit.\n"
+        "- Vote NO if there is no useful next step you can take, if you would "
+        "duplicate work already on the board, or if you have repeatedly acted "
+        "and another peer should get a turn.\n\n"
+        "Reply in EXACTLY this format on three lines:\n"
+        "VOTE: YES\n"
+        "SCORE: 0.85\n"
+        "REASON: one short sentence describing what you would do.\n"
+        "(or VOTE: NO, no score required)"
+    )
+
+    def _render_blackboard_summary(self, max_entries: int = 8, max_chars_per: int = 200) -> str:
+        """Compact blackboard render for the vote prompt — most-recent
+        entries first, truncated content. Cheap to embed in many parallel
+        prompts."""
+        if self._blackboard is None:
+            return "(blackboard empty — no entries yet)"
+        try:
+            entries = self._blackboard.read_all()
+        except Exception:
+            return "(blackboard read failed)"
+        if not entries:
+            return "(blackboard empty — no entries yet)"
+        # Walk newest-first, truncate.
+        lines: list[str] = []
+        for entry in reversed(entries[-max_entries:]):
+            author = getattr(entry, "author", "?")
+            etype = getattr(entry, "entry_type", "?")
+            key = getattr(entry, "key", "?")
+            value = str(getattr(entry, "value", ""))[:max_chars_per]
+            lines.append(f"- [{etype}] {key} by {author}: {value}")
+        return "\n".join(lines)
+
+    def _parse_vote(self, peer_name: str, content: str) -> tuple[str, float, str]:
+        """Parse a peer's vote response. Returns (name, score, reason).
+        score is 0.0 for NO/abstain, positive for YES."""
+        import re
+
+        if not content:
+            return (peer_name, 0.0, "empty response")
+        vote_match = re.search(r"VOTE:\s*(YES|NO)", content, re.IGNORECASE)
+        if vote_match is None or vote_match.group(1).upper() == "NO":
+            return (peer_name, 0.0, "voted NO")
+        score_match = re.search(r"SCORE:\s*([0-9]*\.?[0-9]+)", content)
+        score = float(score_match.group(1)) if score_match else 0.5
+        # Clamp to [0.01, 1.0] so a YES never has zero weight.
+        score = max(0.01, min(1.0, score))
+        reason_match = re.search(r"REASON:\s*(.+?)(?:\n|$)", content)
+        reason = reason_match.group(1).strip() if reason_match else ""
+        return (peer_name, score, reason)
+
+    def _cast_vote(self, peer_name: str, board_summary: str, last_content: str) -> tuple[str, float, str]:
+        """Make a single lightweight LLM call asking one peer to vote."""
+        prompt = self._VOTE_PROMPT_TEMPLATE.format(
+            peer_name=peer_name,
+            peer_count=len(self._agent_order),
+            board_summary=board_summary,
+            last_content=(last_content or "(none — first turn)")[:600],
+        )
+        # Use the shared model. Build a smolagents-compatible message dict
+        # so we don't depend on ChatMessage class shape across versions.
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            response = self._volunteer_model.generate(messages)
+        except Exception as e:
+            return (peer_name, 0.0, f"vote error: {type(e).__name__}")
+        content = getattr(response, "content", None) or str(response)
+        if isinstance(content, list):
+            # Some model backends return content as a list of parts.
+            content = " ".join(
+                str(p.get("text", p)) if isinstance(p, dict) else str(p)
+                for p in content
+            )
+        return self._parse_vote(peer_name, str(content))
+
+    def _select_via_volunteer(self, history: list, current_state: dict) -> str | None:
+        """Run parallel volunteer broadcast. Returns the agent name of the
+        strongest YES vote, or None if no idle peer can be found.
+
+        Excludes the peer that JUST acted (`history[-1].agent_name`) so
+        the team doesn't immediately re-pick the same peer. If every
+        candidate votes NO, falls back to the first idle peer so the run
+        doesn't deadlock."""
+        if self._volunteer_model is None or not self._agent_order:
+            return None
+
+        last_agent = history[-1].agent_name if history else None
+        last_content = history[-1].content if history else ""
+
+        candidates = [
+            n for n in self._agent_order
+            if n != last_agent and n in self._agents and n != "system"
+        ]
+        if not candidates:
+            # Edge case: only one peer total. Allow re-picking.
+            candidates = [n for n in self._agent_order if n in self._agents and n != "system"]
+        if not candidates:
+            return None
+
+        board_summary = self._render_blackboard_summary()
+
+        # Parallel vote calls. ThreadPoolExecutor is safe because each
+        # call goes to a separate HTTP request; the underlying Anthropic
+        # SDK is thread-safe at the request level.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=len(candidates)) as ex:
+            votes = list(
+                ex.map(
+                    lambda name: self._cast_vote(name, board_summary, last_content),
+                    candidates,
+                )
+            )
+
+        positive = [v for v in votes if v[1] > 0.0]
+        if positive:
+            # Highest score wins. Ties broken by agent_order (deterministic).
+            positive.sort(key=lambda v: (-v[1], candidates.index(v[0])))
+            return positive[0][0]
+        # All voted NO — fall back to first candidate to avoid deadlock.
+        return candidates[0]
 
     # -- Graph-driven mode ------------------------------------------------------
 
