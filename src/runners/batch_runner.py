@@ -619,6 +619,20 @@ def _extract_from_tool_outputs(messages: list[AgentMessage]) -> dict | None:
     Uses ``raw_decode()`` to recover partial data from truncated JSON.
     Returns ``None`` for metrics not found (never coerces to 0.0 —
     callers must distinguish missing from zero).
+
+    set_aircraft_parameters' inline model_eval is a placeholder when
+    called BEFORE run_simulation: it returns ``fuel_burned_kg = 0.0``
+    because no trajectory has been propagated yet. A real fuel value
+    only exists once run_simulation has produced its summary.
+    Discovered 2026-05-25 via the concurrent_blackboard pipeline run
+    wandb clogb51u, which had run_simulation produce a valid
+    fuel_burned_kg = 12,088 but ended on a set_aircraft_parameters
+    call whose inline 0.0 was being picked up by this extractor and
+    flagged as a failed run. The fix: treat 0.0 from a
+    set_aircraft_parameters source as MISSING (not a measurement),
+    so we keep scanning for the real value from run_simulation /
+    get_results / earlier set_aircraft_parameters with non-zero
+    fuel.
     """
     fuel = gtow = wing = reserve = zfw = None
     converged = None
@@ -643,11 +657,24 @@ def _extract_from_tool_outputs(messages: list[AgentMessage]) -> dict | None:
                 outputs = model_eval.get("outputs")
                 if isinstance(outputs, dict):
                     data = {**data, **outputs}
+            # 0.0 fuel from set_aircraft_parameters' inline model_eval
+            # is a pre-trajectory placeholder, not a real measurement.
+            # Skip it so the extractor keeps scanning earlier
+            # run_simulation / get_results outputs for the actual fuel.
+            from_set_params = tc.tool_name == "set_aircraft_parameters"
+            is_zero = data.get("fuel_burned_kg") == 0.0
             # Extract metrics from the structured MCP response.
             if fuel is None and "fuel_burned_kg" in data:
-                fuel = float(data["fuel_burned_kg"])
+                if not (from_set_params and is_zero):
+                    fuel = float(data["fuel_burned_kg"])
             if gtow is None and "gtow_kg" in data:
-                gtow = float(data["gtow_kg"])
+                # gtow from set_aircraft_parameters' inline eval can
+                # be a non-trajectory placeholder when fuel is 0.
+                # Skip gtow in that same combined case so we don't
+                # report mismatched fuel/gtow from two different
+                # calls.
+                if not (from_set_params and is_zero):
+                    gtow = float(data["gtow_kg"])
             if wing is None and "wing_mass_kg" in data:
                 wing = float(data["wing_mass_kg"])
             if reserve is None and "reserve_fuel_kg" in data:
