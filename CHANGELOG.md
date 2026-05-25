@@ -1,5 +1,55 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L Job 2: parallel-execution swim lanes
+
+User's Job 2 ask was to "show the parallel nature [of peer execution
+via a] flow chart, etc." The existing chronological timeline obscured
+the fact that three peers ran concurrently — you had to interpret it
+from timestamps. This commit adds a horizontal swim-lane panel at the
+top of every viz HTML showing the wall-clock-positioned timeline of
+each peer.
+
+New parser pipeline in `scripts/visualize_run.py`:
+- `StepBlock` dataclass: one peer ReAct step (tool call + step
+  number + duration + input-token count + attribution metadata).
+- `parse_step_blocks(log_path)`: single linear walk over the log,
+  pairing each `Calling tool:` line with the next `[Step N: Duration
+  X.X | Input tokens: T]` close-marker before any newer tool call.
+  Two-pass attribution:
+  1. Inline: tools whose response names the acting peer
+     (`attempted_by` for TODO-claim tools post-Job-1; `agent_X_`
+     key prefix for write_blackboard).
+  2. Token-signature match: MCP discipline tools (no inline
+     attribution) match `(step_num, input_tokens)` against the
+     inline-attributed peers' signatures. Each peer accumulates a
+     slightly different token count by step N because their prompt
+     contexts differ marginally; closest-token-distance identifies
+     the peer reliably from step 2 onward.
+- `build_swim_lanes(blocks)`: per-peer cumulative time = sum of that
+  peer's step durations in step-number order. Drops synthetic
+  zero-duration entries from multi-tool steps.
+- `_render_swim_lanes(lanes)`: full-width HTML panel with axis ticks
+  (every ~total/6 seconds, rounded), one lane per peer with
+  color-coded blocks sized by step duration, hover tooltips showing
+  step number / duration / tool / observation snippet.
+
+The new panel sits between the header and the existing two-pane main
+content; the chronological timeline below is unchanged.
+
+Verification:
+- Unit suite: 1,421/1,421 passed (+8 new viz tests covering
+  StepBlock parsing, token-match attribution, comma-separated
+  token-count regex, multi-tool step handling, swim-lane render).
+- Regenerated all three viz HTMLs against the new renderer.
+  `run_gi0kt8cr.html` (post-Job-1-fix) shows three balanced lanes
+  with the slowest peer (agent_3) at ~118s wall-clock, the others
+  at ~51s and ~59s. `run_4o22y281.html` shows similar parallel
+  activity at ~195s wall-clock. `run_clogb51u.html` at ~107s.
+  Hover tooltips work.
+
+No framework behavior change; pure visualization improvement.
+
+
 ### 2026-05-25 (later) — Phase L Job 1 verified live with fresh pipeline run
 
 End-to-end verification of the claim_todo attribution fix from the

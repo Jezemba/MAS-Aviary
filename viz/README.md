@@ -15,7 +15,16 @@ Open any of these directly in a browser — no server needed:
 
 ## What you see
 
-- **Header bar**: wandb link, reported fuel, per-agent activity-count chips.
+- **Header bar**: wandb link, reported fuel, per-agent activity-count chips,
+  and the slowest-peer wall-clock total.
+- **Parallel-execution swim lanes** (top section, added 2026-05-25): one
+  horizontal lane per peer with colored blocks for every tool call
+  (claim / read / write / MCP discipline work) sized by step duration
+  and positioned by that peer's cumulative wall-clock. Three lanes with
+  activity at the same X-axis range proves the peers were executing in
+  parallel — overlap in horizontal position = concurrent execution.
+  Hover any block for the step number, duration, tool name, and the
+  truncated observation. Axis ticks every ~20 seconds.
 - **Final TODO board** (left panel): parsed from the last `read_todos`
   observation in the log. Shows which peer claimed and/or completed each
   of the 7 disciplines.
@@ -51,17 +60,25 @@ this priority:
    for legacy logs (pre-2026-05-25) and for tools that name the acting
    agent inline (e.g. `read_todos` rendering).
 3. **`write_blackboard` key prefix** (`agent_<N>_status` etc.).
-4. **Most-recent `New run - agent_X` banner** in the log — used for
+4. **Token-signature match** (swim-lane parser, added 2026-05-25 with
+   Job 2): for MCP tool calls with no inline attribution (open_cpacs,
+   run_simulation, set_aircraft_parameters, etc.), pair the block's
+   `(step_num, input_tokens)` against the inline-attributed peers'
+   signatures. Each peer accumulates a slightly different token count
+   by step N because their prompt contexts differ marginally, so the
+   closest token match reliably identifies the peer from step 2 onward.
+5. **Most-recent `New run - agent_X` banner** in the log — used for
    `read_blackboard` and other tools whose response carries no peer
    identity. This is the fuzziest signal under heavy thread interleave.
 
 Pre-2026-05-25 logs (including `run_4o22y281.html` and `run_clogb51u.html`)
 don't carry `attempted_by` in their `claim_todo` responses, so rejected
 claims fall back to rule 2 and show up attributed to the WINNER of the
-race instead of the caller. This makes the timeline read as if the same
-peer rejected itself; in reality three peers raced for the same TODO and
-the rejection messages name the winner. Runs captured AFTER the fix will
-render correctly because the response payload includes the structured
-caller identity.
+race instead of the caller in the chronological timeline. This makes
+that view read as if the same peer rejected itself; in reality three
+peers raced for the same TODO and the rejection messages name the winner.
+The swim-lane view at the top uses both rules 1+4 and is less affected
+because the token-signature match disambiguates many cases. Runs
+captured AFTER the fix render correctly in both views.
 
 The action itself and the observation text are always correct.

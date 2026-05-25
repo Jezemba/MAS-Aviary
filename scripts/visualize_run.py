@@ -33,7 +33,9 @@ from pathlib import Path
 _RUN_BANNER_RE = re.compile(r"New run - (agent_\d+)")
 _CALLING_TOOL_RE = re.compile(r"Calling tool: '([^']+)' with arguments: (.+?)(?:\s+│|$)")
 _OBSERVATION_LINE_RE = re.compile(r"^Observations:\s*(.+)$")
-_STEP_DURATION_RE = re.compile(r"\[Step (\d+): Duration ([\d.]+) seconds")
+_STEP_DURATION_RE = re.compile(
+    r"\[Step (\d+): Duration ([\d.]+) seconds\|\s*Input tokens:\s*([\d,]+)"
+)
 _TODO_LINE_RE = re.compile(
     r"\s*-\s+(\S+)\s+status=(\w+)(?:\s+assigned_to=(\S+))?(?:\s+result=(.+?))?$"
 )
@@ -68,6 +70,28 @@ class Event:
     todo_name: str | None = None
     key: str | None = None
     log_line: int = 0  # 1-indexed line in the source log
+
+
+@dataclass
+class StepBlock:
+    """One peer ReAct step: tool call + observation + close-marker duration.
+
+    Smolagents emits one Step N block per tool call. The block opens at
+    the ━━ Step N ━━ banner and closes at a `[Step N: Duration X.Xs]`
+    line. Three peers running concurrently produce three Step N blocks
+    that interleave in stdout; this dataclass holds one such block
+    after parsing it out of the raw log.
+    """
+
+    step_num: int  # smolagents step number within the peer's ReAct loop
+    duration_s: float  # wall-clock seconds for this step
+    input_tokens: int  # from the [Step N: ... Input tokens: X] close-marker
+    tool: str  # the single tool call made during this step
+    args_text: str  # raw tool arguments
+    observation: str  # tool response text (first 600 chars)
+    agent: str  # attributed peer (may be "unknown")
+    attributed_via: str  # how attribution was determined: blackboard / fwd-fill / unknown
+    log_line: int  # 1-indexed line of the Calling-tool line
 
 
 @dataclass
@@ -290,6 +314,209 @@ def parse_log(log_path: str) -> tuple[list[Event], RunSummary]:
 
 
 # ---------------------------------------------------------------------------
+# Swim-lane timeline (parallel peer execution view)
+# ---------------------------------------------------------------------------
+
+
+def parse_step_blocks(log_path: str) -> list[StepBlock]:
+    """Extract every (tool call, step number, duration) tuple from a
+    networked-run log, and attribute each to a peer.
+
+    Smolagents emits one Step N block per ReAct turn: a tool call (or
+    multiple), the observation, then a `[Step N: Duration X.X | Input
+    tokens: T]` close-marker. Under concurrent_blackboard mode three
+    peers' Step blocks interleave in stdout but each tool call still
+    pairs with EXACTLY ONE close-marker — the next one in log order
+    after the tool call AND before any newer tool call.
+
+    Attribution strategy:
+    1. Tool's response carries `attempted_by` (TODO-claim tools after
+       2026-05-25 fix) — used directly.
+    2. Tool's response inline-mentions an `'agent_X'` (e.g.
+       `write_blackboard` key prefix, `read_todos` rendering).
+    3. Token-signature match: for MCP tool calls (no inline
+       attribution), pair (step_num, input_tokens) against the inline
+       -attributed peers' signatures. Each peer accumulates a
+       slightly different token count by step N because their prompt
+       contexts differ marginally, so the closest match identifies
+       the peer reliably from step 2 onward.
+    """
+    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.read().split("\n")
+
+    # Single-pass walk: maintain a pending tool call until its close-
+    # marker fires. If a NEW tool call appears before a close, the
+    # previous one was part of a multi-tool step — flush it with
+    # duration=0 so we don't lose the call but don't double-count time.
+    raw_blocks: list[StepBlock] = []
+    pending: dict | None = None
+
+    def _flush_pending_with_close(close_step: int, close_dur: float, close_tokens: int) -> None:
+        if pending is None:
+            return
+        agent = _attribute_agent(
+            pending["tool"], pending["args_text"], pending["observation"], None
+        )
+        raw_blocks.append(
+            StepBlock(
+                step_num=close_step,
+                duration_s=close_dur,
+                input_tokens=close_tokens,
+                tool=pending["tool"],
+                args_text=pending["args_text"][:300],
+                observation=pending["observation"],
+                agent=agent,
+                attributed_via="inline" if agent != "unknown" else "deferred",
+                log_line=pending["line_idx"] + 1,
+            )
+        )
+
+    for line_idx, line in enumerate(lines):
+        close_match = _STEP_DURATION_RE.search(line)
+        if close_match:
+            step_num = int(close_match.group(1))
+            duration_s = float(close_match.group(2))
+            input_tokens = int(close_match.group(3).replace(",", ""))
+            _flush_pending_with_close(step_num, duration_s, input_tokens)
+            pending = None
+            continue
+
+        call_match = _CALLING_TOOL_RE.search(line)
+        if not call_match:
+            continue
+        tool = call_match.group(1)
+        args_text = call_match.group(2).strip()
+        observation = _extract_observation(lines, line_idx + 1)
+
+        if pending is not None:
+            # A new tool call before any close-marker — the previous
+            # one was an earlier tool inside the same step. Record it
+            # with zero duration so it still appears on the timeline
+            # but doesn't inflate wall-clock.
+            agent = _attribute_agent(
+                pending["tool"], pending["args_text"], pending["observation"], None
+            )
+            raw_blocks.append(
+                StepBlock(
+                    step_num=-1,
+                    duration_s=0.0,
+                    input_tokens=0,
+                    tool=pending["tool"],
+                    args_text=pending["args_text"][:300],
+                    observation=pending["observation"],
+                    agent=agent,
+                    attributed_via="inline" if agent != "unknown" else "deferred",
+                    log_line=pending["line_idx"] + 1,
+                )
+            )
+
+        pending = {
+            "tool": tool,
+            "args_text": args_text,
+            "observation": observation,
+            "line_idx": line_idx,
+        }
+
+    # Second pass: attribute deferred blocks via token-signature
+    # matching. Each peer accumulates a slightly different input-token
+    # count by step N because their prompt / context strings differ
+    # marginally (system-prompt text, tool ordering, etc.). The inline
+    # -attributed blocks give us each peer's exact (step_num, tokens)
+    # signature; deferred blocks at the same step_num match by minimum
+    # token-distance.
+    signature: dict[tuple[str, int], int] = {
+        (blk.agent, blk.step_num): blk.input_tokens
+        for blk in raw_blocks
+        if blk.attributed_via == "inline"
+    }
+    peers_known = sorted({a for (a, _) in signature.keys()})
+
+    for blk in raw_blocks:
+        if blk.attributed_via != "deferred":
+            continue
+        # Candidate signatures at this step number, one per peer.
+        candidates = [
+            (a, signature[(a, blk.step_num)])
+            for a in peers_known
+            if (a, blk.step_num) in signature
+        ]
+        if candidates:
+            # Closest token distance wins.
+            best_agent, best_dist = None, None
+            for agent, sig_tokens in candidates:
+                dist = abs(sig_tokens - blk.input_tokens)
+                if best_dist is None or dist < best_dist:
+                    best_agent, best_dist = agent, dist
+            blk.agent = best_agent or "unknown"
+            blk.attributed_via = "token-match"
+        else:
+            # No inline-attributed peer ever ran step `step_num` —
+            # fall back to nearest-step token signature across peers.
+            all_sigs = [
+                (a, s, t) for (a, s), t in signature.items()
+            ]
+            if all_sigs:
+                best_agent, best_score = None, None
+                for agent, sig_step, sig_tokens in all_sigs:
+                    if sig_step == blk.step_num:
+                        continue
+                    # Score combines step distance and token distance,
+                    # with token distance weighted heavily.
+                    score = (
+                        abs(sig_step - blk.step_num) * 1000
+                        + abs(sig_tokens - blk.input_tokens)
+                    )
+                    if best_score is None or score < best_score:
+                        best_agent, best_score = agent, score
+                blk.agent = best_agent or "unknown"
+                blk.attributed_via = "token-nearest"
+            else:
+                blk.agent = "unknown"
+                blk.attributed_via = "unknown"
+
+    return raw_blocks
+
+
+def build_swim_lanes(
+    blocks: list[StepBlock],
+) -> dict[str, list[tuple[float, float, StepBlock]]]:
+    """Convert StepBlocks into per-peer (start_s, duration_s, block)
+    tuples for the swim-lane visualization.
+
+    Each peer's events are positioned by cumulative step duration so
+    blocks early in the log appear left, later blocks appear right.
+    The wall-clock-end of the run is max over peers."""
+    # Skip the synthetic step_num=-1 / duration=0 multi-tool flush
+    # entries — those have no wall-clock to plot.
+    plottable = [b for b in blocks if b.step_num > 0 and b.duration_s > 0]
+
+    per_peer: dict[str, list[StepBlock]] = {}
+    for blk in plottable:
+        per_peer.setdefault(blk.agent, []).append(blk)
+
+    lanes: dict[str, list[tuple[float, float, StepBlock]]] = {}
+    for agent, peer_blocks in per_peer.items():
+        # Sort by step number so cumulative time is monotonic.
+        peer_blocks.sort(key=lambda b: (b.step_num, b.log_line))
+        cumulative = 0.0
+        entries: list[tuple[float, float, StepBlock]] = []
+        last_step_seen = 0
+        for blk in peer_blocks:
+            # Detect gaps in step numbering (rare with forward-fill)
+            # and treat them as zero-duration jumps so the cumulative
+            # axis doesn't lie about elapsed time.
+            if blk.step_num > last_step_seen + 1:
+                # gap — keep cumulative as is; the missing step's time
+                # is unknown and we don't synthesize it.
+                pass
+            entries.append((cumulative, blk.duration_s, blk))
+            cumulative += blk.duration_s
+            last_step_seen = blk.step_num
+        lanes[agent] = entries
+    return lanes
+
+
+# ---------------------------------------------------------------------------
 # HTML rendering
 # ---------------------------------------------------------------------------
 
@@ -328,8 +555,93 @@ def _esc(s: str) -> str:
     return html_lib.escape(s, quote=True)
 
 
-def render_html(events: list[Event], summary: RunSummary, source_log: str) -> str:
+def _render_swim_lanes(
+    lanes: dict[str, list[tuple[float, float, StepBlock]]],
+) -> tuple[str, float]:
+    """Build the HTML for the swim-lane panel. Returns (html, total_run_seconds)."""
+    if not lanes:
+        return ('<div class="swim-empty">no step-duration data parsed</div>', 0.0)
+
+    # Compute total wall-clock from max peer cumulative time.
+    total = max(
+        (entries[-1][0] + entries[-1][1]) if entries else 0.0
+        for entries in lanes.values()
+    )
+    total = max(total, 0.1)  # avoid div-by-zero
+
+    # Agents in canonical order so the colors line up with the rest of the page.
+    ordered_agents = [
+        a for a, _ in _AGENT_COLORS if a in lanes and a != "unknown"
+    ]
+    if "unknown" in lanes:
+        ordered_agents.append("unknown")
+    for a in lanes:
+        if a not in ordered_agents:
+            ordered_agents.append(a)
+
+    # Axis ticks at every ~total/6 seconds, rounded.
+    def _tick_marks(total_s: float) -> str:
+        step = max(round(total_s / 6.0), 1)
+        ticks: list[str] = []
+        t = 0
+        while t <= total_s + step - 1:
+            x_pct = min(100.0, 100.0 * t / total_s)
+            ticks.append(
+                f'<div class="lane-tick" style="left:{x_pct:.2f}%">'
+                f'<span class="lane-tick-label">{t}s</span></div>'
+            )
+            t += step
+        return "".join(ticks)
+
+    lane_rows: list[str] = []
+    for agent in ordered_agents:
+        entries = lanes[agent]
+        color = _agent_color(agent)
+        blocks: list[str] = []
+        for start_s, dur_s, blk in entries:
+            left_pct = 100.0 * start_s / total
+            width_pct = max(100.0 * dur_s / total, 0.3)  # min visible width
+            label, icon = _TOOL_LABELS.get(blk.tool, (blk.tool.upper(), "•"))
+            obs_short = blk.observation[:240]
+            if len(blk.observation) > 240:
+                obs_short += "…"
+            tooltip = (
+                f"step {blk.step_num}  ·  {dur_s:.2f}s  ·  {blk.tool}"
+                f"  ·  {blk.attributed_via}\n{obs_short}"
+            )
+            blocks.append(
+                f'<div class="lane-block" style="left:{left_pct:.3f}%; '
+                f'width:{width_pct:.3f}%; --color:{color}" '
+                f'title="{_esc(tooltip)}">'
+                f'<span class="lane-block-icon">{icon}</span></div>'
+            )
+        total_peer_s = entries[-1][0] + entries[-1][1] if entries else 0.0
+        lane_rows.append(
+            f'<div class="lane">'
+            f'<div class="lane-label" style="color:{color}">{_esc(agent)}'
+            f'<span class="lane-summary">{len(entries)} steps · '
+            f'{total_peer_s:.1f}s</span></div>'
+            f'<div class="lane-track">{"".join(blocks)}</div>'
+            f'</div>'
+        )
+
+    return (
+        '<div class="swim-lanes-panel">'
+        '<div class="lane-axis">' + _tick_marks(total) + '</div>'
+        + "".join(lane_rows)
+        + '</div>',
+        total,
+    )
+
+
+def render_html(
+    events: list[Event],
+    summary: RunSummary,
+    lanes: dict[str, list[tuple[float, float, StepBlock]]],
+    source_log: str,
+) -> str:
     agents_in_run = sorted(summary.events_per_agent.keys())
+    swim_lanes_html, run_total_s = _render_swim_lanes(lanes)
 
     # Top stats per agent
     agent_legend_rows = "".join(
@@ -521,6 +833,67 @@ def render_html(events: list[Event], summary: RunSummary, source_log: str) -> st
     white-space: pre-wrap; word-break: break-word;
   }}
   .evt-loc {{ font-size: 10px; color: #555; margin-top: 4px }}
+  /* Swim-lanes panel (parallel-execution view) */
+  .swim-lanes-panel {{
+    margin: 18px 36px 0; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px 14px;
+  }}
+  .swim-lanes-panel::before {{
+    content: "Parallel execution · per-peer swim lanes";
+    display: block; font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.7px;
+    margin-bottom: 12px;
+  }}
+  .lane-axis {{
+    position: relative; height: 16px; margin-left: 110px;
+    margin-bottom: 6px; border-bottom: 1px solid var(--border);
+  }}
+  .lane-tick {{
+    position: absolute; top: 0; height: 100%;
+    border-left: 1px dashed var(--panel-2);
+  }}
+  .lane-tick-label {{
+    position: absolute; top: -2px; left: 4px;
+    font-size: 10px; color: var(--text-dim);
+    font-family: ui-monospace, monospace;
+  }}
+  .lane {{
+    display: flex; align-items: center; gap: 12px;
+    margin: 6px 0;
+  }}
+  .lane-label {{
+    width: 98px; flex-shrink: 0; font-weight: 600;
+    font-size: 13px; display: flex; flex-direction: column;
+    line-height: 1.2;
+  }}
+  .lane-summary {{
+    font-size: 10px; font-weight: 400; color: var(--text-dim);
+    font-family: ui-monospace, monospace; margin-top: 2px;
+  }}
+  .lane-track {{
+    flex: 1; position: relative; height: 26px;
+    background: rgba(255,255,255,.03); border-radius: 4px;
+    overflow: hidden;
+  }}
+  .lane-block {{
+    position: absolute; top: 3px; bottom: 3px;
+    background: var(--color); border-radius: 3px;
+    min-width: 2px; display: flex; align-items: center;
+    justify-content: center; cursor: help;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+    transition: filter 0.15s ease;
+  }}
+  .lane-block:hover {{ filter: brightness(1.25) }}
+  .lane-block-icon {{
+    font-size: 10px; line-height: 1; opacity: 0.92;
+    pointer-events: none;
+  }}
+  .swim-empty {{
+    margin: 18px 36px 0; padding: 14px 18px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 12px;
+    color: var(--text-dim); font-size: 12px;
+  }}
   /* Filter controls */
   .filters {{
     margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
@@ -537,7 +910,7 @@ def render_html(events: list[Event], summary: RunSummary, source_log: str) -> st
 <header>
   <h1>Networked run · blackboard activity</h1>
   <div class="subtitle">
-    Source: <code>{_esc(source_log)}</code> · {summary.total_events} blackboard events recorded
+    Source: <code>{_esc(source_log)}</code> · {summary.total_events} blackboard events recorded · {run_total_s:.1f}s wall-clock
   </div>
   <div class="meta-row">
     {wandb_link}
@@ -545,6 +918,8 @@ def render_html(events: list[Event], summary: RunSummary, source_log: str) -> st
     {agent_legend_rows}
   </div>
 </header>
+
+{swim_lanes_html}
 
 <main>
   <aside>
@@ -647,7 +1022,11 @@ def main() -> int:
         return 2
 
     events, summary = parse_log(log_path)
-    html = render_html(events, summary, source_log=os.path.basename(log_path))
+    step_blocks = parse_step_blocks(log_path)
+    lanes = build_swim_lanes(step_blocks)
+    html = render_html(
+        events, summary, lanes, source_log=os.path.basename(log_path)
+    )
 
     if args.output:
         out_path = args.output
