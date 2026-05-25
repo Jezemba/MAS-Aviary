@@ -1,5 +1,90 @@
 ## [Unreleased]
 
+### 2026-05-25 (later still) — Phase L day-2 part 3: skill-injected coupling map produces meaningful behavior shift
+
+After landing the SkillLoader wiring (commit 1ba6c0f), launched a
+spot-check pipeline run to observe whether the new
+`data_flow.md`-injected coupling appendix shifts the orchestrator's
+behavior. Not measuring "does it put aviary last" (that would be a
+recipe check, contradicting the no-process design intent) — just
+observing what changes.
+
+  wandb run:                       https://wandb.ai/jessicae/mas-aviary-stat/runs/fup5hh0h
+  fuel_burned_kg:                  13,206.34
+  VERDICT:                         (final not parsed; constraint
+                                   evaluated against fuel <= 15000)
+  total disciplinary tool calls:   18
+  UPSTREAM_ERROR cascades:         0 (bug-1 fix holds)
+  set_aircraft_parameters calls:   0 (key behavior shift)
+
+**Run-over-run comparison across the four orchestrated runs:**
+
+| Run | wandb | fuel_kg | mission | tool calls |
+|---|---|---|---|---|
+| v2 (post-context, pre-bug-fix) | bpkm3zm4 | 12,518.16 | 1500 nmi / 162 PAX | 90+ |
+| v3 (post-bug-fix, no skill) | krlbsfgx | 7,607.88 | 1500 nmi / 162 PAX | ~50 |
+| **v4 (post-skill injection)** | **fup5hh0h** | **13,206.34** | **2500 nmi / 239 PAX** | **18** |
+| F25 spec block fuel (Table 3) | — | 12,100 | 2500 / 239 | — |
+
+**v4 delta from F25 spec block fuel: +9.1%** — first orchestrated
+run to evaluate the F25 *design* mission, not aviary's default
+mission. The +9.1% is sensible given the underlying CPACS fixture
+is D150-class, not actually F25-class. (For context, sequential
+baseline 12,755.86 kg was on the 1500-nmi/162-PAX mission so it is
+not directly comparable to v4.)
+
+**What the skill content drove without prescribing:**
+
+1. **Mission spec shift.** v2/v3 used aviary's default mission
+   (1500 nmi, 162 PAX, FL350). v4 used the DLR-F25 design mission
+   (2500 nmi, 239 PAX, FL330) which is exactly what the Eq. 3
+   formulation in `data_flow.md` specifies. The orchestrator
+   picked this up from the skill appendix — no prompt change made
+   it happen.
+2. **Zero parameter thrashing.** v2 made 12 set_aircraft_parameters
+   sweeps before run_simulation; v4 made 0. The agent stopped
+   tweaking knobs and ran a clean mission analysis with the
+   baseline geometry. Tool call count collapsed from 90 → 50 → 18
+   across the three runs.
+3. **Different team creation order observed during monitoring.**
+   v3 created mission_architect first; v4 created
+   structures_analyst / propulsion_analyst before mission. The
+   skill content's emphasis on producer-then-consumer ordering
+   appears to have influenced this without explicit
+   instruction. (Note: the actual execution order under
+   setup_only's "creation-order" semantics still had mission tools
+   firing before estimate_mass / SU2; needs separate investigation
+   if we want literal producer-before-consumer execution.)
+
+**What the skill content did NOT achieve — and that's actually
+revealing.**
+
+With zero `set_aircraft_parameters` calls in v4, the data-plane
+middleware had nothing to inject into. The Phase H/K couplings
+documented in the skill were correctly described — and correctly
+inactive because the prerequisite tool call was never made. The
+agent essentially ran a single-MCP aviary mission on the F25 spec
+with the baseline geometry defaults. A truly coupled MDO answer
+would require either:
+- The agent re-calls `set_aircraft_parameters` after the upstream
+  disciplines run, OR
+- The execution layer enforces a topo-sorted producer-then-consumer
+  worker ordering, OR
+- Active mode where iter 2 has the data store populated for
+  injection on the second pass.
+
+This isn't a regression to fix today — it's documentation of how
+the orchestrator naturally interprets a well-described problem.
+Skill-driven F25-spec mission setup with zero parameter sweep is a
+defensible delegation pattern; it just doesn't exercise coupling
+unless we add another mechanism on top.
+
+**No new tests added** for v4 (purely an observation run). Unit
+suite remains at 1,354/1,354. The cheap live wiring test
+(`tests/test_phase_l_mdo_orchestrated_wiring.py`) already covers
+the regression guard that the orchestrator delegates to MDO
+discipline roles after the prompt rewrite.
+
 ### 2026-05-25 (later) — Phase L day-2 part 2: three bugs surfaced by bpkm3zm4 run, fixed and verified
 
 Investigating yesterday's wandb bpkm3zm4 pipeline run (which
