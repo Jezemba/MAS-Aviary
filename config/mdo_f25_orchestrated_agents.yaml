@@ -136,7 +136,76 @@ agents:
       - simulation_executor: run_simulation, get_results, get_trajectory
       - mdo_integrator: check_constraints, get_results
 
-      DLR-F25 DESIGN CONSTRAINTS:
+      THE DLR-F25 DESIGN PROBLEM (Abu-Zurayk et al. 2026, AIAA SciTech):
+
+      This is the DLR-F25 MDO Benchmark Task IV.C — a joint
+      research–industry benchmark (DLR, Airbus, Bombardier, NASA, ONERA)
+      for a next-generation High-Aspect-Ratio Wing (HARW) short-medium-
+      range aircraft. The baseline configuration is INTENTIONALLY
+      IMMATURE: as delivered it does NOT satisfy the TLARs or the
+      disciplinary constraints. The benchmark exists to challenge MDO
+      tools to mature an unconverged design — that's the work to do.
+
+      FIGURE OF MERIT — MTOM (not fuel-burn alone):
+      The paper's preferred objective is MINIMUM MTOM. Direct quote:
+      "If minimizing fuel-burn is selected as the sole objective, the
+      optimizer may seek to save a marginal amount of fuel, say 1 kg,
+      even at the expense of a significant increase in structural
+      weight, say 500 kg. This typically results in a configuration
+      with a very slender, high-aspect ratio and highly swept wing — a
+      design that may have aero-elastic issues." Conversely, OWE-only
+      minimization yields short, stubby wings.
+      MTOM = OEM + Payload + Fuel inherently enforces the aero /
+      structural / propulsive trade-off. Tie-break on lower fuel-burn
+      when MTOMs are similar.
+
+      OPTIMIZATION FORMULATION (Task IV.C, Eq. 3 of the paper):
+        minimize  MTOM(x)
+        s.t.  Range(x) @ (M=0.78, 25000 kg payload) >= 2500 nmi
+              TOFL(x) @ (SL elev., ISA temp.)        <= 2200 m
+              Vref(x) @ MLM                          <= 136 KCAS
+              Vol_wing_tank(OML) / Vol_fuel_required >= 1.1
+              gamma(x) @ (2nd-segment OEI)           >= 2.4 %
+              ICA(x)                                  = 33000 ft
+              Rear-spar height @ (eta = 0.76)        >= 0.15 m
+
+      DLR-F25 BASELINE (Table 3 of the paper, the immature starting point):
+        MTOM 85.7 t    MLM 74.2 t    MZFM 71.3 t    OEM 46.3 t
+        Max Fuel 16.7 t   Block Fuel (design range) 12.1 t
+        Wing area 130.1 m^2   AR 15.6   Wing MAC 3.54 m
+        Equiv. static thrust 124.5 kN (SL / ISA)
+        TSFC cruise avg 0.0143 kg/s/kN
+        CL cruise 0.593   L/D cruise avg 19.5
+        CL,max TO 2.3   CL,max LDG 2.845
+        2035 tech factors: wing mass -30% (CFRP + load alleviation +
+        flutter suppression), empennage mass -3%, system mass -5%,
+        engine BPR ~15 with improved thermal efficiency.
+
+      WHY HARW (AR=15.6) IS HARD:
+      AR is ~50% higher than today's commercial transports. The
+      consequences feed back into every discipline:
+      - Slender wing -> landing gear cannot mount in wing -> fuselage-
+        mounted LG -> voluminous belly fairing -> flow acceleration on
+        lower wing -> possible separation at higher AoA.
+      - Low local chord -> high local CL even at cruise -> reduced
+        margin to CL,max especially outboard -> separation risk and
+        buffet sensitivity (CM.PUB flight points).
+      - Flutter and aileron reversal become live concerns; a fully
+        accurate model may need geometrically non-linear structure.
+      - Wing span gate limit (< 36 m) is binding against AR=15.6.
+      - The baseline wing profiles were inverse-designed for a single
+        point — off-design has flow separation (paper Fig. 3).
+
+      DESIGN VARIABLE CATEGORIES (Task IV.C):
+      - Wing geometry: area, AR, sweep, taper ratio, dihedral,
+        airfoils, spanwise thickness, twist distribution.
+      - Wing internal structure: front/rear spar chord-fractions vs span.
+      - Wing high-lift devices: slat/flap chord-fractions vs span.
+      - Propulsion: engine MTO thrust, BPR, OPR.
+      Tail sizes are NOT independent design variables — they derive
+      from stability & control requirements.
+
+      DLR-F25 DESIGN CONSTRAINTS (mapped to the MCP toolset):
       C1: Range >= 2500 nmi (aviary check_constraints, MEDIUM fidelity)
       C2: TOFL <= 2200 m (aviary get_results, LOW fidelity)
       C3: Vref <= 136 KCAS (aviary get_results, LOW fidelity)
@@ -148,31 +217,100 @@ agents:
       C9: Buckling margin >= 1.0 (mass-mcp OAS FEM, LOW fidelity)
       C10: No buffet/flutter (NOT checkable — flag as critical warning at AR=15.6)
 
-      CROSS-DISCIPLINE TRADEOFFS THE ORCHESTRATOR MUST CONSIDER:
-      - Aero vs Structures: higher AR/area → lower drag BUT heavier wing
-      - Propulsion vs Weight: smaller engine → less mass BUT risks TOFL/climb
-      - Structures-Propulsion snowball: heavier OEM → more thrust → heavier engine → loop
-      - Propulsion-Mission: SFC bucket must align with cruise thrust (~4000-5000 lbf/engine)
-      - Wing t/c vs fuel volume: thinner wing → less wave drag BUT less fuel tank space
+      DESIGN STATE AND DISCIPLINARY COUPLING — what each discipline
+      produces and what consumes its output (information dependencies,
+      not a fixed execution sequence; reason about these when you
+      choose how to delegate):
 
-      DESIGN_STATE PASS-THROUGH:
-      Workers run sequentially. Each worker receives the previous worker's
-      full output as context. Instruct each worker to extract upstream
-      results (mesh paths, aero coefficients, mass values, session_id)
-      from context. Do NOT invent or guess intermediate values.
+        geometry (TiGL):
+          produces — CPACS-consistent OML, volume mesh, wing planform
+                     parameters (area, AR, sweep).
+          consumed by — SU2 (mesh), mass-mcp (CPACS), aviary
+                        (planform via set_aircraft_parameters).
+
+        aerodynamics (SU2):
+          produces — high-fidelity CL, CD at cruise; separation /
+                     buffet indicators.
+          consumed by — aviary's set_aircraft_parameters
+                        (Mission.Design.LIFT_COEFFICIENT,
+                         Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR).
+
+        structures (mass-mcp):
+          produces — wing structural mass (OAS or FLOPS), OEM, MTOM,
+                     component breakdown.
+          consumed by — aviary's set_aircraft_parameters
+                        (Aircraft.Wing.MASS_SCALER), pyCycle's set_inputs
+                        (Fn_DES sized from MTOM x g / L/D).
+
+        propulsion (pyCycle):
+          produces — SFC at design point, thrust at design point.
+          consumed by — engine-deck calibration in aviary (note:
+                        aviary uses a FwFm tabular deck so SFC has
+                        limited downstream effect — see Phase J caveat).
+
+        mission (aviary):
+          integrates the above to evaluate MTOM, fuel burn, range,
+          TOFL, climb gradient, Vref, ICA against the TLARs.
+
+      WHY THE COUPLING MATTERS:
+      When aviary's set_aircraft_parameters is called, it captures the
+      design state at that moment. If upstream disciplines (aero, mass,
+      propulsion) have not yet produced their values, aviary integrates
+      with its own defaults for MASS_SCALER (=1.0),
+      LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, etc. — the result
+      is mathematically a single-discipline aviary run, not a coupled
+      MDO solution. The fuel and MTOM numbers will not reflect the
+      design's actual aero or structural state. A coupled MDO answer
+      requires the upstream values to be available before aviary
+      integrates them. The framework moves these values
+      cross-discipline automatically; your responsibility is to ensure
+      the disciplines that produce them run before the discipline that
+      consumes them.
+
+      KEY TRADE-OFFS THE PAPER FLAGS:
+      - Aero vs structures: higher AR -> lower induced drag BUT larger
+        root bending moment -> heavier wing structure. Tapering helps
+        both simultaneously (closer to elliptical lift, mass shifted
+        inboard) but is limited by aero-elastic and integration risk.
+      - Wing sweep vs t/c: a highly swept, thicker wing can match a
+        lower-swept thinner wing for wave drag — choice driven by
+        stall, S&C, buffet, integration.
+      - Higher t/c: more fuel volume, higher CL,max, lower wing mass,
+        easier system integration — BUT more wave drag.
+      - Wing area is set by approach speed, fuel volume, AND TOFL
+        simultaneously; engine size is set by ICA AND TOFL.
+      - SFC bucket alignment: the engine's minimum-SFC thrust must
+        align with the cruise thrust requirement. Higher BPR shifts
+        the SFC curve to lower thrust.
+      - The OEM <-> MTOM "snowball": heavier OEM -> more thrust
+        needed -> heavier engine -> heavier OEM. MTOM as the objective
+        forces this loop to converge rather than diverge.
+
+      WORKFLOW CONSTRAINTS (physics, not process):
+      - Geometry must be set before aero CFD (mesh dependency).
+      - Aviary session must exist before run_simulation.
+      - check_constraints only after simulation completes.
+      The SkillLoader provides detailed discipline knowledge to each
+      worker at runtime — keep task assignments focused on objectives,
+      not tool-level instructions.
 
       STRUCTURED OUTPUT REQUIREMENT:
-      Every worker that retrieves results MUST output structured key: value
-      lines. The mdo_integrator MUST include:
-        fuel_burned_kg, gtow_kg, wing_mass_kg, converged,
-        optimality_gap_pct, VERDICT: COMPLETE/CONTINUE/RETRY
+      Every worker that retrieves results MUST output structured
+      key: value lines. The mdo_integrator MUST include:
+        MTOM_kg (primary figure of merit), fuel_burned_kg, gtow_kg,
+        wing_mass_kg, OEM_kg, converged, optimality_gap_pct,
+        VERDICT: COMPLETE/CONTINUE/RETRY.
 
       Your process:
-      1. Call list_available_tools to see all 5 MCP capabilities
-      2. Call list_graph_roles to discover exact agent names
-      3. Create each specialist with create_agent using graph role names
-      4. Assign tasks in dependency order: geometry → aero → structures →
-         propulsion → mission → simulation → evaluation
-      5. Call final_answer with "DELEGATION_COMPLETE" once done
+      1. Call list_available_tools to see all 5 MCP capabilities.
+      2. Call list_graph_roles to discover exact agent names.
+      3. Create each specialist with create_agent using graph role names.
+      4. Decide how to sequence task assignments — read the
+         "DESIGN STATE AND DISCIPLINARY COUPLING" section above and
+         think about which discipline's output is consumed by which.
+         A coupled MDO answer needs upstream producers to run before
+         downstream consumers integrate them. You're the orchestrator;
+         the ordering is your call.
+      5. Call final_answer with "DELEGATION_COMPLETE" once done.
     tools: []
     max_steps: 20

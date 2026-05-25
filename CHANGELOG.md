@@ -1,5 +1,269 @@
 ## [Unreleased]
 
+### 2026-05-25 — Phase L day-2: orchestrator gets DLR-F25 design context, fuel lands within 2% of sequential baseline
+
+Day 2 of Phase L. Yesterday's diagnosis was: the orchestrator's
+worker-creation order bypassed the data-plane middleware (Phase
+H/K injections), producing fuel = 7,644 kg vs the sequential
+baseline 12,755.86 kg (a 40% delta). The user's chosen
+intervention was to **add design-problem context to the
+orchestrator's system prompt** — explicitly **not** to prescribe
+the sequential pipeline's process (geometry → aero → mass →
+propulsion → aviary). The orchestrator should pick a sensible
+ordering on its own once it understands the design problem deeply
+enough.
+
+**Source for the new context.** The Abu-Zurayk et al. 2026 AIAA
+SciTech paper "Establishing a Joint Research-Industry MDO
+Benchmark Based on the DLR-F25 Aircraft Configuration" (DLR,
+Airbus, Bombardier, NASA, ONERA). User dropped fresh copies of
+the paper at `Avion/DesignContext/` in PDF and RTF.
+
+**Prompt enrichment.** `config/mdo_f25_orchestrated_agents.yaml`
+grew from ~7,500 → 14,932 characters. New sections:
+- THE DLR-F25 DESIGN PROBLEM — benchmark is intentionally
+  immature; baseline does NOT meet TLARs; the orchestrator's job
+  is to mature it.
+- FIGURE OF MERIT — MTOM (not fuel-burn alone), with the paper's
+  direct quote on why fuel-only minimization drives toward slender
+  HARW with aero-elastic issues; MTOM enforces the aero/structural
+  trade-off; tie-break on lower fuel.
+- OPTIMIZATION FORMULATION — Eq. 3 of the paper with all 7
+  constraints (Range, TOFL, Vref, Vol_tank ratio, OEI climb,
+  ICA, rear spar height).
+- DLR-F25 BASELINE — Table 3 numbers (MTOM 85.7 t, OEM 46.3 t,
+  block fuel 12.1 t, wing area 130.1 m², AR 15.6, L/D 19.5,
+  CL cruise 0.593, etc.) + 2035 tech factors.
+- WHY HARW (AR=15.6) IS HARD — slender wing → fuselage-mounted
+  LG → flow acceleration; low local chord → high local CL at
+  cruise; flutter + aileron reversal concerns; gate limit < 36 m
+  is binding; baseline profiles are single-point designs.
+- DESIGN STATE AND DISCIPLINARY COUPLING — information
+  dependencies (what each discipline produces and what consumes
+  it) WITHOUT prescribing execution sequence.
+- KEY TRADE-OFFS THE PAPER FLAGS — the paper's specific examples
+  (AR vs root bending, sweep vs t/c, t/c vs fuel vs wave drag,
+  SFC-bucket alignment, OEM↔MTOM snowball).
+
+**Removed:** the explicit recipe `Assign tasks in dependency
+order: geometry → aero → structures → propulsion → mission →
+simulation → evaluation` that was prescribing the sequential
+pipeline's order. Replaced with: "Decide how to sequence task
+assignments — read the DESIGN STATE AND DISCIPLINARY COUPLING
+section above. A coupled MDO answer needs upstream producers to
+run before downstream consumers integrate them. You're the
+orchestrator; the ordering is your call."
+
+**STRUCTURED OUTPUT REQUIREMENT now leads with MTOM_kg** (matching
+the paper's figure of merit) and adds OEM_kg, while keeping
+fuel_burned_kg and the existing VERDICT shape.
+
+**Cheap test reused.**
+`tests/test_phase_l_mdo_orchestrated_wiring.py` passed against
+the enriched prompt — 4:52 wall (vs 2:01 yesterday; longer
+because the prompt is ~2× larger; cost ~$0.20-0.30). Confirms
+the orchestrator still delegates to recognized MDO discipline
+roles in setup_only mode.
+
+**Full pipeline run.** Launched
+`mdo_f25_orchestrated_iterative_feedback` with the enriched
+prompt + the `setup_only` override added yesterday (one
+delegation cycle, no active-mode re-invocation). Ran to clean
+exit.
+
+  wandb run:    https://wandb.ai/jessicae/mas-aviary-stat/runs/bpkm3zm4
+  fuel_burned_kg = 12,518.16
+  MTOM_kg (= gtow_kg) = 80,083.95
+  VERDICT = COMPLETE
+  vs sequential baseline (wandb iepdeu70): fuel = 12,755.86 kg
+  ⇒ -1.9% (within the ~5% tolerance the handoff said to expect)
+  vs yesterday's run (killed at iter 2): fuel = 7,644.01 kg
+  ⇒ +63.7% — i.e. yesterday's was wildly low because of the
+     uncoupled aviary defaults.
+
+**What the prompt enrichment actually changed.**
+
+The orchestrator's mission_architect now starts parameter
+exploration near the F25 baseline — `Aircraft.Wing.ASPECT_RATIO`
+swept 15.0 → 14.5 → 13.5 → 11.5 → 14.5 (instead of yesterday's
+12.4 → 13.5 → 14.5 → 11.0 ending in the "reliable range" 11.0).
+Wing area swept 130 → 135 (close to baseline 130.1) instead of
+yesterday's 126.3 → 120 → 118. The orchestrator now treats
+AR=15.6 as the F25 design intent rather than running away from
+the AR > 12 reliability warning. That single shift is what moved
+fuel from 7,644 kg → 12,518 kg.
+
+**What still doesn't work — the coupling is still bypassed.**
+
+Disciplinary call order observed in the log:
+
+  positions 1-19:  aviary work (configure_mission, set_aircraft_parameters
+                   x ~12 sweeps, run_simulation, get_results,
+                   get_trajectory, check_constraints)
+  position 20+:    open_cpacs → generate_volume_mesh → SU2 attempts
+                   (SU2 errored out; mass/propulsion ran late)
+
+Reason: in `setup_only` mode, the placeholder executor runs
+workers **in agent-creation order**, not in
+dependency-resolution order. The orchestrator created
+mission_architect first (creation #1), so aviary integrated
+before any upstream discipline produced values for the
+data-plane middleware to inject. The 12,518 kg result is good
+**only because the orchestrator's chosen aircraft parameters
+happened to be F25-class**, not because the middleware
+coupling fired.
+
+Evidence the middleware did NOT couple this run:
+- No `Aircraft.Wing.MASS_SCALER` adjustment from estimate_mass
+  (no `mWing_kg` was in data_store when set_aircraft_parameters
+  ran — mass-mcp had not yet executed)
+- No `Mission.Design.LIFT_COEFFICIENT` /
+  `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` injection from SU2
+  (SU2 ran later and errored anyway due to upstream geometry
+  failure)
+- aviary used default `MASS_SCALER = 1.0` instead of the
+  Phase K-style 1.28 we'd expect for this geometry.
+
+**Net assessment.** The prompt enrichment achieved most of what
+the user asked for at the design-context level: the orchestrator
+now picks F25-class parameters on its own without being told the
+process. The remaining bug is at the **framework execution
+layer**, not the prompt layer — `setup_only` runs workers in
+creation order, and the orchestrator's preferred creation order
+(top-level integrator first) is the wrong order for the
+data-plane middleware to do its job.
+
+**Options to address the coupling, day-3+:**
+
+1. Topologically sort workers in `_setup_only_execution` based
+   on tool dependencies (e.g., aviary's set_aircraft_parameters
+   runs after estimate_mass, after run_su2_solver). Framework-
+   level fix in `src/coordination/strategies/orchestrated.py`.
+   Keeps the orchestrator's prompt clean of execution-order
+   guidance.
+
+2. Revert the `setup_only` override and rely on active-mode
+   iteration. Iter 1 captures upstream values; iter 2 injects
+   them. ~25-30 min wall-clock, ~$0.50-0.80 per run.
+
+3. Tell the orchestrator in the prompt to "create agents in the
+   order you want them to execute." This crosses into execution
+   semantics — debatable whether it's "process" or just
+   framework awareness. Borderline against the user's no-process
+   constraint.
+
+**Unit suite status.** 1,348/1,348 still pass with the enriched
+YAML.
+
+**Files touched today.**
+- `config/mdo_f25_orchestrated_agents.yaml` — design-problem
+  context added; sequential recipe removed.
+- (No code changes today — yesterday's `setup_only` wiring in
+  `src/runners/batch_runner.py` remains in place.)
+
+### 2026-05-24 — Phase L day-1: orchestrated combo wired, run reveals ordering bug
+
+Phase L scope (per `.llm/handoff_2026-05-23_phase_L_coordination_combinations.md`)
+is to build out the MDO-F25 coordination combinations beyond
+`mdo_f25_sequential_iterative_feedback`. Day 1 wired the **orchestrated**
+variant and exercised it end-to-end. Result: wiring is correct at the
+framework layer, but a real coupling bug surfaced — documented below
+for tomorrow's session.
+
+**Wiring change.** Added two entries in `src/runners/batch_runner.py`:
+- `_MDO_F25_STRATEGY_CONFIGS["orchestrated"] = ("config/mdo_f25_orchestrated_agents.yaml", "config/orchestrated.yaml")`
+- New `CombinationConfig("mdo_f25_orchestrated_iterative_feedback", "orchestrated", "iterative_feedback", strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}})`
+
+The `setup_only` lifecycle override is **interim**, see "Known issue"
+below for context.
+
+**Cheap regression test added.** `tests/test_phase_l_mdo_orchestrated_wiring.py`
+(marked `live_mcp_llm`, ~$0.10-0.20, ~2 min wall) drives a live Claude
+orchestrator through the combo in `setup_only` mode and asserts:
+1. Combo resolves to the MDO-F25 orchestrator YAML (not aviary-only).
+2. Orchestrator's system prompt carries `TiGL`, `SU2`, `mass-mcp`,
+   `pyCycle`, `DLR-F25` markers.
+3. Orchestrator calls `list_available_tools` → `create_agent` →
+   `assign_task` and terminates cleanly.
+4. At least one created worker uses a recognized MDO discipline role
+   (geometry_engineer, aerodynamics_analyst, structures_analyst,
+   propulsion_analyst, mission_architect, simulation_executor,
+   mdo_integrator).
+5. No real disciplinary tools fire (no SU2 solve, no aviary
+   `run_simulation`, no `estimate_mass`) — proves setup_only is honored.
+
+Passed on 2026-05-24.
+
+**Full pipeline run attempt.** Launched
+`mdo_f25_orchestrated_iterative_feedback` (BEFORE the setup_only
+override was added) with the default `active` lifecycle. Ran 12:17 of
+wall-clock before being killed mid-way through iter 2 by user
+intervention.
+
+Iter 1 produced **fuel_burned_kg = 7,644.01**, **gtow_kg = 69,855**,
+`cruise_mach_avg = 0.72` (vs configured 0.785),
+`wing_mass_method_used = "oas"`,
+`mWing_kg = 11,420 kg` (OAS), `mTOM_kg = 78,126`, agent
+`VERDICT: CONTINUE` with `optimality_gap_pct: -27%`.
+
+**vs sequential baseline (Run #20, wandb `iepdeu70`)**: fuel 12,755.86
+kg on the same 1500 nmi / 162 pax / Mach 0.785 / FL350 mission. A 40%
+fuel reduction is wildly outside the ~5% tolerance the handoff said to
+expect from a coordination-strategy swap. Diagnosis below.
+
+**Known issue: orchestrator call ordering bypasses Phase H + Phase K
+middleware coupling.**
+
+The orchestrator chose to delegate tasks in this order in iter 1:
+1. TiGL geometry inspection (lines 622-704 of `/tmp/pipeline_mdo_f25_orchestrated.log`)
+2. aviary `set_aircraft_parameters` × 3 (lines 1006, 1039, 1066)
+3. aviary `run_simulation` (line 1222) ← optimizer ran
+4. aviary `get_results` (line 1234) ← fuel = 7,644 captured
+5. mass `estimate_mass` (line 1461) ← mWing captured, too late
+6. pyCycle `run_cycle` (line 2037) ← SFC captured, too late
+7. SU2 setup + solve (lines 2255+) ← CL/CD captured, too late
+
+The data-plane middleware injects captured values
+(`Aircraft.Wing.MASS_SCALER` from Phase K-A, `LIFT_COEFFICIENT` +
+`SUBSONIC_DRAG_COEFF_FACTOR` from Phase H) on the **next**
+`set_aircraft_parameters` call. The orchestrated agent in iter 1 ran
+aviary BEFORE the upstream disciplines, so the middleware captured
+values into the data_store but never injected them — there was no
+subsequent `set_aircraft_parameters` call inside iter 1. The 7,644 kg
+result is effectively aviary single-MCP with default
+`MASS_SCALER = 1.0`, default `LIFT_COEFFICIENT`, default
+`SUBSONIC_DRAG_COEFF_FACTOR`. Not a coupled MDO solution.
+
+Iter 2 (killed mid-way) **would have** injected the captured values on
+its own `set_aircraft_parameters` call — that's why the default
+`lifecycle_mode: "active"` setting recovers coupling on the second
+pass. But active mode means the orchestrator rebuilds the 7-agent team
+and re-delegates everything from scratch each iteration: ~25-30 min
+wall-clock per run instead of the sequential combo's ~12-15.
+
+**Interim wiring (added today).** The combo now passes
+`strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}}`,
+which caps execution at one delegation cycle. This is a **temporary
+choice** — it gives us fast (single-pass) runs but **locks in the
+un-coupled result** until the ordering issue is resolved. The setup_only
+override needs to be revisited tomorrow.
+
+**Tomorrow's plan (Phase L day-2).** Add **more context about the
+DLR-F25 design problem** to the orchestrator system prompt in
+`config/mdo_f25_orchestrated_agents.yaml` so it picks sensible
+ordering on its own — without falling back to baking-in the sequential
+pipeline's explicit stage sequence. User's intent: keep the
+orchestrator's free-form delegation pattern intact; the orchestrator
+should *understand the physics dependencies well enough* to delegate in
+a coupled-injection-friendly order without being told the recipe.
+
+Once iter-1 ordering is correct, revisit whether `setup_only` is still
+needed (probably revert it so iterative_feedback handler can drive
+retries on validation warnings the way it does in sequential).
+
+**Unit suite status.** 1,348/1,348 pass both before and after the
+wiring change.
+
 ### 2026-05-23 — Known limitation: middleware uses FLOPS primary even when out-of-range
 
 Surfaced while reviewing the full-pipeline run on D150 (wandb

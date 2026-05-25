@@ -52,6 +52,7 @@ _STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
 # MDO F25 uses different config files from the aviary-only pipeline.
 _MDO_F25_STRATEGY_CONFIGS: dict[str, tuple[str, str]] = {
     "sequential": ("config/mdo_f25_sequential_agents.yaml", "config/aviary_mdo_f25_sequential.yaml"),
+    "orchestrated": ("config/mdo_f25_orchestrated_agents.yaml", "config/orchestrated.yaml"),
 }
 
 
@@ -152,6 +153,19 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         "sequential",
         "iterative_feedback",
         strategy_config={"pipeline_template": "mdo_f25"},
+    ),
+    CombinationConfig(
+        "mdo_f25_orchestrated_iterative_feedback",
+        "orchestrated",
+        "iterative_feedback",
+        # setup_only caps the orchestrator at ONE delegation cycle — workers
+        # run their assigned tasks once, then the strategy terminates. The
+        # default "active" mode re-invokes the orchestrator after every worker
+        # pass, rebuilding the 7-agent team and tripling wall-clock cost for
+        # the F25 pipeline. set_aircraft_parameters still runs inline
+        # validation per-call, so the per-worker retry-on-warnings behavior
+        # the iterative_feedback handler provides is preserved.
+        strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
     ),
 ]
 
