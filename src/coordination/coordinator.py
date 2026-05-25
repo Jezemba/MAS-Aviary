@@ -319,6 +319,17 @@ class Coordinator:
                 self._log_error(action)
                 break
 
+            # parallel_run actions name a LIST of peers in metadata
+            # instead of a single agent_name; the agent_name field is
+            # None. Route directly to the parallel executor.
+            if action.action_type == "parallel_run":
+                messages = self._execute_parallel_run(action)
+                for message in messages:
+                    self.history.append(message)
+                    if self.logger is not None:
+                        self.logger.log_turn(message)
+                continue
+
             if action.agent_name not in self.agents:
                 self._log_error(
                     CoordinationAction(
@@ -472,6 +483,74 @@ class Coordinator:
                     metadata=msg_metadata,
                 )
             ]
+
+    def _execute_parallel_run(self, action: CoordinationAction) -> list[AgentMessage]:
+        """Launch every peer named in action.metadata['peers'] in its own
+        thread, run their ReAct loops in parallel, and collect one
+        AgentMessage per peer. Each peer shares the same task input but
+        operates independently via the thread-safe blackboard.
+
+        Used by NetworkedStrategy when selection_mode is
+        "concurrent_blackboard" (CodeCRDT pattern, arxiv 2510.18893).
+        Bypasses the execution_handler — concurrency at the peer level
+        replaces the handler's per-peer retry loop. If a peer needs to
+        retry within its own ReAct loop, that's its choice via the
+        agent_max_steps budget.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        peer_names = (action.metadata or {}).get("peers", [])
+        if not peer_names:
+            return []
+
+        task = action.input_context
+
+        def _run_one_peer(peer_name: str) -> AgentMessage:
+            agent = self.agents.get(peer_name)
+            self._turn_counter += 1  # rough turn ordering — threads contend
+            turn = self._turn_counter
+            start = time.monotonic()
+            if agent is None:
+                return AgentMessage(
+                    agent_name=peer_name,
+                    content="",
+                    turn_number=turn,
+                    timestamp=time.time(),
+                    duration_seconds=time.monotonic() - start,
+                    error=f"Agent {peer_name!r} not found in coordinator.agents",
+                    metadata={"parallel_cycle": (action.metadata or {}).get("cycle")},
+                )
+            try:
+                result = agent.run(task)
+                content = str(result) if result is not None else ""
+                return AgentMessage(
+                    agent_name=peer_name,
+                    content=content,
+                    turn_number=turn,
+                    timestamp=time.time(),
+                    duration_seconds=time.monotonic() - start,
+                    tool_calls=_extract_tool_calls(agent),
+                    metadata={"parallel_cycle": (action.metadata or {}).get("cycle")},
+                )
+            except Exception as e:
+                return AgentMessage(
+                    agent_name=peer_name,
+                    content="",
+                    turn_number=turn,
+                    timestamp=time.time(),
+                    duration_seconds=time.monotonic() - start,
+                    tool_calls=_extract_tool_calls(agent),
+                    error=f"{type(e).__name__}: {e}",
+                    metadata={"parallel_cycle": (action.metadata or {}).get("cycle")},
+                )
+
+        # ThreadPoolExecutor.map preserves submit order; using submit + as_completed
+        # would give completion order. Either works — peers in this prototype
+        # complete in roughly similar times so we use map for determinism.
+        with ThreadPoolExecutor(max_workers=len(peer_names)) as ex:
+            messages = list(ex.map(_run_one_peer, peer_names))
+
+        return messages
 
     def _log_error(self, action: CoordinationAction) -> None:
         """Log a coordination-level error as an AgentMessage."""

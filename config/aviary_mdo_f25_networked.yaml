@@ -32,17 +32,53 @@ networked:
   # knowledge in their peer_template. Phase gating would defeat the
   # purpose of the strategy.
 
-  # selection_mode: "volunteer" enables parallel peer voting per turn.
-  # Each strategy turn the strategy queries every idle peer (not the
-  # just-acted one) with a short "Should YOU act next?" prompt + the
-  # current blackboard summary. Each peer replies VOTE: YES|NO + a
-  # SCORE; the strongest YES is invoked. This matches the academic
-  # blackboard MAS pattern (arxiv 2510.01285 / 2507.01701) and AutoGen's
-  # GroupChatManager idea of picking the next speaker based on the
-  # conversation rather than fixed rotation. Default is "round_robin"
-  # to keep existing aviary-only combos unaffected; opt in here for the
-  # MDO F25 task. See src/coordination/strategies/networked.py.
-  selection_mode: "volunteer"
+  # selection_mode controls how the strategy picks peers each turn:
+  #   "round_robin" — fixed rotation (default; used by aviary-only combos)
+  #   "volunteer" — parallel "want to act next?" votes per turn
+  #   "concurrent_blackboard" — CodeCRDT pattern: all peers run in
+  #     parallel threads each turn, race to claim TODOs from the
+  #     shared blackboard. (arxiv 2510.18893)
+  #
+  # We use concurrent_blackboard here so the F25 MDO task gets real
+  # peer collaboration: 3 peers see all 54 MCP tools + the 7 discipline
+  # TODOs below; each peer's ReAct loop scans the board, claims a
+  # pending TODO, executes it via the appropriate MCP tools, and posts
+  # the result. The threading.Lock on Blackboard.claim_todo gives
+  # at-most-one-winner safety so no discipline is double-executed.
+  selection_mode: "concurrent_blackboard"
+
+  # Maximum parallel_run cycles. Each cycle runs ALL peers concurrently
+  # for one ReAct budget. If all TODOs are done after cycle 1 the run
+  # terminates immediately; otherwise the strategy dispatches up to
+  # max_concurrent_runs cycles before giving up. 2 gives one retry pass.
+  max_concurrent_runs: 2
+
+  # Initial TODO board. Each peer reads this on its first turn, picks a
+  # pending entry, atomically claims it, and executes the discipline via
+  # the relevant MCP tools. Order does NOT enforce execution — peers
+  # are free to claim in any order. The data-plane middleware (Phase H/K
+  # in CHANGELOG) auto-injects upstream values into downstream MCP calls
+  # whenever the producing tool is called before the consuming tool, so
+  # the team naturally coordinates if the discipline ordering happens to
+  # follow geometry -> aero/mass -> mission/sim/eval. If a peer claims
+  # mission before geometry, that's allowed — aviary just uses its
+  # defaults for un-injected parameters and the result is documented as
+  # an un-coupled single-MCP run.
+  todo_seed:
+    - name: "geometry"
+      description: "Open the CPACS file (open_cpacs), inspect the configuration, and generate a CFD-ready volume mesh via generate_volume_mesh. Post the mesh ref + planform stats to the blackboard."
+    - name: "aero"
+      description: "Create a SU2 session, set the volume mesh from geometry, configure numerics (use get_valid_config_options first), run run_su2_solver, then call read_history_csv to capture CL and CD. The Phase H middleware will auto-inject these into aviary's next set_aircraft_parameters call."
+    - name: "mass"
+      description: "Validate and estimate the structural mass via mass-mcp (estimate_mass). The Phase K-A middleware will auto-inject Aircraft.Wing.MASS_SCALER into aviary's next set_aircraft_parameters call from mWing_kg. Phase K-B auto-injects Fn_DES into pycycle's set_inputs from mTOM."
+    - name: "propulsion"
+      description: "Create a pyCycle HBTF model, call get_design_inputs FIRST to see the curated dial list (splitter.BPR, fan.PR, Fn_DES, etc.) — do NOT guess from list_variables. Set inputs and run_cycle."
+    - name: "mission"
+      description: "Create an aviary session, configure the F25 design mission (range_nmi=2500, num_passengers=239, cruise_mach=0.78, cruise_altitude_ft=33000), and call set_aircraft_parameters. Run set_aircraft_parameters AFTER aero + mass have posted their results so the data-plane middleware can inject CL/CD/MASS_SCALER."
+    - name: "simulation"
+      description: "Call aviary's run_simulation on the configured session to execute the SLSQP optimizer (~40-60s). Pull fuel_burned_kg / gtow_kg / wing_mass_kg with get_results and post them to the blackboard."
+    - name: "evaluation"
+      description: "Call check_constraints on the simulation session with the F25 TLAR constraints (fuel_burned_kg <= 15000, gtow_kg <= 90000, range >= 2500 nmi). Post the final VERDICT (COMPLETE / CONTINUE / RETRY) and the structured key:value metrics summary."
 
   # Peers can see each other's evaluation metrics on the blackboard
   # so they can decide who to retry or build on.

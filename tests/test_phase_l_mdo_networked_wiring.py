@@ -147,6 +147,19 @@ def _build_networked_coordinator():
         f"task). Found: {networked_cfg.get('workflow_phases')!r}"
     )
 
+    # Coord YAML sanity: concurrent_blackboard selection mode +
+    # non-empty todo_seed. This is the post-2026-05-25 CodeCRDT-style
+    # design — peers run in parallel threads racing for TODO claims.
+    assert networked_cfg.get("selection_mode") == "concurrent_blackboard", (
+        "MDO F25 networked combo expects selection_mode='concurrent_blackboard'. "
+        f"Found: {networked_cfg.get('selection_mode')!r}"
+    )
+    todo_seed = networked_cfg.get("todo_seed", [])
+    assert len(todo_seed) >= 7, (
+        f"Expected ≥7 seeded TODOs covering the F25 disciplines, found "
+        f"{len(todo_seed)}: {[t.get('name') if isinstance(t, dict) else t for t in todo_seed]}"
+    )
+
     config = load_config("config/mdo_f25_run_claude.yaml")
     config.agents_config = agents_path
     config.coordination_config = coord_path

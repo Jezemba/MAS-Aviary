@@ -195,3 +195,158 @@ class TestCoordinatorMessages:
         result = coord.run("test")
 
         assert result.history[0].duration_seconds >= 0
+
+
+# ---- parallel_run action (concurrent_blackboard mode) -----------------------
+
+
+class _RecordingAgent:
+    """Minimal agent stub for testing the Coordinator's parallel_run
+    path. Records every .run() call; lets the test assert which peers
+    were invoked and that they ran concurrently."""
+
+    def __init__(self, name: str, answer: str = "done", delay_seconds: float = 0.0):
+        self.name = name
+        self._answer = answer
+        self._delay = delay_seconds
+        self.calls: list[str] = []
+        self.tools: dict = {}
+        # smolagents-shaped memory so _extract_tool_calls returns [].
+        from types import SimpleNamespace
+
+        self.memory = SimpleNamespace(steps=[])
+
+    def run(self, task: str) -> str:
+        if self._delay:
+            time.sleep(self._delay)
+        self.calls.append(task)
+        return f"{self.name}: {self._answer}"
+
+
+class _SingleParallelRunStrategy:
+    """Strategy stub that returns one parallel_run action then terminates."""
+
+    def __init__(self, peer_names: list[str]):
+        self._peer_names = peer_names
+        self._dispatched = False
+
+    def initialize(self, agents, config):
+        pass
+
+    def is_complete(self, history, current_state):
+        return self._dispatched
+
+    def next_step(self, history, current_state):
+        from src.coordination.strategy import CoordinationAction
+
+        if self._dispatched:
+            return CoordinationAction(action_type="terminate", agent_name=None, input_context="")
+        self._dispatched = True
+        return CoordinationAction(
+            action_type="parallel_run",
+            agent_name=None,
+            input_context=current_state.get("task", ""),
+            metadata={"peers": list(self._peer_names), "cycle": 1},
+        )
+
+
+class TestCoordinatorParallelRun:
+    """Coordinator route for action_type='parallel_run' — required by
+    NetworkedStrategy.selection_mode='concurrent_blackboard'."""
+
+    def test_launches_all_named_peers(self):
+        agents = {
+            "agent_1": _RecordingAgent("agent_1"),
+            "agent_2": _RecordingAgent("agent_2"),
+            "agent_3": _RecordingAgent("agent_3"),
+        }
+        strategy = _SingleParallelRunStrategy(list(agents.keys()))
+        coord = Coordinator(
+            agents=agents,
+            strategy=strategy,
+            config={"termination": {"max_turns": 20, "max_consecutive_errors": 3}},
+        )
+        result = coord.run("the task")
+
+        # Every peer ran exactly once with the task input.
+        for name, agent in agents.items():
+            assert agent.calls == ["the task"], (
+                f"peer {name} ran {agent.calls!r}, expected exactly one call"
+            )
+
+        # The history captured one AgentMessage per peer.
+        peer_msgs = {m.agent_name: m for m in result.history if m.agent_name in agents}
+        assert set(peer_msgs.keys()) == set(agents.keys())
+        for name, msg in peer_msgs.items():
+            assert msg.content == f"{name}: done"
+
+    def test_runs_concurrently_not_serially(self):
+        """If each peer sleeps for X seconds and we have N peers running
+        in parallel, wall-clock should be ~X, not ~N*X."""
+        delay = 0.3
+        agents = {
+            "agent_1": _RecordingAgent("agent_1", delay_seconds=delay),
+            "agent_2": _RecordingAgent("agent_2", delay_seconds=delay),
+            "agent_3": _RecordingAgent("agent_3", delay_seconds=delay),
+        }
+        strategy = _SingleParallelRunStrategy(list(agents.keys()))
+        coord = Coordinator(
+            agents=agents,
+            strategy=strategy,
+            config={"termination": {"max_turns": 20, "max_consecutive_errors": 3}},
+        )
+        start = time.monotonic()
+        coord.run("t")
+        wall = time.monotonic() - start
+        # Should be ~delay (parallel) plus overhead, not 3*delay (serial).
+        # Generous bound: < 2*delay confirms real parallelism.
+        assert wall < 2 * delay, (
+            f"Expected parallel execution to take ~{delay}s, got {wall:.2f}s "
+            f"— would be ~{3*delay}s if serial."
+        )
+
+    def test_missing_peer_yields_error_message(self):
+        """A peer named in action.metadata['peers'] but missing from
+        agents dict should produce an error AgentMessage, not crash."""
+        agents = {
+            "agent_1": _RecordingAgent("agent_1"),
+        }
+        strategy = _SingleParallelRunStrategy(["agent_1", "agent_2_missing"])
+        coord = Coordinator(
+            agents=agents,
+            strategy=strategy,
+            config={"termination": {"max_turns": 20, "max_consecutive_errors": 3}},
+        )
+        result = coord.run("t")
+        names = [m.agent_name for m in result.history]
+        assert "agent_1" in names
+        assert "agent_2_missing" in names
+        missing_msg = next(m for m in result.history if m.agent_name == "agent_2_missing")
+        assert missing_msg.error
+        assert "not found" in missing_msg.error
+
+    def test_peer_exception_caught_not_propagated(self):
+        """If one peer raises during agent.run(), the Coordinator should
+        record an error AgentMessage for it but still return results from
+        the other peers."""
+
+        class _CrashingAgent(_RecordingAgent):
+            def run(self, task: str) -> str:
+                raise RuntimeError("simulated crash")
+
+        agents = {
+            "agent_1": _RecordingAgent("agent_1"),
+            "agent_2": _CrashingAgent("agent_2"),
+            "agent_3": _RecordingAgent("agent_3"),
+        }
+        strategy = _SingleParallelRunStrategy(list(agents.keys()))
+        coord = Coordinator(
+            agents=agents,
+            strategy=strategy,
+            config={"termination": {"max_turns": 20, "max_consecutive_errors": 3}},
+        )
+        result = coord.run("t")
+        by_name = {m.agent_name: m for m in result.history}
+        assert by_name["agent_1"].content == "agent_1: done"
+        assert by_name["agent_3"].content == "agent_3: done"
+        assert by_name["agent_2"].error and "simulated crash" in by_name["agent_2"].error

@@ -78,15 +78,25 @@ class NetworkedStrategy(CoordinationStrategy):
         self._graph_state_dict: dict = {}
         self._graph_complete: bool = False
 
-        # Volunteer-broadcast selection (optional, set in coord YAML as
-        # networked.selection_mode: "volunteer"). When enabled, replaces
-        # the default round-robin with parallel "want to act next?" votes
-        # to each idle peer, picking the strongest YES. Closer to the
-        # arxiv 2510.01285 / 2507.01701 blackboard MAS pattern and to
-        # AutoGen's GroupChatManager than fixed rotation. The default
-        # stays round-robin so existing aviary-only combos are unaffected.
+        # Selection mode. Three values:
+        #   "round_robin" — default. Strategy picks one peer per turn in
+        #     fixed rotation. Existing aviary-only combos use this.
+        #   "volunteer" — strategy broadcasts a "want to act next?" vote
+        #     prompt to every idle peer in parallel each turn, picks the
+        #     strongest YES. Closer to AutoGen GroupChatManager and
+        #     arxiv 2510.01285 / 2507.01701 patterns.
+        #   "concurrent_blackboard" — CodeCRDT pattern (arxiv 2510.18893):
+        #     all peers run concurrently in threads, race to claim TODOs
+        #     from the shared blackboard. The strategy returns a single
+        #     parallel_run action per turn; the Coordinator launches all
+        #     peers in a ThreadPoolExecutor. Each peer's ReAct loop
+        #     reads -> claims -> executes -> marks done in a tight cycle
+        #     until all TODOs are done or its step budget runs out.
         self._selection_mode: str = "round_robin"
         self._volunteer_model = None  # Shared LLM for vote prompts.
+        # concurrent_blackboard state.
+        self._concurrent_runs_dispatched: int = 0
+        self._max_concurrent_runs: int = 2  # configurable via coord YAML
 
     def initialize(self, agents: dict, config: dict) -> None:
         """Set up strategy from agents dict and coordination config.
@@ -106,6 +116,7 @@ class NetworkedStrategy(CoordinationStrategy):
         self._trans_specialist_knowledge = net_config.get("trans_specialist_knowledge", True)
         self._predictive_knowledge = net_config.get("predictive_knowledge", False)
         self._selection_mode = net_config.get("selection_mode", "round_robin")
+        self._max_concurrent_runs = net_config.get("max_concurrent_runs", 2)
 
         term_config = config.get("termination", {})
         self._termination_keyword = term_config.get("keyword", "TASK_COMPLETE")
@@ -194,6 +205,24 @@ class NetworkedStrategy(CoordinationStrategy):
         # self._context.model so any one works as the vote model.
         if self._selection_mode == "volunteer":
             self._volunteer_model = self._context.model
+
+        # Concurrent-blackboard mode: seed the TODO list at start so
+        # peer threads have something to race for. The seed comes from
+        # the coord YAML — different design tasks ship different seeds.
+        # Format: list of {name, description} dicts.
+        if self._selection_mode == "concurrent_blackboard":
+            todo_seed = net_config.get("todo_seed", []) or []
+            seed_pairs: list[tuple[str, str]] = []
+            for entry in todo_seed:
+                if isinstance(entry, dict) and "name" in entry:
+                    seed_pairs.append((entry["name"], entry.get("description", "")))
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 1:
+                    name = entry[0]
+                    desc = entry[1] if len(entry) >= 2 else ""
+                    seed_pairs.append((name, desc))
+            if seed_pairs and self._blackboard is not None:
+                self._blackboard.seed_todos(seed_pairs)
+            self._concurrent_runs_dispatched = 0
 
         # Set all_tools in context for future spawns (includes peer tools).
         # The peer tool instances in all_tools are templates; SpawnPeer
@@ -312,6 +341,36 @@ class NetworkedStrategy(CoordinationStrategy):
         new_names = [n for n in self._agents if n not in current_names and n != "system"]
         self._agent_order = current_names + new_names
 
+        # Selection: concurrent_blackboard fires ALL peers in parallel each
+        # turn (the CodeCRDT-style pattern). The Coordinator interprets the
+        # parallel_run action by launching peers in a ThreadPoolExecutor.
+        # We dispatch up to _max_concurrent_runs cycles, after which we
+        # terminate even if not every TODO has been marked done (peers
+        # ran out of step budget).
+        if self._selection_mode == "concurrent_blackboard":
+            if self._concurrent_runs_dispatched >= self._max_concurrent_runs:
+                return CoordinationAction(
+                    action_type="terminate",
+                    agent_name=None,
+                    input_context="",
+                    metadata={
+                        "reason": "concurrent_blackboard max cycles reached",
+                        "cycles_dispatched": self._concurrent_runs_dispatched,
+                    },
+                )
+            self._concurrent_runs_dispatched += 1
+            return CoordinationAction(
+                action_type="parallel_run",
+                agent_name=None,
+                input_context=self._task or current_state.get("task", ""),
+                metadata={
+                    "peers": list(self._agent_order),
+                    "turn": self._total_turns + 1,
+                    "cycle": self._concurrent_runs_dispatched,
+                    "selection_mode": "concurrent_blackboard",
+                },
+            )
+
         # Selection: volunteer broadcast OR round-robin.
         if self._selection_mode == "volunteer" and self._volunteer_model is not None:
             picked = self._select_via_volunteer(history, current_state)
@@ -395,6 +454,16 @@ class NetworkedStrategy(CoordinationStrategy):
 
         # Check if graph-driven mode completed (strategy drove the graph).
         if self._graph_complete:
+            return True
+
+        # concurrent_blackboard mode: terminate as soon as every TODO is
+        # done. Peers can race; the first cycle that closes out the board
+        # ends the run.
+        if (
+            self._selection_mode == "concurrent_blackboard"
+            and self._blackboard is not None
+            and self._blackboard.all_todos_done()
+        ):
             return True
 
         # Check if graph-routed handler signalled completion (handler drove the graph).

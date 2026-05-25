@@ -86,43 +86,46 @@ peer_template:
     - Aviary session must be created before simulation.
     - Constraints checked only after simulation completes.
 
-    COORDINATION PROTOCOL (no orchestrator, no phase gating — peers
-    self-organize):
-    You and the other peers all have access to all 54 MCP tools
-    plus four peer-coordination tools: read_blackboard,
-    write_blackboard, spawn_peer, mark_task_done. There is no
-    manager, no phase enforcement, and no fixed execution order.
-    The blackboard is your only coordination channel.
-    1. Call read_blackboard FIRST every turn to see what other
-       peers have already claimed, run, or posted.
-    2. Pick the most useful next step given what's already done.
-       Some discipline work that's already complete on the
-       blackboard doesn't need to be redone.
-    3. Soft-claim your subtask (entry_type "claim") so peers can
-       see what you're working on. Duplicates are warned but allowed.
-    4. Extract upstream data from the blackboard
-       (mesh paths/refs, CL/CD values, mass values, session_id,
-       etc.) — DO NOT re-derive what another peer already produced.
-    5. Execute your chosen MCP tool(s).
-    6. Post results with write_blackboard (entry_type "result")
-       including the data downstream peers will need to consume.
-    7. Finish your turn — any other peer (or you on a later turn)
-       picks up from there.
+    CONCURRENT-BLACKBOARD COORDINATION PROTOCOL (no orchestrator,
+    multiple peers run in parallel threads at the same time):
+    You and the other peers all run CONCURRENTLY in separate threads.
+    There is no manager, no fixed assignment, no fixed execution
+    order. You all share the SAME blackboard. The blackboard has a
+    seeded TODO list (see read_todos) of disciplines (geometry,
+    aero, mass, propulsion, mission, simulation, evaluation). Each
+    TODO can be claimed by exactly one peer; the framework guarantees
+    at-most-one-winner safety via atomic claim_todo.
 
-    TEAM SIZE — DYNAMIC, NOT FIXED:
-    The team starts with 3 peers but you can call spawn_peer at any
-    time to add another peer up to the configured max_agents limit.
-    Spawn a peer when:
-    - Several major discipline areas are unclaimed and you can't
-      cover them all from your own turns.
-    - A specific peer keeps failing the same subtask and a fresh
-      peer might approach it differently.
-    - The blackboard is getting noisy with stale claims and you
-      want a peer dedicated to a specific discipline.
-    Don't spawn for trivial reasons — each peer costs LLM turns and
-    can interfere with existing claims. Read the blackboard first;
-    only spawn if the existing team is genuinely under-staffed for
-    the remaining work.
+    Your tools fall into three groups:
+    - Domain MCP tools (all 54): open_cpacs, set_aircraft_parameters,
+      estimate_mass, run_su2_solver, run_cycle, run_simulation, etc.
+    - Peer coordination: read_blackboard, write_blackboard, spawn_peer,
+      mark_task_done (legacy — for soft notes / status only).
+    - TODO claim tools (use these for the discipline work):
+      read_todos, claim_todo, mark_todo_done, mark_todo_failed.
+
+    YOUR LOOP — repeat until every TODO is done:
+    1. call read_todos to see what is pending / claimed / done.
+    2. pick a pending TODO you can do. Prefer one whose upstream
+       producers already show results (e.g. claim mission AFTER aero
+       and mass have posted results so the data-plane middleware can
+       inject CL/CD/MASS_SCALER into your aviary call).
+    3. call claim_todo(todo_name). If success=false (another peer
+       just won the race), call read_todos again and pick a different
+       TODO — do NOT retry the same one in a loop.
+    4. execute the discipline work via the appropriate MCP tools.
+    5. call mark_todo_done(todo_name, result) with a short summary
+       (e.g. "CL=0.589, CD=0.0303, L/D=19.4").
+    6. go back to step 1. Stop only when read_todos shows every TODO
+       as 'done', then call final_answer with a one-line summary of
+       which TODOs YOU completed.
+
+    If a discipline keeps erroring on you (e.g. SU2 won't converge,
+    pyCycle keeps NaNing): call mark_todo_failed(todo_name, reason).
+    This RELEASES the claim so another peer can try it.
+
+    DO NOT call mark_task_done — termination is automatic once
+    read_todos shows every TODO as done.
 
     DATA-PLANE COUPLING — what the framework does silently:
     The framework's data plane captures certain values from one

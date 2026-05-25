@@ -659,3 +659,112 @@ class TestVolunteerSelection:
         # Second call picks agent_2 (rotation, NOT volunteer).
         a2 = strategy.next_step([], {"task": "t"})
         assert a2.agent_name == "agent_2"
+
+
+class TestConcurrentBlackboardMode:
+    """Tests for selection_mode="concurrent_blackboard" — the CodeCRDT
+    pattern (arxiv 2510.18893) where all peers run in parallel threads
+    each turn, racing to claim TODOs from the shared blackboard."""
+
+    def test_init_seeds_todos_from_coord_yaml(self, worker_tools):
+        """Seed entries from networked.todo_seed must show up on the
+        blackboard as pending TODOs after initialize()."""
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="concurrent_blackboard",
+            todo_seed=[
+                {"name": "geometry", "description": "open cpacs"},
+                {"name": "aero", "description": "su2 solve"},
+                {"name": "mass", "description": "mass-mcp estimate"},
+            ],
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        todos = strategy.blackboard.read_todos()
+        assert {t.name for t in todos} == {"geometry", "aero", "mass"}
+        assert all(t.status == "pending" for t in todos)
+
+    def test_init_accepts_tuple_todo_seed(self, worker_tools):
+        """Backward-compatible tuple form: (name, description)."""
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="concurrent_blackboard",
+            todo_seed=[("geometry", "x"), ("aero", "y")],
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        names = {t.name for t in strategy.blackboard.read_todos()}
+        assert names == {"geometry", "aero"}
+
+    def test_next_step_returns_parallel_run(self, worker_tools):
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="concurrent_blackboard",
+            todo_seed=[{"name": "geometry", "description": "x"}],
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        action = strategy.next_step([], {"task": "F25 design"})
+        assert action.action_type == "parallel_run"
+        assert action.agent_name is None
+        assert set(action.metadata["peers"]) == {"agent_1", "agent_2", "agent_3"}
+        assert action.input_context == "F25 design"
+
+    def test_max_concurrent_runs_then_terminate(self, worker_tools):
+        """After max_concurrent_runs cycles, next_step returns terminate
+        even if TODOs are still pending."""
+        config = _make_config(
+            worker_tools,
+            initial_agents=3,
+            selection_mode="concurrent_blackboard",
+            max_concurrent_runs=2,
+            todo_seed=[{"name": "g", "description": "x"}],
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        # Cycle 1.
+        a1 = strategy.next_step([], {"task": "t"})
+        assert a1.action_type == "parallel_run"
+        # Cycle 2.
+        a2 = strategy.next_step([], {"task": "t"})
+        assert a2.action_type == "parallel_run"
+        # Cycle 3 exceeds max — terminate.
+        a3 = strategy.next_step([], {"task": "t"})
+        assert a3.action_type == "terminate"
+        assert "max cycles" in (a3.metadata or {}).get("reason", "")
+
+    def test_is_complete_when_all_todos_done(self, worker_tools):
+        config = _make_config(
+            worker_tools,
+            initial_agents=2,
+            selection_mode="concurrent_blackboard",
+            todo_seed=[{"name": "g", "description": "x"}],
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        # Not done yet.
+        assert not strategy.is_complete([], {})
+        # Mark the only TODO done.
+        strategy.blackboard.claim_todo("g", "agent_1")
+        strategy.blackboard.complete_todo("g", "agent_1", "result")
+        assert strategy.is_complete([], {})
+
+    def test_no_seed_means_no_todos_no_completion(self, worker_tools):
+        """An empty seed should leave the TODO board empty; is_complete
+        for concurrent_blackboard requires non-empty AND all done."""
+        config = _make_config(
+            worker_tools,
+            initial_agents=2,
+            selection_mode="concurrent_blackboard",
+            # No todo_seed key — defaults to empty list.
+        )
+        strategy = NetworkedStrategy()
+        strategy.initialize({}, config)
+        assert strategy.blackboard.read_todos() == []
+        # all_todos_done returns False on empty board, so is_complete
+        # should NOT short-circuit on the TODO check (other termination
+        # checks may still fire for other reasons).
+        assert not strategy.blackboard.all_todos_done()
