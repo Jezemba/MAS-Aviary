@@ -1,172 +1,149 @@
-# Data Flow
+# Data Flow & Discipline Coupling
 
-> Inter-MCP data exchange schemas and transformation rules for the MDO skill.
+> Information dependencies between the five MCP servers for the DLR-F25
+> MDO benchmark. This file is the source of truth for what the
+> data-plane middleware captures, where it injects, and what triggers
+> each transfer. It is loaded into the orchestrator's system prompt at
+> runtime by the orchestrated strategy.
+>
+> A different design task lives in a different version of this file —
+> the orchestrator's prompt itself stays generic.
+
+## TL;DR — The Active Couplings
+
+The framework's data plane (`src/tools/data_plane.py`) intercepts MCP
+tool responses and requests transparently. The orchestrator and workers
+do NOT pass these values manually; the framework moves them
+cross-discipline automatically AS LONG AS the producing tool runs
+before the consuming tool.
+
+| # | Captured value | Capture trigger | Injection target | Injected on | Status |
+|---|---|---|---|---|---|
+| H-CL | `CL_CRUISE` | SU2 `read_history_csv` | `Mission.Design.LIFT_COEFFICIENT` | aviary `set_aircraft_parameters` | active |
+| H-CD | `CD_CRUISE` | SU2 `read_history_csv` | `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary `set_aircraft_parameters` | active |
+| K-A | `mWing_kg` | mass-mcp `estimate_mass` | `Aircraft.Wing.MASS_SCALER = mWing_kg / 5998`, clamped [0.5, 2.0] | aviary `set_aircraft_parameters` | active |
+| K-B | `mTOM_kg` | mass-mcp `estimate_mass` | `Fn_DES_lbf = MTOM_kg × 0.0811`, clamped [2000, 25000] | pyCycle `set_inputs` (gated on `mcp_name == "pycycle"`) | active |
+| J | `perf.TSFC` | pyCycle `get_outputs` | `Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER` | aviary `set_aircraft_parameters` | **REVERTED — no-op** (aviary's FwFm tabular engine deck ignores this scaler; SFC currently has zero downstream effect) |
+
+## What this means for the orchestrator
+
+The orchestrator's job when delegating is to make sure the **capture
+trigger** tool runs before the matching **injection target** tool. If
+that ordering is violated, the data store is empty when the consumer
+tool fires and the consumer falls back to defaults (`MASS_SCALER=1.0`,
+`LIFT_COEFFICIENT` = aviary default polar, etc.). The mission run will
+still complete and report a fuel number — it just won't reflect the
+upstream disciplines.
+
+**Concrete consequence:** if aviary's `set_aircraft_parameters` runs
+before SU2's `read_history_csv` AND before mass-mcp's `estimate_mass`,
+the resulting fuel burn is mathematically a single-MCP aviary run, not
+a coupled MDO solution. Observed in wandb runs `bpkm3zm4` and
+`krlbsfgx` (both produced reasonable-looking fuel numbers but with the
+data plane bypassed; documented in CHANGELOG.md under 2026-05-25).
 
 ## DesignState Schema
 
-The `DesignState` is the central data object maintained by the MDO integrator agent
-across all optimization iterations. It is never serialized to disk — it lives in
-the orchestrator's working memory.
+The `DesignState` is the framework's per-session bookkeeping object:
 
 ```python
 class DesignState:
-    cpacs_file_path: str              # Absolute path to the current CPACS XML file on disk
-    sessions: dict[str, str]          # MCP name -> active session_id  {"tigl": "...", "su2": "...", ...}
-    results: dict[str, dict]          # MCP name -> latest result payload  {"su2": {"CL": ..., "CD": ...}, ...}
+    cpacs_file_path: str
+    sessions: dict[str, str]          # MCP name -> active session_id
+    results: dict[str, dict]          # MCP name -> latest result payload
     constraints: dict[str, dict]      # constraint_label -> {value, limit, operator, satisfied}
-    iteration: int                    # Current MDO iteration counter (0-based)
-    history: list[dict]               # One entry per iteration: {iteration, objective, constraints, design_vars, timestamp}
-    data_store: dict[str, str]        # Large binary payloads (meshes, CAD files) — the data plane
+    iteration: int
+    history: list[dict]
+    data_store: dict[str, Any]        # data-plane payload + captured-coupling cache
 ```
 
-### Data Plane / Control Plane Separation
+The `data_store` is dual-purpose:
+- Large binary payloads (volume meshes, CAD blobs) — the original data
+  plane introduced in Phase A.
+- Captured discipline outputs (CL, CD, mWing_kg, mTOM_kg, TSFC) — the
+  capture middleware added in Phases H/I/K.
 
-The LLM is the **control plane** — it decides which tools to call and in what order.
-The `data_store` is the **data plane** — it carries large binary payloads (base64
-meshes, STEP files, etc.) between MCP tools without passing through the LLM context.
+## Capture mechanism (intercept_response)
 
-**How it works:**
+`src/tools/data_plane.py::intercept_response` fires after every MCP tool
+returns. It parses the structured fields and stashes the
+coupling-relevant values into the per-session `data_store`. Capture
+only happens if the specific tool below is called:
 
-1. When a tool returns a response containing a large binary field (>1KB base64 data,
-   or a field named `*_base64`, `mesh_data`, etc.), the framework's response middleware
-   automatically stores the payload in `data_store` and replaces the field with a
-   lightweight reference: `{"ref": "tool__field", "size_bytes": N}`.
+- **SU2 `read_history_csv`** — last row's CL and CD columns. Strips
+  embedded quote chars from the column headers (history.csv writes them
+  as `"       \"CL\"       "`).
+- **mass-mcp `estimate_mass`** — `components.mWing_kg` and `mTOM_kg`
+  from the response. Sanity-bracketed.
+- **pyCycle `get_outputs`** — `perf.TSFC`. (Capture lives on as dead
+  code; injection was reverted in Phase J — see below.)
 
-2. The LLM sees the reference (not the payload) and can pass it to the next tool.
+If the agent extracts CL/CD by, say, downloading the SU2 results
+files via `get_result_file_base64` and parsing them locally, the
+middleware never sees the values and the H couplings don't fire.
+`read_history_csv` is the canonical capture path.
 
-3. When the next tool call includes a reference (`{"ref": "key"}` or a string matching
-   a data store key), the framework's request middleware resolves it to the actual
-   payload before sending to the MCP server.
+## Injection mechanism (resolve_request)
 
-**Example:** TiGL generates a volume mesh (~1-10MB base64). The LLM sees:
-```json
-{"format": "su2", "mesh_base64": {"ref": "generate_volume_mesh__mesh_base64", "size_bytes": 1234567}}
-```
-When the aero stage calls `set_mesh(mesh_base64={"ref": "generate_volume_mesh__mesh_base64"})`,
-the framework resolves the ref and sends the full payload to SU2.
+`src/tools/data_plane.py::resolve_request` fires before every MCP tool
+sends. It merges captured values from `data_store` into the request
+payload:
 
-### Field Details
+- **aviary `set_aircraft_parameters`** — injects
+  `Mission.Design.LIFT_COEFFICIENT`,
+  `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`, and
+  `Aircraft.Wing.MASS_SCALER` from whatever's in the data store.
+- **pyCycle `set_inputs`** (gated on `mcp_name == "pycycle"` to avoid
+  colliding with any other MCP's same-named tool) — injects
+  `Fn_DES_lbf` derived from MTOM.
 
-| Field | Type | Updated By | Read By |
-|-------|------|-----------|---------|
-| `cpacs_file_path` | `str` | tigl-mcp (geometry writes) | mass-mcp, tigl-mcp |
-| `sessions` | `dict[str, str]` | Each MCP on session create/close | All MCP calls (session routing) |
-| `results` | `dict[str, dict]` | Each MCP after computation | MDO integrator (convergence check) |
-| `constraints` | `dict[str, dict]` | aviary-mcp `check_constraints` | MDO integrator (feasibility check) |
-| `iteration` | `int` | MDO integrator | MDO integrator (termination) |
-| `history` | `list[dict]` | MDO integrator (end of each iteration) | MDO integrator (convergence trend) |
-| `data_store` | `dict[str, str]` | Response middleware (auto) | Request middleware (auto) |
+Both injections are silent — they do not generate an error if the
+data_store is empty; they just don't add the parameter. Aviary then
+uses its own default for any uninjected parameter.
 
----
+## Phase J caveat (REVERTED — pyCycle SFC has no downstream effect)
 
-## Inter-MCP Data Transfers
+Phase J originally injected pyCycle's converged TSFC into aviary's
+`Aircraft.Engine.SUBSONIC_FUEL_FLOW_SCALER`. The scaler was reverted
+the same day it shipped because aviary's mission analysis uses a FwFm
+*tabular* engine deck — the scaler is read but has no effect on the
+table lookup, so the injection silently did nothing. Direct sensitivity
+sweep confirmed: SFC ∈ {0.40, 0.55, 0.70} → fuel stayed flat at 7058.4
+kg. A regression test `test_phase_j_sfc_changes_fuel_burn` (`xfail`
+strict=True) guards re-addition.
 
-### 1. tigl-mcp --> su2-mcp: Volume Mesh for CFD
+Implication for the orchestrator: do NOT expect pyCycle's TSFC to flow
+into aviary's mission fuel burn. The pyCycle discipline IS still
+useful — Phase K-B injects MTOM-derived thrust into pyCycle's set_inputs
+so pyCycle sizes itself to the design point — but pyCycle's output does
+not currently feed mission analysis.
 
-| Property | Value |
-|----------|-------|
-| **Source tool** | `tigl:generate_volume_mesh(session_id, component_uid)` (uses gmsh internally to embed the STL surface in a far-field box and produce a complete 3D volume mesh with "aircraft" wall + "farfield" markers) |
-| **Target tool** | `su2:set_mesh(session_id, mesh_base64)` |
-| **Data format** | Base64-encoded SU2 volume mesh string |
-| **Transformation** | None — the base64 blob returned by tigl is passed directly to su2 `set_mesh`. |
-| **Typical size** | 1-50 MB (base64), depending on mesh density |
-| **Why not `export_component_mesh(format="su2")`?** | That tool produces a *surface-only* mesh (zero volume elements). SU2's `DistributeColoring` check rejects it and the solver immediately fails. `generate_volume_mesh` is the only tigl-mcp tool that produces a CFD-solveable mesh. |
+## Non-coupling transfers (large binary payloads, no middleware capture)
 
-```
-tigl:generate_volume_mesh  --(mesh_base64: str)-->  su2:set_mesh
-```
+These are blob payloads that pass through the LLM context as
+lightweight refs, resolved by the request middleware when consumed.
+The orchestrator should still ensure source-before-consumer ordering,
+but no per-discipline value is captured.
 
-### 2. tigl-mcp --> mass-mcp: CPACS File on Disk
+| Source tool | Target tool | Payload |
+|---|---|---|
+| TiGL `generate_volume_mesh` | SU2 `set_mesh` | base64 SU2 volume mesh, 1-50 MB. **Use this, not `export_component_mesh`** — the latter produces a surface-only mesh that fails SU2's `DistributeColoring` check. |
+| TiGL `close_cpacs` (writes file) | mass-mcp `estimate_mass(cpacs_file_path=...)` | CPACS XML file on disk. mass-mcp reads it directly from the filesystem. |
 
-| Property | Value |
-|----------|-------|
-| **Source tool** | `tigl:close_cpacs(session_id)` (writes modified CPACS to disk) |
-| **Target tool** | `mass:estimate_mass(cpacs_file_path)` or `mass:validate_cpacs_inputs(cpacs_file_path)` |
-| **Data format** | File path string pointing to the CPACS XML file |
-| **Transformation** | None — mass-mcp reads the file directly from the filesystem. The orchestrator passes `DesignState.cpacs_file_path` as the `cpacs_file_path` argument. |
+## CPACS file on disk — the only shared-filesystem coupling
 
-```
-tigl:close_cpacs  --(cpacs_file_path: str on disk)-->  mass:estimate_mass
-```
+All other inter-MCP data flows through MCP tool return values and the
+data plane. Only the CPACS file itself is shared via the filesystem.
+`DesignState.cpacs_file_path` is the canonical reference.
 
-### 3. su2-mcp --> aviary-mcp: Drag Polar
+## Pre-Phase-H history (kept for context)
 
-| Property | Value |
-|----------|-------|
-| **Source tool** | `su2:read_history_csv(session_id, relative_path, columns=["CL", "CD"])` |
-| **Target tool** | `aviary:set_aircraft_parameters(session_id, parameters)` |
-| **Data format** | CL and CD arrays extracted from the SU2 convergence history CSV |
-| **Transformation** | The orchestrator must: (1) Call `read_history_csv` for each AoA run to get the converged CL, CD pair. (2) Assemble the drag polar as paired scalar values. (3) Pass the drag data to aviary via `set_aircraft_parameters` using the appropriate Aviary variable names for aerodynamic inputs. |
-
-```
-su2:read_history_csv  --(CL, CD floats per AoA)-->  [orchestrator assembles polar]  -->  aviary:set_aircraft_parameters
-```
-
-### 4. mass-mcp --> aviary-mcp: OEM and Component Breakdown
-
-| Property | Value |
-|----------|-------|
-| **Source tool** | `mass:estimate_mass(cpacs_file_path)` |
-| **Target tool** | `aviary:set_aircraft_parameters(session_id, parameters)` |
-| **Data format** | Scalar values — OEM in kg, component masses in kg |
-| **Transformation** | The orchestrator extracts the OEM (kg) and relevant component masses from the mass-mcp result dict and maps them to Aviary parameter names (e.g., `Aircraft.Design.OPERATING_EMPTY_MASS`). Unit conversion may be needed if aviary expects lbm. |
-
-```
-mass:estimate_mass  --(OEM_kg, wing_mass_kg, ...)-->  [orchestrator maps to Aviary params]  -->  aviary:set_aircraft_parameters
-```
-
-### 5. pycycle-mcp --> aviary-mcp: SFC and Thrust
-
-| Property | Value |
-|----------|-------|
-| **Source tool** | `pycycle:get_outputs(session_id, names=["SFC", "Fn", ...])` |
-| **Target tool** | `aviary:set_aircraft_parameters(session_id, parameters)` |
-| **Data format** | Scalar values — SFC in lbm/hr/lbf, net thrust (Fn) in lbf |
-| **Transformation** | The orchestrator reads SFC and thrust from pycycle outputs and maps them to Aviary engine parameters. If aviary expects tabulated data, the orchestrator runs `pycycle:sweep_inputs` across altitude/Mach points and constructs the tables. |
-
-```
-pycycle:get_outputs  --(SFC, Fn scalars)-->  [orchestrator maps to Aviary engine params]  -->  aviary:set_aircraft_parameters
-```
-
-### 6. aviary-mcp --> MDO Integrator: Mission Results
-
-| Property | Value |
-|----------|-------|
-| **Source tool** | `aviary:get_results(session_id)` and `aviary:check_constraints(session_id, constraints)` |
-| **Target tool** | MDO integrator (orchestrator logic) |
-| **Data format** | Scalar values — fuel burned (lbm), GTOW (lbm), convergence status (bool) |
-| **Transformation** | The orchestrator reads fuel_burned, GTOW, and optimizer convergence from aviary results. It converts to SI units if needed, evaluates the objective function (minimize MTOM), updates `DesignState.constraints` and appends to `DesignState.history`. |
-
-```
-aviary:get_results        --(fuel_burned, GTOW, converged)-->  MDO integrator
-aviary:check_constraints  --(constraint verdicts)-->           MDO integrator
-```
-
----
-
-## Data Flow Diagram (Per Iteration)
-
-```
-                    CPACS file path
-    tigl-mcp ──────────────────────────> mass-mcp
-       │                                    │
-       │ mesh_base64 (SU2 format)           │ OEM, component masses (kg)
-       v                                    v
-    su2-mcp                             aviary-mcp <── pycycle-mcp
-       │                                    │           (SFC, thrust)
-       │ CL, CD (drag polar)                │
-       └───────────────> aviary-mcp         │
-                            │               │
-                            v               v
-                        MDO Integrator
-                     (fuel_burned, GTOW,
-                      constraint status,
-                      convergence check)
-```
-
-## Notes
-
-- All inter-MCP transfers pass through the orchestrator agent. MCPs never call each other directly.
-- Base64 payloads (mesh, CAD) are opaque blobs — the orchestrator forwards them without decoding.
-- Scalar values (OEM, CL, CD, SFC) require the orchestrator to extract, potentially convert units, and map to target parameter names.
-- The CPACS file on disk is the only shared-filesystem coupling. All other data flows through MCP tool return values.
+Earlier versions of this document described the orchestrator manually
+extracting CL/CD from SU2 results and constructing drag polars to pass
+to aviary. That was the design before Phase H (2026-05-23). It is no
+longer accurate — the agent does its discipline-native work and the
+framework does the cross-discipline plumbing. If you are revising this
+file for a different design task, decide whether the new task should
+follow the same pattern (recommended) or whether some couplings should
+be explicit in the agent prompt (riskier — the prompt-only approach
+failed four times in Phase H Runs #13–#16).

@@ -164,6 +164,17 @@ class Coordinator:
             if result_signals:
                 coord_config["_required_result_signals"] = result_signals
 
+            # Pass a SkillLoader so the orchestrated strategy can inject
+            # task-specific reference content (currently data_flow.md, the
+            # data-plane coupling map) into the orchestrator's system
+            # prompt at initialize() time. Keeps coupling info OUT of the
+            # generic orchestrator YAML — a different design task swaps
+            # the skill folder, no prompt edit needed.
+            if getattr(config, "skills", None) and config.skills.path:
+                from src.skills.skill_loader import SkillLoader
+
+                coord_config["_skill_loader"] = SkillLoader(config.skills.path)
+
         # For sequential strategy, pass all available worker tools and model
         # so the strategy can create stage agents with tool restrictions.
         if strategy_name == "sequential":

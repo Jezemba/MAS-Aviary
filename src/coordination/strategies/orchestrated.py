@@ -43,6 +43,52 @@ from src.tools.orchestrator_tools import (
 _FINAL_ANSWER_KEY = "final_answer"
 
 
+def _inject_skill_reference(orchestrator_agent, skill_loader) -> None:
+    """Append the data-plane coupling reference from the skill folder to
+    the orchestrator's system prompt.
+
+    Reads ``skills/<configured>/references/data_flow.md`` via SkillLoader
+    and appends it under a clearly-marked section so the orchestrator
+    knows the active data-plane couplings without those being baked into
+    the YAML prompt. Different design task = different skill folder =
+    different couplings; the orchestrator YAML stays generic.
+
+    Silent no-op if no skill loader is configured, the skill folder is
+    missing, or data_flow.md is empty. The orchestrator can still
+    function from its YAML prompt alone.
+    """
+    if skill_loader is None or not getattr(skill_loader, "is_available", False):
+        return
+    reference_md = skill_loader.load_reference("data_flow.md")
+    if not reference_md:
+        return
+
+    appendix = (
+        "\n\n"
+        "============================================================\n"
+        "ACTIVE DATA-PLANE COUPLINGS (loaded from skill at runtime —\n"
+        "not part of the generic orchestrator prompt). The framework's\n"
+        "data plane captures values from one discipline's tool output\n"
+        "and injects them into the next discipline's tool input\n"
+        "automatically — but ONLY when the producing tool runs BEFORE\n"
+        "the consuming tool. Read the coupling table below before you\n"
+        "decide the order in which to create workers and assign tasks.\n"
+        "============================================================\n\n"
+    ) + reference_md
+
+    mem = getattr(orchestrator_agent, "memory", None)
+    sp_holder = getattr(mem, "system_prompt", None) if mem is not None else None
+    if sp_holder is None:
+        return
+    if hasattr(sp_holder, "system_prompt"):
+        # smolagents wraps the prompt in a holder object whose .system_prompt
+        # attribute is the raw string. Append to that string.
+        sp_holder.system_prompt = (sp_holder.system_prompt or "") + appendix
+    else:
+        # Older shape: memory.system_prompt is the string directly.
+        mem.system_prompt = (str(sp_holder) if sp_holder else "") + appendix
+
+
 class OrchestratedStrategy(CoordinationStrategy):
     """Dynamic team-creation strategy with orchestrator agent."""
 
@@ -122,6 +168,13 @@ class OrchestratedStrategy(CoordinationStrategy):
         orchestrator_agent = agents[self._orchestrator_name]
         model = orchestrator_agent.model
         self._model = model  # Store for thinking toggle.
+
+        # Skill content (data-plane coupling map etc.) — load at init
+        # time and append to the orchestrator's system prompt. This keeps
+        # task-specific coupling info OUT of the generic orchestrator
+        # YAML; a different design task swaps the skill folder. Plumbed
+        # in from Coordinator.from_config when config.skills.path is set.
+        _inject_skill_reference(orchestrator_agent, config.get("_skill_loader"))
 
         # Collect available worker tools from config or extract from agents.
         worker_tools = config.get("_worker_tools", {})

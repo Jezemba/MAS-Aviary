@@ -123,6 +123,107 @@ class TestInitialize:
         assert "calculator_tool" in ctx.available_tools
 
 
+class TestSkillReferenceInjection:
+    """Validates that OrchestratedStrategy.initialize() appends the
+    skill's data_flow.md to the orchestrator's system prompt at runtime,
+    so the data-plane coupling map can live in the skill folder instead
+    of being baked into the orchestrator YAML. Different design task =
+    swap data_flow.md = different couplings."""
+
+    def _write_skill(self, tmp_path, body: str) -> str:
+        """Build a minimal skill folder with SKILL.md + references/data_flow.md."""
+        skill = tmp_path / "skills" / "test-skill"
+        (skill / "references").mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# Test Skill\n")
+        (skill / "references" / "data_flow.md").write_text(body)
+        return str(skill)
+
+    def _read_orchestrator_system_prompt(self, agent) -> str:
+        mem = agent.memory
+        sp = mem.system_prompt
+        return sp.system_prompt if hasattr(sp, "system_prompt") else str(sp or "")
+
+    def test_skill_reference_appended_to_system_prompt(
+        self, tmp_path, orchestrator_agent, base_config, worker_tools
+    ):
+        from src.skills.skill_loader import SkillLoader
+
+        skill_path = self._write_skill(
+            tmp_path, "# Coupling map\n\n- aero.CL -> aviary.LIFT_COEFFICIENT\n"
+        )
+        base_config["_worker_tools"] = worker_tools
+        base_config["_skill_loader"] = SkillLoader(skill_path)
+
+        strategy = OrchestratedStrategy()
+        strategy.initialize({"orchestrator": orchestrator_agent}, base_config)
+
+        sp = self._read_orchestrator_system_prompt(orchestrator_agent)
+        assert "ACTIVE DATA-PLANE COUPLINGS" in sp, (
+            "Skill appendix header missing — skill reference was not "
+            "injected into the orchestrator system prompt."
+        )
+        assert "aero.CL -> aviary.LIFT_COEFFICIENT" in sp, (
+            "Skill body missing — load_reference('data_flow.md') was not "
+            "appended verbatim."
+        )
+
+    def test_missing_skill_loader_is_silent_noop(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        """If no skill loader is configured, initialize() must NOT raise
+        and the orchestrator must still function (this is the default
+        for tests that don't bother to set up a skill folder)."""
+        base_config["_worker_tools"] = worker_tools
+        # Deliberately do NOT set _skill_loader.
+
+        before = self._read_orchestrator_system_prompt(orchestrator_agent)
+        strategy = OrchestratedStrategy()
+        strategy.initialize({"orchestrator": orchestrator_agent}, base_config)
+        after = self._read_orchestrator_system_prompt(orchestrator_agent)
+
+        # No appendix header should appear when no skill is configured.
+        assert "ACTIVE DATA-PLANE COUPLINGS" not in after
+        # Original prompt preserved.
+        assert before == after or before in after
+
+    def test_unavailable_skill_loader_is_silent_noop(
+        self, tmp_path, orchestrator_agent, base_config, worker_tools
+    ):
+        """If the skill path doesn't exist on disk, load_reference returns
+        empty and we silently skip — degrades gracefully."""
+        from src.skills.skill_loader import SkillLoader
+
+        base_config["_worker_tools"] = worker_tools
+        base_config["_skill_loader"] = SkillLoader(tmp_path / "no-such-skill")
+
+        strategy = OrchestratedStrategy()
+        strategy.initialize({"orchestrator": orchestrator_agent}, base_config)
+
+        sp = self._read_orchestrator_system_prompt(orchestrator_agent)
+        assert "ACTIVE DATA-PLANE COUPLINGS" not in sp
+
+    def test_empty_data_flow_is_silent_noop(
+        self, tmp_path, orchestrator_agent, base_config, worker_tools
+    ):
+        """If data_flow.md is empty/missing inside an otherwise valid
+        skill folder, don't inject an empty appendix."""
+        from src.skills.skill_loader import SkillLoader
+
+        skill = tmp_path / "skills" / "empty-skill"
+        (skill / "references").mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# Empty Skill\n")
+        # No data_flow.md written.
+
+        base_config["_worker_tools"] = worker_tools
+        base_config["_skill_loader"] = SkillLoader(str(skill))
+
+        strategy = OrchestratedStrategy()
+        strategy.initialize({"orchestrator": orchestrator_agent}, base_config)
+
+        sp = self._read_orchestrator_system_prompt(orchestrator_agent)
+        assert "ACTIVE DATA-PLANE COUPLINGS" not in sp
+
+
 # ---- Phase 1: Team creation -------------------------------------------------
 
 
