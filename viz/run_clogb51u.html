@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Networked run · blackboard activity · MAS-Aviary</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --panel-2: #232730;
+    --border: #2c3038;
+    --text: #e5e7eb;
+    --text-dim: #9aa0aa;
+    --accent: #4F8EF7;
+    --ok: #34C76A;
+    --fail: #EB5757;
+  }
+  * { box-sizing: border-box }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    margin: 0; background: var(--bg); color: var(--text);
+    font-size: 14px; line-height: 1.45;
+  }
+  header {
+    padding: 28px 36px 16px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #161922 0%, var(--bg) 100%);
+  }
+  header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600 }
+  header .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 14px }
+  header .meta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center }
+  .metric-chip, .wandb-link, .legend-chip {
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 999px; font-size: 12px;
+  }
+  .metric-chip b { color: var(--accent) }
+  .wandb-link { color: var(--accent); text-decoration: none }
+  .wandb-link:hover { text-decoration: underline }
+  .legend-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-color: var(--color);
+  }
+  .legend-chip::before {
+    content: ""; display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--color);
+  }
+  main {
+    display: grid; grid-template-columns: 380px 1fr;
+    gap: 24px; padding: 24px 36px 60px;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px;
+  }
+  .panel h2 {
+    margin: 0 0 14px; font-size: 13px; font-weight: 600;
+    color: var(--text-dim); text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+  /* TODO board */
+  table.todo-board {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  table.todo-board th, table.todo-board td {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  table.todo-board th { color: var(--text-dim); font-weight: 500; font-size: 11px }
+  .status-pill {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+  }
+  .status-done    { background: rgba(52,199,106,.18); color: #6FE39A }
+  .status-claimed { background: rgba(242,153,74,.22); color: #FFB870 }
+  .status-pending { background: rgba(120,120,120,.25); color: #c8c8c8 }
+  .status-failed  { background: rgba(235,87,87,.22); color: #FF7E7E }
+  /* Tool breakdown */
+  table.tools { width: 100%; border-collapse: collapse; font-size: 13px }
+  table.tools td { padding: 4px 8px }
+  table.tools td:last-child { text-align: right; color: var(--accent) }
+  /* Timeline */
+  ul.timeline {
+    list-style: none; margin: 0; padding: 0; position: relative;
+    counter-reset: tl;
+  }
+  ul.timeline::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 2px;
+    width: 2px; background: var(--border);
+  }
+  li.evt {
+    position: relative; padding: 10px 0 12px 24px;
+    border-bottom: 1px solid transparent;
+  }
+  li.evt + li.evt { border-top: 1px solid var(--panel-2) }
+  .evt-bar {
+    position: absolute; left: -4px; top: 17px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--agent); box-shadow: 0 0 0 3px var(--bg);
+  }
+  .evt-meta {
+    display: flex; gap: 12px; align-items: baseline; font-size: 13px;
+  }
+  .evt-idx { color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 11px }
+  .evt-agent { font-weight: 600 }
+  .evt-label { background: var(--panel-2); padding: 1px 8px; border-radius: 4px; font-size: 11px; letter-spacing: 0.4px }
+  .evt-sub  { font-size: 12px; color: var(--text-dim); margin-top: 4px }
+  .evt-sub code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: 11px }
+  .evt-sub .ok   { color: var(--ok); font-weight: 500 }
+  .evt-sub .fail { color: var(--fail); font-weight: 500 }
+  .evt-obs {
+    margin-top: 6px; padding: 8px 10px; background: var(--panel-2);
+    border-radius: 6px; font-size: 12px; color: var(--text-dim);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .evt-loc { font-size: 10px; color: #555; margin-top: 4px }
+  /* Filter controls */
+  .filters {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  }
+  .filters label { display: block; margin: 4px 0; font-size: 13px; cursor: pointer }
+  .filters input { margin-right: 6px }
+  footer {
+    color: var(--text-dim); font-size: 11px; text-align: center;
+    padding: 16px 36px 28px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Networked run · blackboard activity</h1>
+  <div class="subtitle">
+    Source: <code>pipeline_mdo_f25_networked_concurrent.log</code> · 38 blackboard events recorded
+  </div>
+  <div class="meta-row">
+    <a class="wandb-link" href="https://wandb.ai/jessicae/mas-aviary-stat/runs/clogb51u" target="_blank">wandb · clogb51u</a>
+    
+    <span class="legend-chip" style="--color: #4F8EF7">agent_1 (2)</span><span class="legend-chip" style="--color: #34C76A">agent_2 (9)</span><span class="legend-chip" style="--color: #F2994A">agent_3 (25)</span><span class="legend-chip" style="--color: #9B51E0">agent_4 (2)</span>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="panel">
+      <h2>Final TODO board</h2>
+      <table class="todo-board">
+        <thead>
+          <tr>
+            <th>TODO</th><th>Status</th><th>Assigned</th><th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="todo-row todo-done"><td>geometry</td><td><span class="status-pill status-done">done</span></td><td style="color: #34C76A">agent_2</td><td>CPACS </td></tr><tr class="todo-row todo-claimed"><td>aero</td><td><span class="status-pill status-claimed">claimed</span></td><td style="color: #4F8EF7">agent_1</td><td></td></tr><tr class="todo-row todo-done"><td>mass</td><td><span class="status-pill status-done">done</span></td><td style="color: #34C76A">agent_2</td><td>Mass estimation </td></tr><tr class="todo-row todo-claimed"><td>propulsion</td><td><span class="status-pill status-claimed">claimed</span></td><td style="color: #34C76A">agent_2</td><td></td></tr><tr class="todo-row todo-done"><td>mission</td><td><span class="status-pill status-done">done</span></td><td style="color: #F2994A">agent_3</td><td>Mission configured for</td></tr><tr class="todo-row todo-done"><td>simulation</td><td><span class="status-pill status-done">done</span></td><td style="color: #34C76A">agent_2</td><td>Simulation complete: </td></tr><tr class="todo-row todo-claimed"><td>evaluation</td><td><span class="status-pill status-claimed">claimed</span></td><td style="color: #F2994A">agent_3</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel" style="margin-top: 18px">
+      <h2>Tool usage</h2>
+      <table class="tools">
+        <tbody>
+          <tr><td>read_todos</td><td>11</td></tr><tr><td>claim_todo</td><td>11</td></tr><tr><td>read_blackboard</td><td>6</td></tr><tr><td>write_blackboard</td><td>6</td></tr><tr><td>mark_todo_done</td><td>4</td></tr>
+        </tbody>
+      </table>
+      <div class="filters">
+        <h2 style="margin-top: 4px">Filter timeline</h2>
+        <label><input type="checkbox" class="agent-filter" data-agent="all" checked>Show all agents</label>
+        <label><input type="checkbox" class="agent-filter" data-agent="agent_1" checked><span style="color:#4F8EF7">●</span> agent_1</label><label><input type="checkbox" class="agent-filter" data-agent="agent_2" checked><span style="color:#34C76A">●</span> agent_2</label><label><input type="checkbox" class="agent-filter" data-agent="agent_3" checked><span style="color:#F2994A">●</span> agent_3</label><label><input type="checkbox" class="agent-filter" data-agent="agent_4" checked><span style="color:#9B51E0">●</span> agent_4</label>
+      </div>
+    </div>
+  </aside>
+
+  <section>
+    <div class="panel">
+      <h2>Timeline (chronological)</h2>
+      <ul class="timeline">
+        <li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#001</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=pending - aero           status=pending - mass           status=pending - propulsion     status=pending - mission        status=pending - simulation     status=pending - evaluation     status=pending</div><div class="evt-loc">log line 129</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#002</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 141</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#003</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>geometry</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;geometry&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; successfully claimed &#x27;geometry&#x27;&quot;}</div><div class="evt-loc">log line 174</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#004</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=claimed assigned_to=agent_2 - aero           status=pending - mass           status=pending - propulsion     status=pending - mission        status=pending - simulation     status=pending - evaluation     status=pend…</div><div class="evt-loc">log line 181</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#005</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=claimed assigned_to=agent_2 - aero           status=pending - mass           status=pending - propulsion     status=pending - mission        status=pending - simulation     status=pending - evaluation     status=pend…</div><div class="evt-loc">log line 193</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#006</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 205</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#007</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 208</div></li>
+<li class="evt evt-claim_todo" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#008</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>mission</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;mission&quot;, &quot;message&quot;: &quot;&#x27;agent_3&#x27; successfully claimed &#x27;mission&#x27;&quot;}</div><div class="evt-loc">log line 282</div></li>
+<li class="evt evt-claim_todo" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#009</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>mission</code> · <span class="fail">✗ rejected</span></div><div class="evt-obs">{&quot;success&quot;: false, &quot;todo_name&quot;: &quot;mission&quot;, &quot;message&quot;: &quot;TODO &#x27;mission&#x27; is currently claimed by &#x27;agent_3&#x27; \u2014 try a different TODO&quot;}</div><div class="evt-loc">log line 289</div></li>
+<li class="evt evt-claim_todo" style="--agent: #4F8EF7"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#010</span><span class="evt-agent" style="color:#4F8EF7">agent_1</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>aero</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;aero&quot;, &quot;message&quot;: &quot;&#x27;agent_1&#x27; successfully claimed &#x27;aero&#x27;&quot;}</div><div class="evt-loc">log line 307</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#011</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><code>agent_3_status</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;agent_3_status&quot;, &quot;entry_type&quot;: &quot;status&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 314</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#012</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><code>aero_status</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;aero_status&quot;, &quot;entry_type&quot;: &quot;status&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 324</div></li>
+<li class="evt evt-mark_todo_done" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#013</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">✅ DONE</span></div><div class="evt-sub"><code>mission</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;mission&quot;, &quot;message&quot;: &quot;&#x27;agent_3&#x27; marked &#x27;mission&#x27; done&quot;}</div><div class="evt-loc">log line 427</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#014</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><code>mission_results</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;mission_results&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 439</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#015</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=claimed assigned_to=agent_2 - aero           status=claimed assigned_to=agent_1 - mass           status=pending - propulsion     status=pending - mission        status=done assigned_to=agent_3 result=Mission configur…</div><div class="evt-loc">log line 452</div></li>
+<li class="evt evt-claim_todo" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#016</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>evaluation</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;evaluation&quot;, &quot;message&quot;: &quot;&#x27;agent_3&#x27; successfully claimed &#x27;evaluation&#x27;&quot;}</div><div class="evt-loc">log line 465</div></li>
+<li class="evt evt-mark_todo_done" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#017</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">✅ DONE</span></div><div class="evt-sub"><code>geometry</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;geometry&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; marked &#x27;geometry&#x27; done&quot;}</div><div class="evt-loc">log line 530</div></li>
+<li class="evt evt-claim_todo" style="--agent: #4F8EF7"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#018</span><span class="evt-agent" style="color:#4F8EF7">agent_1</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>aero</code> · <span class="fail">✗ rejected</span></div><div class="evt-obs">{&quot;success&quot;: false, &quot;todo_name&quot;: &quot;aero&quot;, &quot;message&quot;: &quot;TODO &#x27;aero&#x27; is currently claimed by &#x27;agent_1&#x27; \u2014 try a different TODO&quot;}</div><div class="evt-loc">log line 550</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#019</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>mass</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;mass&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; successfully claimed &#x27;mass&#x27;&quot;}</div><div class="evt-loc">log line 566</div></li>
+<li class="evt evt-mark_todo_done" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#020</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">✅ DONE</span></div><div class="evt-sub"><code>mass</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;mass&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; marked &#x27;mass&#x27; done&quot;}</div><div class="evt-loc">log line 644</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#021</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 653</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#022</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>propulsion</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;propulsion&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; successfully claimed &#x27;propulsion&#x27;&quot;}</div><div class="evt-loc">log line 668</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#023</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1096</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#024</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1111</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#025</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1126</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#026</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 1141</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#027</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 1200</div></li>
+<li class="evt evt-read_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#028</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📖 READ</span></div><div class="evt-sub"></div><div class="evt-obs">{&quot;entries&quot;: |{&quot;key&quot;: &quot;session_id&quot;, &quot;value&quot;: &quot;34f850bd-f677-4387-9f84-c2861d8295be&quot;, &quot;author&quot;: &quot;system&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;timestamp&quot;: 1779728409.9564583, &quot;version&quot;: 1}, {&quot;key&quot;: &quot;phase_session_setup&quot;, &quot;value&quot;: &quot;completed by pre-hook (…</div><div class="evt-loc">log line 1259</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#029</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>simulation</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;simulation&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; successfully claimed &#x27;simulation&#x27;&quot;}</div><div class="evt-loc">log line 1318</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#030</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>simulation</code> · <span class="fail">✗ rejected</span></div><div class="evt-obs">{&quot;success&quot;: false, &quot;todo_name&quot;: &quot;simulation&quot;, &quot;message&quot;: &quot;TODO &#x27;simulation&#x27; is currently claimed by &#x27;agent_2&#x27; \u2014 try a different TODO&quot;}</div><div class="evt-loc">log line 1325</div></li>
+<li class="evt evt-claim_todo" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#031</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">🎯 CLAIM</span></div><div class="evt-sub"><code>simulation</code> · <span class="fail">✗ rejected</span></div><div class="evt-obs">{&quot;success&quot;: false, &quot;todo_name&quot;: &quot;simulation&quot;, &quot;message&quot;: &quot;TODO &#x27;simulation&#x27; is currently claimed by &#x27;agent_2&#x27; \u2014 try a different TODO&quot;}</div><div class="evt-loc">log line 1332</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#032</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1339</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#033</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1354</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #9B51E0"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#034</span><span class="evt-agent" style="color:#9B51E0">agent_4</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><code>agent_4_status</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;agent_4_status&quot;, &quot;entry_type&quot;: &quot;status&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 1376</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #9B51E0"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#035</span><span class="evt-agent" style="color:#9B51E0">agent_4</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><code>agent_4_status</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;agent_4_status_agent_1&quot;, &quot;entry_type&quot;: &quot;status&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 1408</div></li>
+<li class="evt evt-mark_todo_done" style="--agent: #34C76A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#036</span><span class="evt-agent" style="color:#34C76A">agent_2</span><span class="evt-label">✅ DONE</span></div><div class="evt-sub"><code>simulation</code> · <span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;todo_name&quot;: &quot;simulation&quot;, &quot;message&quot;: &quot;&#x27;agent_2&#x27; marked &#x27;simulation&#x27; done&quot;}</div><div class="evt-loc">log line 1556</div></li>
+<li class="evt evt-read_todos" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#037</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">📋 READ-TODOS</span></div><div class="evt-sub"></div><div class="evt-obs">- geometry       status=done assigned_to=agent_2 result=CPACS opened, volume mesh generated: 476k nodes, 2.87M elements, SU2 format read - aero           status=claimed assigned_to=agent_1 - mass           status=done assigned_to=agent_2 re…</div><div class="evt-loc">log line 1595</div></li>
+<li class="evt evt-write_blackboard" style="--agent: #F2994A"><div class="evt-bar"></div><div class="evt-meta"><span class="evt-idx">#038</span><span class="evt-agent" style="color:#F2994A">agent_3</span><span class="evt-label">✏️ WRITE</span></div><div class="evt-sub"><span class="ok">✓ success</span></div><div class="evt-obs">{&quot;success&quot;: true, &quot;key&quot;: &quot;optimization_results&quot;, &quot;entry_type&quot;: &quot;result&quot;, &quot;version&quot;: 1, &quot;warning&quot;: null}</div><div class="evt-loc">log line 1888</div></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Generated by <code>scripts/visualize_run.py</code> · MAS-Aviary networked
+  concurrent_blackboard mode (arxiv 2510.18893 CodeCRDT pattern)
+</footer>
+
+<script>
+  // Per-agent timeline filter. "Show all" master toggle + per-agent checkboxes.
+  const master = document.querySelector('.agent-filter[data-agent="all"]');
+  const perAgent = Array.from(document.querySelectorAll('.agent-filter:not([data-agent="all"])'));
+  function apply() {
+    const showAll = master.checked;
+    const allowed = new Set(
+      perAgent.filter(cb => cb.checked).map(cb => cb.dataset.agent)
+    );
+    document.querySelectorAll('li.evt').forEach(el => {
+      const agentSpan = el.querySelector('.evt-agent');
+      const agent = agentSpan ? agentSpan.textContent : '';
+      el.style.display = (showAll || allowed.has(agent)) ? '' : 'none';
+    });
+  }
+  master.addEventListener('change', () => {
+    perAgent.forEach(cb => { cb.checked = master.checked; });
+    apply();
+  });
+  perAgent.forEach(cb => cb.addEventListener('change', () => {
+    master.checked = perAgent.every(c => c.checked);
+    apply();
+  }));
+</script>
+</body>
+</html>
