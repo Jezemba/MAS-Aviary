@@ -1,5 +1,44 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Verify pre-hook cursor fix + sequential_staged_pipeline live
+
+Re-ran mdo_f25_sequential_staged_pipeline end-to-end with the
+set_session_id cursor fix in place.
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/u77aj8bg
+  wandb-reported fuel:         **12,532.68 kg**
+  vs F25 spec block fuel:      -3.6% (12,532.68 vs 12,100)
+  Stage progression:           all 7 stages ran in order
+                                 (geometry_engineer, aerodynamics_analyst,
+                                  structures_analyst, propulsion_analyst,
+                                  mission_architect, simulation_executor,
+                                  mdo_integrator)
+  Geometry stage check:        open_cpacs called with the real path
+                                 (.../mass-mcp/tests/fixtures/D150_simple.xml,
+                                  NOT the hallucinated D150_AGILE_Hangar_v3.xml
+                                  from the first run)
+  Geometry actually did work:  generate_volume_mesh fired and produced
+                                 a 41 MB volume mesh
+  Pre-hook cursor:             stayed at 0 — geometry_engineer ran
+                                 normally; session_id was still stored
+                                 for downstream stages
+  Aviary back-compat:          unaffected — TestSetSessionIdCursorSafety
+                                 still asserts the original skip behavior
+                                 for mission_architect-first pipelines
+
+Side-by-side, sequential combos on the MDO-F25 pipeline:
+
+| Sequential combo | wandb | fuel_kg | Notes |
+|---|---|---|---|
+| `iterative_feedback` (Job F) | iepdeu70 | 12,755.86 | baseline |
+| `staged_pipeline` pre-fix (Job 3 step 1, first run) | 16ibypaf | 12,747.47 | bug masked — geometry stage skipped |
+| `staged_pipeline` post-fix (this run) | u77aj8bg | **12,532.68** | all 7 stages ran correctly |
+
+Status: Job 3 step 1 acceptance fully met. The combination is
+end-to-end correct and the latent pre-hook bug it exposed is now
+guarded by 3 unit-level regression tests.
+
+
 ### 2026-05-25 (later) — Fix StagedPipelineHandler pre-hook cursor bug
 
 First end-to-end run of `mdo_f25_sequential_staged_pipeline` (wandb
