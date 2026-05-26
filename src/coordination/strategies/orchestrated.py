@@ -116,6 +116,7 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._executor = None
         self._total_turns: int = 0
         self._graph_roles: list[str] | None = None  # roles from graph-routed handler
+        self._pipeline_stage_names: list[str] | None = None  # stage names from staged_pipeline handler
 
         # Delegation progress tracking (detects stalls / direct completion).
         self._prev_created_count: int = 0
@@ -266,6 +267,15 @@ class OrchestratedStrategy(CoordinationStrategy):
         # Graph role hints — when using a graph-routed execution handler,
         # inject required role names so the orchestrator creates matching agents.
         self._graph_roles = config.get("_graph_roles")
+
+        # Pipeline stage names — when using a staged_pipeline execution
+        # handler, reorder ctx.assignments at execution-phase entry so
+        # each stage gets the worker whose name matches it. Without
+        # this, the orchestrator's arbitrary assign_task order pairs
+        # the wrong worker with each stage_prompt (observed 2026-05-25
+        # in wandb 7wbgfu74: simulation_executor ran Stage 1's
+        # geometry_engineer prompt and never called open_cpacs).
+        self._pipeline_stage_names = config.get("_pipeline_stage_names")
 
         # Reset phase state.
         self._phase = "creation"
@@ -563,6 +573,17 @@ class OrchestratedStrategy(CoordinationStrategy):
         if self._graph_roles and self._context:
             self._register_graph_role_aliases()
 
+        # Reorder assignments to match pipeline stage order when a
+        # staged_pipeline handler is in use. The orchestrator's
+        # assign_task order is arbitrary; the handler pairs assignments
+        # to stages by index, so without this reorder each stage_prompt
+        # is delivered to the wrong worker and the discipline tools
+        # never fire (the v9 cascade: open_cpacs / run_su2_solver /
+        # estimate_mass / run_cycle all reported "Expected tool ... was
+        # not called" while the pipeline advanced over empty work).
+        if self._pipeline_stage_names and self._context and self._context.assignments:
+            self._reorder_assignments_by_stage_name()
+
         if not self._context or not self._context.assignments:
             self._phase = "done"
             return CoordinationAction(
@@ -573,6 +594,40 @@ class OrchestratedStrategy(CoordinationStrategy):
             )
 
         return self._execution_step(history, current_state)
+
+    def _reorder_assignments_by_stage_name(self) -> None:
+        """Reorder ctx.assignments so each pipeline stage's same-named
+        worker runs first. Called once at execution-phase entry when
+        _pipeline_stage_names is set (staged_pipeline handler in use).
+
+        Mutates ctx.assignments in place. Assignments whose agent_name
+        doesn't match any stage keep their relative order at the end
+        of the list (preserves the existing fallback for surplus
+        workers).
+        """
+        if not self._context or not self._pipeline_stage_names:
+            return
+        original = list(self._context.assignments)
+        name_to_assignment: dict[str, dict] = {}
+        for a in original:
+            agent_name = a.get("agent_name") if isinstance(a, dict) else getattr(a, "agent_name", None)
+            if agent_name and agent_name not in name_to_assignment:
+                name_to_assignment[agent_name] = a
+
+        ordered: list[dict] = []
+        consumed_ids: set[int] = set()
+        for stage_name in self._pipeline_stage_names:
+            matched = name_to_assignment.get(stage_name)
+            if matched is not None and id(matched) not in consumed_ids:
+                ordered.append(matched)
+                consumed_ids.add(id(matched))
+
+        for a in original:
+            if id(a) not in consumed_ids:
+                ordered.append(a)
+
+        self._context.assignments.clear()
+        self._context.assignments.extend(ordered)
 
     def _retry_via_orchestrator(self, history: list) -> CoordinationAction:
         """Loop back to the orchestrator after workers failed a required signal.

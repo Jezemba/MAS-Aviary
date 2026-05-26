@@ -362,6 +362,119 @@ class TestSetupOnlyExecution:
         assert s.phase == "done"
 
 
+# ---- Pipeline-stage-aware assignment reorder --------------------------------
+
+
+class TestPipelineStageReorder:
+    """Regression for the orchestrated_staged_pipeline content cascade
+    (v9, wandb same 7,224 kg as v8). Earlier attempt to reorder at the
+    handler level was a no-op because the strategy passes one assignment
+    per execute() call. Reorder must happen ONCE at execution-phase
+    entry, before _execution_index starts walking.
+
+    Mirrors the existing `_graph_roles` wiring: batch_runner stores
+    pipeline stage names in `coord_config["_pipeline_stage_names"]`;
+    the strategy reads it on initialize and reorders ctx.assignments
+    when transitioning to execution phase."""
+
+    def test_assignments_reordered_to_match_stage_names(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Orchestrator's assign_task order: simulation_executor first
+        # (matches the v9 failure: simulation_executor was queue
+        # position 0, geometry_engineer was position 3). With reorder,
+        # geometry_engineer should run first.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        base_config["_pipeline_stage_names"] = [
+            "geometry_engineer",
+            "aerodynamics_analyst",
+            "structures_analyst",
+            "simulation_executor",
+        ]
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("simulation_executor", "structures_analyst",
+                     "geometry_engineer", "aerodynamics_analyst"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": f"task for {name}",
+                 "assigned_at_turn": 1}
+            )
+
+        # Trigger the transition (would normally be invoked from
+        # next_step after final_answer returns DELEGATION_COMPLETE).
+        strategy._transition_to_execution([], {"task": "T"})
+
+        # ctx.assignments should now be in pipeline-stage order.
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "geometry_engineer",
+            "aerodynamics_analyst",
+            "structures_analyst",
+            "simulation_executor",
+        ]
+
+    def test_unmatched_assignment_falls_through_to_end(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # If the orchestrator created an extra agent whose name
+        # doesn't match any stage (e.g. "mission_setup_agent" in v9),
+        # it must still appear after all named stages.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        base_config["_pipeline_stage_names"] = ["geometry_engineer"]
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("free_worker", "geometry_engineer"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": "t", "assigned_at_turn": 1}
+            )
+
+        strategy._transition_to_execution([], {"task": "T"})
+
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "geometry_engineer",  # named match first
+            "free_worker",        # unmatched at the end
+        ]
+
+    def test_no_reorder_when_pipeline_stage_names_absent(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Back-compat: combos that don't use staged_pipeline (e.g.
+        # iterative_feedback) don't set _pipeline_stage_names, so
+        # the strategy must keep the assignment order as-is.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        # Note: NO _pipeline_stage_names in base_config.
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("zebra", "alpha", "mike"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": "t", "assigned_at_turn": 1}
+            )
+
+        strategy._transition_to_execution([], {"task": "T"})
+
+        # Order unchanged — no pipeline_stage_names to drive reorder.
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "zebra", "alpha", "mike",
+        ]
+
+
 # ---- Phase 2: Execution (active) --------------------------------------------
 
 

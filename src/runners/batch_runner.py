@@ -1046,6 +1046,30 @@ def _execute_combination(
                 # skips phase gating for staged_pipeline).
                 coordinator.config["execution_handler"] = combo.handler
 
+                # When combining orchestrated + staged_pipeline, resolve
+                # the pipeline up front and inject stage names so the
+                # strategy can reorder ctx.assignments at execution-
+                # phase entry. Without this, the orchestrator's
+                # arbitrary assign_task order pairs the wrong worker
+                # with each stage_prompt (the v8/v9 cascade where
+                # geometry_engineer's stage_prompt ran on the
+                # simulation_executor worker and open_cpacs was never
+                # called).
+                if combo.org_structure == "orchestrated" and combo.handler == "staged_pipeline":
+                    try:
+                        pipeline = handler._resolve_pipeline()
+                        stage_names = [s.name for s in pipeline.stages]
+                        if stage_names:
+                            coordinator.config["_pipeline_stage_names"] = stage_names
+                            # The strategy reads this on initialize();
+                            # initialize() has already run by this
+                            # point (Coordinator.from_config), so push
+                            # it onto the live strategy as well.
+                            if hasattr(coordinator.strategy, "_pipeline_stage_names"):
+                                coordinator.strategy._pipeline_stage_names = stage_names
+                    except Exception:
+                        pass
+
                 # When combining orchestrated + graph_routed, extract graph
                 # roles and wire them into the strategy so it can register
                 # role aliases after the creation phase.  Also inject the
