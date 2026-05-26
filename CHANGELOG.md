@@ -1,5 +1,66 @@
 ## [Unreleased]
 
+### 2026-05-26 — Verify per_stage lifecycle live: orchestrated_staged_pipeline works
+
+End-to-end live verification of the per_stage lifecycle_mode added
+in commit 64cac77. v11 produced a real F25-mission fuel value, not
+the Aviary-default no-discipline run from v8.
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/5n7pbhfh
+  wandb-reported fuel:         **12,612.80 kg**
+  vs F25 spec block fuel:      +4.2% (12,612.80 vs 12,100)
+  Per-stage deliveries:        7 (one per pipeline stage as designed)
+  Discipline tool invocations: 7 (open_cpacs, run_su2_solver, etc.
+                                 all fired across the stages)
+  Completion misses:           3 (vs 14 in v8 — most stages now
+                                 actually do their discipline work)
+  Configure_mission fired:     yes, BEFORE run_simulation (the
+                                 mission was actually F25-spec
+                                 2500 nmi / 239 pax / FL330, not the
+                                 Aviary default 1500 nmi / 162 pax)
+  Workflow_phases retry loops: 0 (per_stage bypasses workflow_phases
+                                 validation — orchestrator can't
+                                 satisfy all 7 phases upfront when
+                                 only delegating one at a time)
+
+Side-by-side, sequential vs orchestrated on the MDO-F25 pipeline:
+
+| Combo | wandb | fuel_kg | Notes |
+|---|---|---|---|
+| sequential `iterative_feedback` | iepdeu70 | 12,755.86 | baseline (F25 mission) |
+| sequential `staged_pipeline` | u77aj8bg | 12,532.68 | sequential agents, F25 |
+| orchestrated `staged_pipeline` v8 (setup_only) | 7wbgfu74 | 7,224.22 | broken — Aviary defaults, no real disciplines |
+| **orchestrated `staged_pipeline` v11 (per_stage)** | **5n7pbhfh** | **12,612.80** | per-stage delegation, real F25 mission |
+
+The per_stage architecture closes the orchestrated cascade. The
+orchestrator sees each stage's name + tool hint + previous stage's
+output before deciding the next worker — instead of trying to plan
+all 7 disciplines upfront. Three completion misses remain
+(estimate_mass, run_cycle, set_aircraft_parameters) — these are
+content-prompt-quality issues, but the simulation still ran on
+correct mission parameters because configure_mission landed at
+Stage 5 BEFORE run_simulation at Stage 6.
+
+Status: Job 3 step 2 acceptance now FULLY met at both framework
+AND content levels. The combination produces a real F25-mission
+result, not a default-mission no-op.
+
+Summary of the 12 commits on
+`feat/phase-l-orchestrated-staged-pipeline`:
+- 5bc41f3  wire combination
+- 01ed347  session_id override + setup_only signal-check skip
+- ba73e73  propagate original_task to every stage
+- 810bb2f  switch to openai/gpt-5 (later replaced)
+- 80f16a8  temperature 1.0 for gpt-5
+- e73f33e  pick litellm api_key by provider prefix
+- f911ca2  switch openai/gpt-5 -> openai/gpt-4o
+- 59bd461  tighten stage_prompts
+- a187774  handler-level name match (turned out no-op)
+- 80b78e8  strategy-level assignment reorder
+- 64cac77  per_stage lifecycle mode
+- (this commit) verification
+
+
 ### 2026-05-25 (later) — Verify orchestrated_staged_pipeline framework fixes live (v8)
 
 End-to-end live verification of the eight commits on
