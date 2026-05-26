@@ -846,6 +846,127 @@ class TestOriginalTaskPropagation:
         assert original_task in ctx
 
 
+# ---- Name-based stage-to-assignment matching -------------------------------
+
+
+class TestNameBasedAssignmentMatching:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline content
+    cascade (wandb 7wbgfu74): `execute()` paired assignments to stages
+    by INDEX, so when the orchestrator's `assign_task` order didn't
+    match the pipeline stage order, the wrong worker ran each stage
+    and the discipline tools (open_cpacs, run_su2_solver, estimate_mass,
+    run_cycle) never fired. v8 ran end-to-end but produced fuel=7,224
+    on Aviary defaults because the F25 disciplines did no real work.
+
+    Fix: pair stages to assignments by NAME match when possible. For
+    sequential strategy (where stage_agents are constructed in pipeline
+    order with matching names) the result is unchanged. For orchestrated
+    strategy (where the orchestrator's assign_task order is arbitrary),
+    the right worker now runs each stage_prompt.
+
+    Fallback: assignments whose agent_name doesn't match any stage
+    keep their original position so unrelated test scenarios continue
+    to work."""
+
+    def test_sequential_pipeline_order_unchanged(self):
+        # Sequential strategy: assignments come in pipeline order with
+        # matching names — name-based matching must produce the same
+        # pairing the original order-based matching did.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="aerodynamics_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("opened cpacs"),
+            "aerodynamics_analyst": _make_agent("ran SU2"),
+        }
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="geometry_engineer", task="t"),
+                Assignment(agent_name="aerodynamics_analyst", task="t"),
+            ],
+            agents,
+            None,
+        )
+        assert [m.metadata["stage_name"] for m in msgs] == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+        assert [m.agent_name for m in msgs] == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+
+    def test_orchestrated_reordered_assignments_match_by_name(self):
+        # The regression: orchestrator created agents in a different
+        # order than the pipeline. With order-based matching, the
+        # wrong worker ran each stage. With name-based matching, each
+        # stage gets its named worker.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="aerodynamics_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="structures_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("CPACS opened"),
+            "aerodynamics_analyst": _make_agent("CFD ran"),
+            "structures_analyst": _make_agent("mass estimated"),
+        }
+        # Assignment order ≠ pipeline order (orchestrator's choice).
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="structures_analyst", task="t"),
+                Assignment(agent_name="geometry_engineer", task="t"),
+                Assignment(agent_name="aerodynamics_analyst", task="t"),
+            ],
+            agents,
+            None,
+        )
+        # After name-based matching, stage→agent pairing follows the
+        # pipeline order, not the assignment order.
+        stage_to_agent = {m.metadata["stage_name"]: m.agent_name for m in msgs}
+        assert stage_to_agent["geometry_engineer"] == "geometry_engineer"
+        assert stage_to_agent["aerodynamics_analyst"] == "aerodynamics_analyst"
+        assert stage_to_agent["structures_analyst"] == "structures_analyst"
+
+    def test_unmatched_assignment_falls_through_to_end(self):
+        # An assignment whose agent_name doesn't match any stage
+        # should still get processed (with always-criteria fallback)
+        # AFTER all the named stages.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("ok"),
+            "free_worker": _make_agent("freeform"),
+        }
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="free_worker", task="t"),  # unmatched
+                Assignment(agent_name="geometry_engineer", task="t"),
+            ],
+            agents,
+            None,
+        )
+        # Named match comes first regardless of original position.
+        assert msgs[0].agent_name == "geometry_engineer"
+        # Unmatched assignment falls through to the end.
+        assert msgs[1].agent_name == "free_worker"
+
+
 # ---- Pre-hook session injection (cursor safety) ----------------------------
 
 

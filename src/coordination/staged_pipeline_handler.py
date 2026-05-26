@@ -242,10 +242,48 @@ class StagedPipelineHandler(ExecutionHandler):
         previous_outputs = self._previous_outputs
         # Each entry: (stage_name, content, completion_result)
 
-        # Extract the original task from the first assignment.
+        # Extract the original task from the first assignment BEFORE
+        # reordering, so the structural-context propagation isn't
+        # affected by name-based matching.
         original_task = assignments[0].task if assignments else ""
 
         num_stages = len(pipeline.stages)
+
+        # Reorder assignments to pair each stage with its same-named
+        # agent when possible. Order-based pairing was the cause of
+        # the 2026-05-25 orchestrated_staged_pipeline cascade (wandb
+        # 7wbgfu74): the orchestrator's assign_task order was
+        # arbitrary, so Stage 1's geometry_engineer prompt was
+        # delivered to whatever agent happened to be assigned first
+        # (e.g. simulation_executor), which couldn't call open_cpacs
+        # and the stage's completion criterion missed. For sequential
+        # strategy this reorder is a no-op because stages and agents
+        # are constructed in the same order with matching names.
+        active_stages = pipeline.stages[self._stage_cursor:]
+        name_to_assignment: dict[str, Assignment] = {}
+        for a in assignments:
+            # Preserve original-position priority on name collisions
+            # (the orchestrator can call assign_task multiple times
+            # for the same agent — keep the first).
+            if a.agent_name not in name_to_assignment:
+                name_to_assignment[a.agent_name] = a
+        ordered: list[Assignment] = []
+        consumed: set[int] = set()
+        for stage in active_stages:
+            matched = name_to_assignment.get(stage.name)
+            if matched is not None:
+                # Find the index in the original assignments list and
+                # mark it consumed so the unmatched-fallback pass
+                # below doesn't duplicate.
+                for i, a in enumerate(assignments):
+                    if a is matched and i not in consumed:
+                        consumed.add(i)
+                        ordered.append(a)
+                        break
+        for i, a in enumerate(assignments):
+            if i not in consumed:
+                ordered.append(a)
+        assignments = ordered
 
         for assign_idx, assignment in enumerate(assignments):
             # Use persistent cursor so stage advances across execute() calls.
