@@ -1,5 +1,5 @@
 llm:
-  model_id: "anthropic/claude-sonnet-4-20250514"
+  model_id: "openai/gpt-5"
   backend: "litellm"
   max_new_tokens: 4096
   temperature: 0.3
