@@ -723,6 +723,84 @@ class TestStageResultFields:
         assert handler.last_stage_results[0].output_length == len("hello world")
 
 
+# ---- Pre-hook session injection (cursor safety) ----------------------------
+
+
+class TestSetSessionIdCursorSafety:
+    """Regression for the pre-hook bug from 2026-05-25 (wandb 16ibypaf
+    on mdo_f25_sequential_staged_pipeline): `set_session_id` was
+    hardcoded to skip Stage 1 under the assumption that Stage 1 is
+    always `mission_architect`. That's true for the aviary pipeline
+    but FALSE for the MDO F25 pipeline (geometry_engineer is Stage 1,
+    mission_architect is Stage 5).
+
+    Symptom: geometry_engineer agent ran with the aerodynamics_analyst
+    stage_prompt and hallucinated CPACS filenames since no real
+    geometry stage executed."""
+
+    def test_aviary_pipeline_skips_stage_1(self):
+        # When Stage 1 IS mission_architect (the aviary case), the
+        # cursor must advance to 1 and the synthetic pre-hook output
+        # must be pre-populated.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="mission_architect",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                ),
+                StageDefinition(
+                    name="aerodynamics_analyst",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        handler.set_session_id("test-session-001")
+        assert handler._stage_cursor == 1
+        assert handler._session_id == "test-session-001"
+        assert len(handler._previous_outputs) == 1
+        stage_name, output, _ = handler._previous_outputs[0]
+        assert stage_name == "mission_architect"
+        assert "test-session-001" in output
+
+    def test_mdo_f25_pipeline_does_not_skip_stage_1(self):
+        # The new path: when Stage 1 is something else (e.g.
+        # geometry_engineer for the MDO F25 pipeline), the cursor
+        # must stay at 0 — Stage 1 runs normally. The session_id is
+        # still stored so downstream stages can use it.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="geometry_engineer",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                ),
+                StageDefinition(
+                    name="aerodynamics_analyst",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        handler.set_session_id("test-session-002")
+        assert handler._stage_cursor == 0, (
+            "When Stage 1 is not mission_architect, the pre-hook must "
+            "NOT advance the cursor — Stage 1 still has real work to do."
+        )
+        assert handler._session_id == "test-session-002"
+        # No synthetic Stage 1 output should be injected.
+        assert handler._previous_outputs == []
+
+    def test_empty_pipeline_is_a_noop(self):
+        # Defensive: empty pipeline must not crash. Just store
+        # session_id, do nothing else.
+        pipeline = PipelineDefinition(stages=[])
+        handler = _handler_with_pipeline(pipeline)
+        handler.set_session_id("test-session-003")
+        assert handler._session_id == "test-session-003"
+        assert handler._stage_cursor == 0
+        assert handler._previous_outputs == []
+
+
 # ---- Logger integration ----------------------------------------------------
 
 

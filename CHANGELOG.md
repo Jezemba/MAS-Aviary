@@ -1,5 +1,49 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Fix StagedPipelineHandler pre-hook cursor bug
+
+First end-to-end run of `mdo_f25_sequential_staged_pipeline` (wandb
+16ibypaf) surfaced a latent bug in `StagedPipelineHandler.set_session_id`.
+The method was hardcoded to skip Stage 1 under the assumption that
+Stage 1 is always `mission_architect` — true for the aviary 1500-nmi
+pipeline but FALSE for the MDO F25 pipeline, where Stage 1 is
+`geometry_engineer` and `mission_architect` is Stage 5.
+
+Symptom in the run log: the geometry_engineer agent ran with the
+aerodynamics_analyst stage_prompt (cursor was wrongly at 1) and
+hallucinated CPACS filenames like `D150_AGILE_Hangar_v3.xml` because
+no real geometry stage ever happened. The pipeline still produced
+fuel = 12,747.47 kg by luck (downstream stages compensated), but the
+stage→agent alignment was wrong.
+
+Root cause: the cursor-advance in `set_session_id` assumed the
+pre-hook's create_session + configure_mission "did Stage 1's work,"
+which only holds when Stage 1 IS the mission stage.
+
+Fix (`src/coordination/staged_pipeline_handler.py`): `set_session_id`
+now checks `pipeline.stages[0].name`. If it's `mission_architect`,
+the original skip behavior fires (aviary back-compat). Otherwise the
+cursor stays at 0 and Stage 1 runs normally; the session_id is still
+stored so downstream stages can pick it up.
+
+Test coverage gap (acknowledged): the original Job 3 step 1 wiring
+tests bypassed `coordinator.run()` and therefore the pre-hook
+`set_session_id` path entirely. They only checked combo registration,
+pipeline parsing, and agent tool presence. Two new test layers added:
+
+- `tests/test_staged_pipeline_handler.py::TestSetSessionIdCursorSafety`
+  (unit, runs in normal CI): 3 tests covering the aviary path, the
+  MDO F25 path, and the empty-pipeline defensive case. Uses mocked
+  PipelineDefinitions — no filesystem or MCP dependency.
+
+Verified:
+- Unit suite: 1,424/1,424 passed (was 1,421; +3 new unit-level
+  regression tests). Aviary back-compat (Stage 1 skip when name is
+  `mission_architect`) preserved.
+- Cheap wiring tests under `-m live_mcp_llm`: 6 passed in 1.6 s.
+- Full pipeline re-run pending.
+
+
 ### 2026-05-25 (later) — Phase L Job 3 step 1: sequential_staged_pipeline wired
 
 First of the four remaining MDO-F25 combinations. Wires

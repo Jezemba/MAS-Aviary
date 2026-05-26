@@ -168,14 +168,35 @@ class StagedPipelineHandler(ExecutionHandler):
         self._session_id: str | None = None
 
     def set_session_id(self, session_id: str) -> None:
-        """Inject a pre-created session_id, skipping the mission_architect stage.
+        """Inject a pre-created session_id from the stat_batch_runner
+        pre-hook. The pre-hook calls create_session + configure_mission
+        with the Aviary defaults (1500 nmi / 162 pax / Mach 0.785 /
+        FL350).
 
-        Called by the coordinator when a pre-hook has already created
-        the MCP session and configured the mission.  Advances the stage
-        cursor past Stage 1 and pre-populates previous_outputs so
-        downstream stages receive the session_id in their context.
+        If the pipeline's Stage 1 IS ``mission_architect`` (the
+        Aviary pipeline), this skips Stage 1 because the pre-hook
+        already did its work. The cursor advances to 1 and the
+        synthetic pre-hook output is pre-populated as Stage 1's
+        result so downstream stages see the session_id in their
+        "previous stage" context.
+
+        If Stage 1 is anything else (e.g. ``geometry_engineer`` in
+        the MDO F25 pipeline, where mission_architect is Stage 5 and
+        reconfigures the mission for the F25 spec), the cursor stays
+        at 0 — Stage 1 runs normally. The session_id is stored so
+        downstream stages can still pick it up.
         """
         self._session_id = session_id
+
+        pipeline = self._resolve_pipeline()
+        if not pipeline.stages:
+            return
+        stage_1_name = pipeline.stages[0].name
+        if stage_1_name != "mission_architect":
+            # Pipeline doesn't start with the pre-hook target —
+            # don't advance the cursor. session_id is stored for
+            # downstream context injection only.
+            return
 
         # Pre-populate Stage 1 output so downstream stages see the
         # session_id in their "previous stage" context.
