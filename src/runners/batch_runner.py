@@ -190,6 +190,24 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
     ),
     CombinationConfig(
+        "mdo_f25_orchestrated_staged_pipeline",
+        "orchestrated",
+        "staged_pipeline",
+        # Orchestrated org + staged_pipeline handler. The
+        # orchestrator creates the 7 specialist workers via
+        # create_agent (role names listed in
+        # config/mdo_f25_orchestrated_agents.yaml) and assigns each
+        # to its discipline; the staged_pipeline handler then walks
+        # all 7 stages in order, no further orchestrator round-trips.
+        #
+        # setup_only mirrors the iterative_feedback combo's setting —
+        # the orchestrator builds the team once and exits, the
+        # handler drives execution. Otherwise the orchestrator would
+        # re-invoke after every worker pass, tripling wall-clock.
+        strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
+        handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
+    ),
+    CombinationConfig(
         "mdo_f25_orchestrated_iterative_feedback",
         "orchestrated",
         "iterative_feedback",

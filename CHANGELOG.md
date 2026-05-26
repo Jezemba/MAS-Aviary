@@ -1,5 +1,47 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L Job 3 step 2: orchestrated_staged_pipeline wired
+
+Second of the four remaining MDO-F25 combinations. Wires
+`mdo_f25_orchestrated_staged_pipeline` (orchestrated org ×
+staged_pipeline handler) reusing the new
+`config/mdo_f25_staged_pipeline.yaml` + the pre-hook cursor fix
+landed earlier this commit window.
+
+Pattern: the orchestrator (lifecycle_mode=setup_only) creates 7
+specialist workers via create_agent on its single turn — the
+agents YAML at config/mdo_f25_orchestrated_agents.yaml already
+instructs it to use the exact role names
+(`geometry_engineer`, `aerodynamics_analyst`, …, `mdo_integrator`)
+that match the staged_pipeline stage names. The handler then walks
+all 7 stages in order, no further orchestrator round-trips.
+`setup_only` is load-bearing — without it the orchestrator
+re-invokes after every worker pass, tripling wall-clock cost.
+
+Changes:
+- `src/runners/batch_runner.py` — new `CombinationConfig` entry for
+  `mdo_f25_orchestrated_staged_pipeline`, reusing the shared
+  `_MDO_F25_STAGED_HANDLER_CONFIG`.
+- `tests/test_phase_l_mdo_orchestrated_staged_pipeline_wiring.py` —
+  new 3-test wiring suite under `live_mcp_llm` (runs in <1 s, pure
+  config inspection — no LLM, no MCP). Verifies the combo is
+  registered with the right shape, the orchestrator agents YAML
+  names all 7 stage role names (so the handler doesn't skip stages),
+  and the shared handler config resolves to the 7-stage pipeline.
+
+Verified:
+- Unit suite: 1,424/1,424 passed (no regressions; new file is
+  `live_mcp_llm`-tagged).
+- New wiring tests: 3 passed in 0.04 s.
+- Pre-hook fix from earlier this session protects the orchestrated
+  path too — the staged_pipeline handler's set_session_id() now
+  correctly keeps the cursor at 0 for non-mission-first pipelines
+  regardless of which org structure invokes it.
+
+Pending: full pipeline run for end-to-end verification (~$0.30-1.00,
+5-15 min); will ask the user before launching.
+
+
 ### 2026-05-25 (later) — Verify pre-hook cursor fix + sequential_staged_pipeline live
 
 Re-ran mdo_f25_sequential_staged_pipeline end-to-end with the
