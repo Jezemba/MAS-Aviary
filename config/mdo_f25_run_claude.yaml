@@ -2,7 +2,10 @@ llm:
   model_id: "openai/gpt-5"
   backend: "litellm"
   max_new_tokens: 4096
-  temperature: 0.3
+  # gpt-5 only supports temperature=1 (litellm errors otherwise).
+  # gpt-5.1 supports the full range; bump this back to 0.3 when
+  # switching to a newer model.
+  temperature: 1.0
 
 mcp:
   mode: "real"
