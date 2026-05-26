@@ -475,6 +475,117 @@ class TestPipelineStageReorder:
         ]
 
 
+# ---- per_stage lifecycle mode (per-stage delegation) ------------------------
+
+
+class TestPerStageLifecycleMode:
+    """Per-stage delegation: orchestrator delegates one pipeline stage
+    at a time and sees the previous stage's output/error before
+    deciding the next worker. Designed for staged_pipeline + dynamic
+    workers, where the orchestrator can't reliably plan the whole
+    team upfront (observed across v6-v10 on the orchestrated_staged_
+    pipeline combo)."""
+
+    def _build_strategy(self, orchestrator_agent, base_config, worker_tools, stages):
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "per_stage"
+        base_config["_pipeline_stage_names"] = stages
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+        return strategy
+
+    def test_per_stage_mode_starts_at_stage_zero(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        assert strategy._lifecycle_mode == "per_stage"
+        assert strategy._current_stage_idx == 0
+        assert strategy._pipeline_stage_names == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+
+    def test_creation_input_mentions_current_stage(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # The orchestrator must see WHICH stage it's delegating for.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        action = strategy.next_step([], {"task": "Design F25"})
+        assert action.action_type == "invoke_agent"
+        assert action.agent_name == "orchestrator"
+        # The per-stage context must include the current stage name.
+        assert "geometry_engineer" in action.input_context
+
+    def test_after_stage_runs_advances_to_next_stage(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # After a stage's worker completes, the strategy should
+        # advance _current_stage_idx and return to creation phase so
+        # the orchestrator delegates the NEXT stage.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        ctx = strategy.context
+        # Simulate: orchestrator created geometry_engineer + assigned task
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "Open CPACS",
+            "assigned_at_turn": 1,
+        })
+        # Simulate stage 0 ran and emitted output
+        worker_msg = AgentMessage(
+            agent_name="geometry_engineer",
+            content="CPACS_FILE: /tmp/x.xml\nGEOMETRY_SET",
+            turn_number=1, timestamp=1.0,
+        )
+        strategy._phase = "execution"
+        strategy._execution_index = 1  # stage 0 done
+
+        action = strategy.next_step([worker_msg], {"task": "Design F25"})
+        # Should route back to orchestrator with stage advanced
+        assert strategy._current_stage_idx == 1
+        assert action.agent_name == "orchestrator"
+        # Next stage context must mention aerodynamics_analyst
+        assert "aerodynamics_analyst" in action.input_context
+
+    def test_terminates_after_last_stage(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer"],  # only 1 stage
+        )
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "t",
+            "assigned_at_turn": 1,
+        })
+        worker_msg = AgentMessage(
+            agent_name="geometry_engineer",
+            content="GEOMETRY_SET",
+            turn_number=1, timestamp=1.0,
+        )
+        strategy._phase = "execution"
+        strategy._execution_index = 1
+        strategy._current_stage_idx = 0  # just ran final stage
+
+        action = strategy.next_step([worker_msg], {"task": "T"})
+        # After last stage, terminate.
+        assert action.action_type == "terminate"
+
+
 # ---- Phase 2: Execution (active) --------------------------------------------
 
 

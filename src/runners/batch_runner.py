@@ -193,18 +193,19 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         "mdo_f25_orchestrated_staged_pipeline",
         "orchestrated",
         "staged_pipeline",
-        # Orchestrated org + staged_pipeline handler. The
-        # orchestrator creates the 7 specialist workers via
-        # create_agent (role names listed in
-        # config/mdo_f25_orchestrated_agents.yaml) and assigns each
-        # to its discipline; the staged_pipeline handler then walks
-        # all 7 stages in order, no further orchestrator round-trips.
-        #
-        # setup_only mirrors the iterative_feedback combo's setting —
-        # the orchestrator builds the team once and exits, the
-        # handler drives execution. Otherwise the orchestrator would
-        # re-invoke after every worker pass, tripling wall-clock.
-        strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
+        # Orchestrated org + staged_pipeline handler. Uses the new
+        # per_stage lifecycle_mode (2026-05-26): the orchestrator
+        # delegates ONE pipeline stage at a time, sees the previous
+        # stage's output/error before deciding the next worker, and
+        # creates/reuses workers iteratively. Earlier setup_only
+        # attempt (commits 5bc41f3..80b78e8, runs v1-v10) hit a
+        # content cascade — the orchestrator couldn't reliably plan
+        # all 7 disciplines' tool needs upfront, workers improvised
+        # tool calls, completion criteria missed, and the pipeline
+        # advanced over empty work. Per-stage delegation gives the
+        # orchestrator a tight feedback loop so it can react to each
+        # stage's reality.
+        strategy_config={"orchestrated": {"lifecycle_mode": "per_stage"}},
         handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
     ),
     CombinationConfig(

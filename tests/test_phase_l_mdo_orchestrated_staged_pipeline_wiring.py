@@ -54,7 +54,9 @@ _EXPECTED_STAGE_NAMES = [
 ]
 
 
-def test_combo_registered_with_setup_only_lifecycle():
+def test_combo_registered_with_per_stage_lifecycle():
+    # Combo now uses per_stage lifecycle (2026-05-26). Earlier
+    # setup_only attempt hit a content cascade — see CHANGELOG.
     from src.runners.batch_runner import (
         _MDO_F25_STAGED_HANDLER_CONFIG,
         ALL_COMBINATIONS,
@@ -70,11 +72,11 @@ def test_combo_registered_with_setup_only_lifecycle():
     assert combo.org_structure == "orchestrated"
     assert combo.handler == "staged_pipeline"
 
-    # setup_only is load-bearing: without it the orchestrator would
-    # re-invoke after every worker pass and triple wall-clock cost.
+    # per_stage: orchestrator delegates one stage at a time with
+    # per-stage feedback. See OrchestratedStrategy._per_stage_execution.
     assert combo.strategy_config.get("orchestrated", {}).get(
         "lifecycle_mode"
-    ) == "setup_only"
+    ) == "per_stage"
 
     # Reuses the same handler config as the sequential combo.
     assert combo.handler_config is _MDO_F25_STAGED_HANDLER_CONFIG
@@ -105,6 +107,65 @@ def test_orchestrator_role_names_match_pipeline_stages():
         f"that match the staged_pipeline stages so the orchestrator "
         f"creates workers with the correct names. Missing: {missing}"
     )
+
+
+def test_per_stage_first_call_has_stage_specific_context():
+    """No LLM cost, no MCP cost: build the Coordinator the way
+    batch_runner does, call strategy.next_step() ONCE to confirm
+    per_stage mode delivers stage-specific context to the
+    orchestrator (geometry_engineer first) along with the tool hint."""
+    import os
+
+    from src.config.loader import load_config
+    from src.coordination.coordinator import Coordinator
+    from src.logging.logger import InstrumentationLogger
+    from src.runners.batch_runner import (
+        _MDO_F25_STAGED_HANDLER_CONFIG,
+        _MDO_F25_STRATEGY_CONFIGS,
+        _build_handler,
+    )
+
+    if not os.environ.get("OPENAI_API_KEY") and not os.environ.get(
+        "ANTHROPIC_API_KEY"
+    ):
+        pytest.skip("API key not set")
+
+    agents_path, coord_path = _MDO_F25_STRATEGY_CONFIGS["orchestrated"]
+    config = load_config("config/mdo_f25_run_claude.yaml")
+    config.agents_config = agents_path
+    config.coordination_config = coord_path
+    coord = Coordinator.from_config(
+        config,
+        logger=InstrumentationLogger(config={}),
+        strategy_override="orchestrated",
+    )
+    # Apply the combo's strategy_config override (batch_runner does
+    # this in _execute_combination; replicating here).
+    coord.config.setdefault("orchestrated", {})["lifecycle_mode"] = "per_stage"
+    # Re-initialize so the strategy sees per_stage.
+    coord.strategy.initialize(coord.agents, coord.config)
+
+    # Wire staged_pipeline handler so _pipeline_stage_names is loaded.
+    handler = _build_handler("staged_pipeline", _MDO_F25_STAGED_HANDLER_CONFIG)
+    assert handler is not None
+    coord.execution_handler = handler
+    pipeline = handler._resolve_pipeline()
+    stage_names = [s.name for s in pipeline.stages]
+    coord.config["_pipeline_stage_names"] = stage_names
+    coord.strategy._pipeline_stage_names = stage_names
+
+    # First call — should target Stage 1 (geometry_engineer).
+    action = coord.strategy.next_step([], {"task": "Design F25"})
+    assert action.action_type == "invoke_agent"
+    assert action.agent_name == "orchestrator"
+    # Stage-specific context is present.
+    assert "geometry_engineer" in action.input_context
+    # Tool hint should mention TiGL geometry tools.
+    assert "open_cpacs" in action.input_context or "generate_volume_mesh" in action.input_context
+    # The original task is preserved on the first turn.
+    assert "Design F25" in action.input_context
+    # Stage cursor is at 0.
+    assert coord.strategy._current_stage_idx == 0
 
 
 def test_staged_handler_resolves_pipeline_from_handler_config():

@@ -135,6 +135,10 @@ class GatedFinalAnswer(Tool):
 
         # Phase coverage check: verify assigned agents collectively cover
         # every required workflow phase (setup, execution, evaluation, etc.).
+        # SKIPPED in per_stage mode — orchestrator only delegates one
+        # stage at a time, so it can't satisfy all phases upfront.
+        if ctx.lifecycle_mode == "per_stage":
+            return answer
         missing = _check_phase_coverage(ctx)
         if missing:
             phase_detail = "; ".join(
