@@ -215,6 +215,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             on_delegation_change=self._sync_orchestrator_tools,
             required_tool_phases=config.get("_required_tool_phases", {}),
             required_result_signals=config.get("_required_result_signals", []),
+            lifecycle_mode=self._lifecycle_mode,
         )
 
         # Create orchestrator management tools.

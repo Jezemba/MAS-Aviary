@@ -250,6 +250,96 @@ class TestResolveRequestRefFormats:
         assert out["mesh_base64"] == "ref:nonexistent_key"
 
 
+class TestSessionIdOverride:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline bug:
+    orchestrator-created workers hallucinated session_id strings like
+    `"structures_analysis_session"` instead of receiving the real
+    pre-hook UUID.
+
+    `resolve_request` previously injected session_id only when the
+    arg was MISSING (line 512: `if "session_id" not in resolved`).
+    For sequential pipelines this is fine — workers see the real UUID
+    in their previous-stage context and don't hallucinate. For
+    orchestrated pipelines each worker is a fresh agent with no
+    session_id in its system prompt; if it invents one, the
+    middleware passes the garbage string through and the MCP errors
+    with INVALID_SESSION.
+
+    Fix: if the worker provides a session_id that does NOT match any
+    captured session for this tool's MCP, override it with the real
+    one. Match → trust. Mismatch → replace. Logged either way."""
+
+    @pytest.fixture
+    def primed_state(self):
+        state = DesignState()
+        # Map tool_name → MCP server name so resolve_request knows which
+        # session bucket to check.
+        init_data_plane(state, tool_server_map={
+            "estimate_mass": "mass",
+            "validate_cpacs_inputs": "mass",
+            "configure_mission": "aviary",
+            "create_su2_session": "su2",
+        })
+        # Pretend a real session was captured for mass-mcp via the
+        # pre-hook (the UUID format matches what create_session returns).
+        state.sessions["mass"] = "be573c3c-36ce-425b-aa73-81c4efe5a601"
+        return state
+
+    def test_hallucinated_session_id_is_overridden(self, primed_state):
+        # Worker provides a non-UUID string that doesn't match anything
+        # in sessions. The middleware must replace it with the real
+        # one for this MCP.
+        out = resolve_request(
+            "estimate_mass",
+            {
+                "session_id": "structures_analysis_session",  # hallucinated
+                "wing_mass_method": "FLOPS",
+            },
+        )
+        assert out["session_id"] == "be573c3c-36ce-425b-aa73-81c4efe5a601", (
+            "Hallucinated session_id was passed through unchanged — the "
+            "MCP would error with INVALID_SESSION."
+        )
+
+    def test_real_session_id_is_preserved(self, primed_state):
+        # Worker provides the correct UUID — middleware must leave it
+        # alone.
+        real_sid = "be573c3c-36ce-425b-aa73-81c4efe5a601"
+        out = resolve_request(
+            "validate_cpacs_inputs",
+            {"session_id": real_sid, "cpacs_file_path": "/tmp/f.xml"},
+        )
+        assert out["session_id"] == real_sid
+
+    def test_missing_session_id_is_still_injected(self, primed_state):
+        # The original behavior (inject when missing) must still work.
+        out = resolve_request(
+            "estimate_mass",
+            {"wing_mass_method": "FLOPS"},
+        )
+        assert out["session_id"] == "be573c3c-36ce-425b-aa73-81c4efe5a601"
+
+    def test_no_session_for_mcp_leaves_value_unchanged(self, primed_state):
+        # If no real session has been captured for this MCP yet, don't
+        # override — let the underlying server error normally.
+        out = resolve_request(
+            "create_su2_session",
+            {"session_id": "su2_setup"},
+        )
+        # su2 sessions dict is empty in our fixture, so nothing to
+        # override with. Value passes through.
+        assert out["session_id"] == "su2_setup"
+
+    def test_unknown_tool_no_mcp_mapping_passes_through(self, primed_state):
+        # Tool isn't in the server map — middleware leaves session_id
+        # alone (defensive: don't override what we can't classify).
+        out = resolve_request(
+            "some_unknown_tool",
+            {"session_id": "anything"},
+        )
+        assert out["session_id"] == "anything"
+
+
 class TestRunHistoryPassthroughOriginal:
     def test_read_history_csv_passes_through_no_interception(self, fresh_state):
         """``read_history_csv`` is in _PASSTHROUGH_TOOLS — its rows ARE
