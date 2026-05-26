@@ -813,18 +813,23 @@ class OrchestratedStrategy(CoordinationStrategy):
             self._orchestrator_turns_used = 0
             return self._creation_step(history, current_state)
 
-        # Build input for the worker. Original task + previous-stage
-        # output (or stage_prompt — but the handler will append that).
-        session_id = self._session_id or self._extract_session_id_from_history(history)
-        session_line = f"SESSION_ID: {session_id}\n\n" if session_id else ""
+        # Build input for the worker. Just the task + previous-stage
+        # output. Do NOT inject SESSION_ID — workers consistently
+        # confuse it with file paths or pass it as an unrelated tool
+        # argument (v11 had the geometry worker call
+        # open_cpacs(source=<session uuid>) and get "File not found").
+        # The data-plane middleware (resolve_request) auto-injects
+        # session_id into tool calls when needed; workers don't need
+        # to see the raw UUID. Sequential and iterative_feedback paths
+        # both rely on this same middleware contract.
         prev = ""
         if history:
             last = history[-1]
             prev = last.content if isinstance(last, AgentMessage) else str(last)
         input_context = (
-            f"{session_line}{match['task']}\n\nContext from previous agent:\n{prev}"
+            f"{match['task']}\n\nContext from previous agent:\n{prev}"
             if prev
-            else f"{session_line}{match['task']}"
+            else match['task']
         )
 
         return CoordinationAction(

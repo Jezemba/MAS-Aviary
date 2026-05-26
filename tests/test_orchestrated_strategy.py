@@ -557,6 +557,42 @@ class TestPerStageLifecycleMode:
         # Next stage context must mention aerodynamics_analyst
         assert "aerodynamics_analyst" in action.input_context
 
+    def test_worker_input_does_not_leak_session_uuid(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Regression for v11 bug: pre-hook session_id was prepended
+        # to worker input, and the geometry worker grabbed it as a
+        # file path (open_cpacs(source=<session uuid>) → File not found).
+        # The data-plane middleware auto-injects session_id; workers
+        # must NOT see the raw UUID in their context.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer"],
+        )
+        # Simulate a pre-hook session injection.
+        strategy._session_id = "9c78cb2c-3108-4674-86ff-cad3683e2519"
+
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "Open CPACS at /path/to/D150_simple.xml",
+            "assigned_at_turn": 1,
+        })
+        strategy._phase = "execution"
+
+        action = strategy.next_step([], {"task": "Design F25"})
+        assert action.action_type == "invoke_agent"
+        assert action.agent_name == "geometry_engineer"
+        assert "9c78cb2c" not in action.input_context, (
+            "Session UUID must NOT appear in worker input — the worker "
+            "will confuse it with a file path. Let the data-plane "
+            "middleware auto-inject session_id into tool calls."
+        )
+        # Task text should still be present.
+        assert "D150_simple.xml" in action.input_context
+
     def test_terminates_after_last_stage(
         self, orchestrator_agent, base_config, worker_tools
     ):
