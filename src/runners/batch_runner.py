@@ -86,6 +86,27 @@ _AVIARY_STAGED_HANDLER_CONFIG: dict = {
     ],
 }
 
+# Staged-pipeline handler config for the MDO F25 5-MCP pipeline. Same
+# shape as the aviary version but points at the F25 stage definitions
+# and adds the F25-specific completion-signal keywords (geometry, aero,
+# structures, propulsion stages each emit their own marker).
+_MDO_F25_STAGED_HANDLER_CONFIG: dict = {
+    "pipeline_path": "config/mdo_f25_staged_pipeline.yaml",
+    "context_mode": "all_stages",
+    "verdict_patterns": [
+        "VERDICT",
+        "TASK_COMPLETE",
+        "GEOMETRY_SET",
+        "SOLVER_CONVERGED",
+        "OEM_KG",
+        "SFC_CRUISE",
+        "CONVERGED",
+        "COMPLETE",
+        "CONTINUE",
+        "RETRY",
+    ],
+}
+
 ALL_COMBINATIONS: list[CombinationConfig] = [
     # Sequential x 3 handlers.
     CombinationConfig(
@@ -154,6 +175,19 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         "sequential",
         "iterative_feedback",
         strategy_config={"pipeline_template": "mdo_f25"},
+    ),
+    CombinationConfig(
+        "mdo_f25_sequential_staged_pipeline",
+        "sequential",
+        "staged_pipeline",
+        # Reuses the existing sequential org wiring (7-stage agent
+        # template in config/mdo_f25_sequential_agents.yaml). The
+        # staged_pipeline handler advances through the same 7 stages
+        # without the iterative_feedback per-stage retry-on-warnings
+        # loop — each stage runs once, observational completion check,
+        # then advance regardless.
+        strategy_config={"pipeline_template": "mdo_f25"},
+        handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
     ),
     CombinationConfig(
         "mdo_f25_orchestrated_iterative_feedback",

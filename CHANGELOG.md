@@ -1,5 +1,60 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Phase L Job 3 step 1: sequential_staged_pipeline wired
+
+First of the four remaining MDO-F25 combinations. Wires
+`mdo_f25_sequential_staged_pipeline` (sequential org × staged_pipeline
+handler). The sequential org structure is already proven by
+`mdo_f25_sequential_iterative_feedback` (wandb iepdeu70, 12,755 kg);
+this combo differs only in the execution handler — staged_pipeline
+runs each stage exactly once with an OBSERVATIONAL completion check,
+then advances regardless. No per-stage retry-on-warnings loop.
+
+Changes:
+- New `config/mdo_f25_staged_pipeline.yaml` — 7-stage pipeline
+  definition matching the existing 7-agent template
+  (`geometry_engineer`, `aerodynamics_analyst`, `structures_analyst`,
+  `propulsion_analyst`, `mission_architect`, `simulation_executor`,
+  `mdo_integrator`). Replaces a pre-existing stub that used the
+  unsupported `required_keywords` criterion type and had no
+  stage_prompts. Each new stage carries a `tool_attempted`
+  completion criterion keyed on the discipline's signature MCP tool
+  (`open_cpacs`, `run_simulation`, `estimate_mass`, `run_cycle`,
+  `set_aircraft_parameters`, `run_simulation`, plus
+  `output_contains/verdict_present` for `mdo_integrator`).
+- `src/runners/batch_runner.py` — added `_MDO_F25_STAGED_HANDLER_CONFIG`
+  pointing at the new pipeline YAML and carrying F25-specific
+  verdict patterns (`GEOMETRY_SET`, `SOLVER_CONVERGED`, `OEM_KG`,
+  `SFC_CRUISE`, `CONVERGED`, etc.). New `CombinationConfig` entry
+  `mdo_f25_sequential_staged_pipeline` with `org_structure="sequential"`,
+  `handler="staged_pipeline"`, the new handler_config, and the
+  existing `pipeline_template="mdo_f25"` strategy hint.
+- `tests/test_phase_l_mdo_sequential_staged_pipeline_wiring.py` — new
+  6-test wiring suite under the `live_mcp_llm` marker:
+  - 4 YAML-shape checks (no LLM/MCP needed): pipeline parses, stage
+    names match expectations, every stage has a valid criteria type
+    + non-empty stage_prompt, the combo is registered in
+    `ALL_COMBINATIONS`.
+  - 2 live wiring checks (MCP servers required, no LLM call):
+    StagedPipelineHandler resolves 7 stages from the new pipeline
+    YAML; `geometry_engineer` agent has `open_cpacs` +
+    `generate_volume_mesh` after `strategy.initialize()`.
+
+Verified:
+- Unit suite: 1,421/1,421 passed (no regressions; new file is
+  `live_mcp_llm`-gated so it's deselected from the unit run).
+- `tests/test_phase_l_mdo_sequential_staged_pipeline_wiring.py`
+  under `-m live_mcp_llm`: 6 passed in 1.59 s (no full LLM cost
+  because these are wiring-only checks).
+- Audit confirmed `aerodynamics_analyst` has `get_valid_config_options`
+  (line 489) and `propulsion_analyst` has `get_design_inputs`
+  (line 727) in `config/mdo_f25_sequential_agents.yaml` — no agent
+  YAML changes needed.
+
+Pending: full pipeline run for end-to-end verification (~$0.30-0.50,
+5-15 min); will ask the user before launching.
+
+
 ### 2026-05-25 (later) — Phase L Job 2: parallel-execution swim lanes
 
 User's Job 2 ask was to "show the parallel nature [of peer execution

@@ -1,48 +1,119 @@
-# MDO F25 Staged Pipeline Configuration
-# 6-stage pipeline with completion criteria per stage.
+# MDO F25 Staged Pipeline — 7-stage 5-MCP MDO assembly line.
+#
+# This file is loaded by StagedPipelineHandler via the
+# `pipeline_path` entry in handler_config (see batch_runner.py).
+# Stage names match the 7-agent template in
+# `config/mdo_f25_sequential_agents.yaml`; the agent's full role
+# definition (with discipline knowledge, MCP tool guidance, and F25
+# parameter context) lives there. The `stage_prompt` below is just
+# a short reminder of stage objective + completion keyword, since
+# the staged_pipeline handler APPENDS stage_prompt to the agent's
+# existing system prompt — there's no need to repeat the role here.
+#
+# Completion criteria are OBSERVATIONAL ONLY — they never block
+# advancement, they only record whether each stage hit its target.
+# Per-stage criteria use:
+#   - `tool_attempted` (most reliable signal for stages whose
+#     completion is determined by which MCP tool fires)
+#   - `output_contains` with `verdict_present` for stages whose
+#     completion is signalled by a keyword in the output (the
+#     handler's `verdict_patterns` in handler_config below picks
+#     up MDO-specific keywords as well as the defaults).
 
-strategy: "sequential"
-
-sequential:
-  decomposition_mode: "human"
-  pipeline_template: "mdo_f25"
-  validate_interfaces: false
-  stage_max_steps: 12
-
-execution_handler: "staged_pipeline"
-
-staged_pipeline:
+mdo_f25_pipeline:
   stages:
+    # ── Stage 1: Geometry ─────────────────────────────────────────
     - name: "geometry_engineer"
       completion_criteria:
-        required_keywords: ["CPACS_FILE", "GEOMETRY_SET"]
-        max_retries: 2
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "open_cpacs"
+        description: "geometry_engineer opened a CPACS session via tigl-mcp"
+      stage_prompt: |
+        You are at the GEOMETRY ENGINEER stage of the MDO F25 pipeline.
+        Open the CPACS file, set wing/fuselage geometry per F25 spec, and
+        export the volume mesh for downstream CFD. Finish with a brief
+        DESIGN_STATE summary that includes CPACS_FILE: <path> and a one-
+        line GEOMETRY_SET marker so downstream stages can confirm.
+
+    # ── Stage 2: Aerodynamics (SU2 CFD) ───────────────────────────
     - name: "aerodynamics_analyst"
       completion_criteria:
-        required_keywords: ["DRAG_POLAR", "CL", "CD"]
-        max_retries: 2
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "run_simulation"
+        description: "aerodynamics_analyst ran a CFD simulation via su2-mcp"
+      stage_prompt: |
+        You are at the AERODYNAMICS ANALYST stage. Configure SU2 for the
+        F25 cruise design point, run the CFD, extract CL / CD / L_D from
+        history.csv, and write them into DESIGN_STATE. Output
+        SOLVER_CONVERGED: <true/false> so the next stage knows whether
+        to trust the aero numbers.
+
+    # ── Stage 3: Structures (mass-mcp / FLOPS) ────────────────────
     - name: "structures_analyst"
       completion_criteria:
-        required_keywords: ["OEM_KG", "MASS_ESTIMATION"]
-        max_retries: 2
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "estimate_mass"
+        description: "structures_analyst estimated component masses via mass-mcp"
+      stage_prompt: |
+        You are at the STRUCTURES ANALYST stage. Use the CPACS geometry
+        from Stage 1 to estimate component masses (FLOPS or OAS),
+        produce OEM_KG and the wing-mass breakdown. Output the keyword
+        OEM_KG: <value> so downstream stages can pick it up.
+
+    # ── Stage 4: Propulsion (pyCycle) ─────────────────────────────
     - name: "propulsion_analyst"
       completion_criteria:
-        required_keywords: ["SFC", "THRUST"]
-        max_retries: 2
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "run_cycle"
+        description: "propulsion_analyst ran a pyCycle design-point cycle"
+      stage_prompt: |
+        You are at the PROPULSION ANALYST stage. Build the HBTF cycle at
+        the F25 cruise design point, extract SFC and net thrust. Output
+        SFC_CRUISE, NET_THRUST_CRUISE_LBF, and CYCLE_CONVERGED so the
+        mission stage can size fuel.
+
+    # ── Stage 5: Mission Architect (Aviary) ───────────────────────
+    - name: "mission_architect"
+      completion_criteria:
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "set_aircraft_parameters"
+        description: "mission_architect set aircraft parameters via aviary-mcp"
+      stage_prompt: |
+        You are at the MISSION ARCHITECT stage. Create the Aviary
+        simulation session, configure the F25 mission (2500 nmi /
+        239 pax / Mach 0.78 / FL330), and call set_aircraft_parameters
+        with the geometry / aero / mass inputs from Stages 1-4. Use the
+        RELIABLE values (AR ~= 11.0, ENGINE_SCALE_FACTOR = 1.3) noted
+        in the agent role to avoid the Newton-solver out-of-range error.
+
+    # ── Stage 6: Simulation Executor (Aviary) ─────────────────────
     - name: "simulation_executor"
       completion_criteria:
-        required_keywords: ["CONVERGED", "FUEL_BURNED_KG"]
-        max_retries: 2
+        type: "tool_attempted"
+        check: "tool_called"
+        tool_name: "run_simulation"
+        description: "simulation_executor ran the Aviary mission"
+      stage_prompt: |
+        You are at the SIMULATION EXECUTOR stage. Run the Aviary
+        mission simulation, extract converged fuel/gtow/wing-mass.
+        Output fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg,
+        zero_fuel_weight_kg, and CONVERGED: <true/false> in the exact
+        field names downstream metrics scrape.
+
+    # ── Stage 7: MDO Integrator ───────────────────────────────────
     - name: "mdo_integrator"
       completion_criteria:
-        required_keywords: ["VERDICT"]
-        max_retries: 1
-
-termination:
-  keyword: "TASK_COMPLETE"
-  max_turns: 50
-  max_consecutive_errors: 3
-
-context:
-  max_recent_messages: 15
-  max_context_tokens: 4000
+        type: "output_contains"
+        check: "verdict_present"
+        description: "mdo_integrator produced a VERDICT keyword"
+      stage_prompt: |
+        You are at the MDO INTEGRATOR stage — the final stage. Call
+        check_constraints with the F25 limits (fuel_burned_kg <= 15000,
+        gtow_kg <= 90000), assess the optimality gap vs the F25 spec
+        (MTOM 85,700 kg, fuel 12,100 kg), and produce a VERDICT line.
+        Output TASK_COMPLETE if VERDICT is COMPLETE.
