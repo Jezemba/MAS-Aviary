@@ -498,8 +498,22 @@ class StagedPipelineHandler(ExecutionHandler):
                 parts.append(stage_prompt)
             return "\n".join(parts)
 
-        # Subsequent stages: previous output(s) + stage prompt.
+        # Subsequent stages: original task + previous output(s) + stage prompt.
+        #
+        # The original task carries authoritative context that previous-
+        # stage outputs can't fully reconstruct: CPACS file paths,
+        # mission spec, constraint thresholds. Without it, downstream
+        # workers in orchestrated_staged_pipeline (where each worker has
+        # only the orchestrator-supplied persona, not the discipline
+        # role from agents YAML) hallucinate filenames and parameters.
+        # Sequential_staged_pipeline never showed the symptom because
+        # its workers inherit detailed roles that pre-encode the path —
+        # but the structural gap exists for both, and prepending the
+        # task here is a uniform fix.
         parts = [f"STAGE: {stage_name}"]
+        if original_task:
+            parts.append(f"TASK: {original_task}")
+            parts.append("")
 
         if self._context_mode == "last_only":
             self._append_last_output(parts, previous_outputs)

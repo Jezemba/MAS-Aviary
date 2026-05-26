@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from src.coordination.completion_criteria import CompletionCriteria
+from src.coordination.completion_criteria import CompletionCriteria, CompletionResult
 from src.coordination.execution_handler import Assignment
 from src.coordination.stage_definition import PipelineDefinition, StageDefinition
 from src.coordination.staged_pipeline_handler import (
@@ -721,6 +721,129 @@ class TestStageResultFields:
             None,
         )
         assert handler.last_stage_results[0].output_length == len("hello world")
+
+
+# ---- Original-task propagation across stages -------------------------------
+
+
+class TestOriginalTaskPropagation:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline content
+    cascade: Stage 1 receives the original task (which carries the
+    CPACS file path, F25 mission spec, constraints) but Stages 2-7 see
+    only `previous_outputs` + `stage_prompt`. If Stage 1's worker
+    misinterprets and produces broken output, downstream workers
+    cannot recover the original context — they hallucinate filenames
+    and parameters.
+
+    Compare with iterative_feedback, where every worker is invoked
+    with the orchestrator's task directly, so the original context is
+    always one prompt away.
+
+    Fix: prepend `TASK: {original_task}` to every stage's context, not
+    just Stage 1. Cost ~few hundred tokens per stage; survival benefit
+    is large for orchestrated_staged_pipeline."""
+
+    def test_stage_one_includes_original_task(self):
+        # Sanity guard: Stage 1's behavior is unchanged.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="geometry_engineer",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Open the CPACS file.",
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        ctx = handler._build_context(
+            idx=0,
+            original_task="Use CPACS at /tmp/D150_simple.xml. F25 mission.",
+            assignment=Assignment(
+                agent_name="geometry_engineer",
+                task="Use CPACS at /tmp/D150_simple.xml. F25 mission.",
+            ),
+            stage=pipeline.stages[0],
+            previous_outputs=[],
+        )
+        assert "TASK: Use CPACS at /tmp/D150_simple.xml. F25 mission." in ctx
+        assert "Open the CPACS file." in ctx
+
+    def test_stage_two_also_includes_original_task(self):
+        # The new contract: stages beyond the first must ALSO see the
+        # original task. Without this, downstream workers lose the
+        # CPACS file path, mission spec, and constraints.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="geometry_engineer",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Open the CPACS file.",
+                ),
+                StageDefinition(
+                    name="aerodynamics_analyst",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Run SU2 on the geometry.",
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        original_task = "Use CPACS at /tmp/D150_simple.xml. F25 mission, 2500 nmi."
+        ctx = handler._build_context(
+            idx=1,
+            original_task=original_task,
+            assignment=Assignment(
+                agent_name="aerodynamics_analyst",
+                task=original_task,
+            ),
+            stage=pipeline.stages[1],
+            previous_outputs=[(
+                "geometry_engineer",
+                "CPACS_FILE: /tmp/D150_simple.xml\nGEOMETRY_SET",
+                CompletionResult(met=True, reason="ok"),
+            )],
+        )
+        assert original_task in ctx, (
+            "Stage 2+ context must include the original task so workers "
+            "can recover file paths / mission spec / constraints even if "
+            "Stage 1's output is incomplete."
+        )
+        # Previous output must STILL be present — original task added,
+        # not replaced.
+        assert "CPACS_FILE: /tmp/D150_simple.xml" in ctx
+        assert "Run SU2 on the geometry." in ctx
+
+    def test_stage_seven_includes_original_task(self):
+        # All downstream stages — not just Stage 2 — must see the
+        # original task.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name=f"stage_{i}",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt=f"Stage {i} work.",
+                )
+                for i in range(7)
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        original_task = "F25 design optimization."
+        ctx = handler._build_context(
+            idx=6,
+            original_task=original_task,
+            assignment=Assignment(agent_name="stage_6", task=original_task),
+            stage=pipeline.stages[6],
+            previous_outputs=[
+                (f"stage_{i}", f"Stage {i} done.", CompletionResult(met=True, reason="ok"))
+                for i in range(6)
+            ],
+        )
+        assert original_task in ctx
 
 
 # ---- Pre-hook session injection (cursor safety) ----------------------------
