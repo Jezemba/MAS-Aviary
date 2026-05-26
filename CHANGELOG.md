@@ -1,5 +1,82 @@
 ## [Unreleased]
 
+### 2026-05-26 (later) — RETRACTION: v11 was not a real success + content fixes
+
+Earlier today I wrote a CHANGELOG entry (daaa094) claiming v11 of
+mdo_f25_orchestrated_staged_pipeline produced a real F25-mission
+fuel value of 12,612.80 kg. The user asked "why is this a success?
+did it create the mesh or change parameters? it looks like SU2
+failed too." That question was right and I had not checked.
+
+The honest v11 picture (wandb 5n7pbhfh):
+- Geometry stage: open_cpacs FAILED ("File not found:
+  9c78cb2c-3108-4674-86ff-cad3683e2519"). The worker passed the
+  Aviary pre-hook session UUID as the `source` argument because my
+  _per_stage_execution prepended "SESSION_ID: <uuid>" to the worker
+  input. No mesh was generated. No geometry parameters changed.
+- Aero stage: run_su2_solver returned success=false (no real mesh
+  to solve against).
+- Structures: estimate_mass NEVER CALLED (completion miss).
+- Propulsion: run_cycle NEVER CALLED (completion miss).
+- Mission: configure_mission failed TWICE with "num_passengers must
+  be <= 200" (worker tried 239 per F25 spec; Aviary caps at 200).
+  Third call presumably succeeded with reduced pax.
+- Simulation: run_simulation ran on Aviary defaults + whatever
+  partial mission config landed. NOT a real F25 mission.
+
+The 12,612.80 kg fuel value reflects almost no upstream MDO
+contribution. It happened to fall in the F25 ballpark because
+Aviary's default A320-class aircraft on ~200 pax / 1500-2500 nmi
+produces fuel burn near 12-13k kg.
+
+Fixes landed in this commit:
+1. **src/coordination/strategies/orchestrated.py** (871dbf0): stop
+   leaking session UUID into per_stage worker input. The data-plane
+   middleware auto-injects session_id into tool calls; workers
+   should never see the raw UUID. Regression test
+   test_worker_input_does_not_leak_session_uuid pinning this.
+2. **config/mdo_f25_staged_pipeline.yaml**: removed angle-bracket
+   placeholder syntax that gpt-4o was taking literally. The
+   geometry stage's `open_cpacs(source=<path from TASK>)` was
+   becoming `open_cpacs(source="TASK")` because the LLM interpreted
+   the angle-brackets as the literal value. Now the prompt says
+   "paste the full absolute path string starting with /home/...".
+
+What's actually verified at the framework level (durable across
+this session's 14 commits on
+`feat/phase-l-orchestrated-staged-pipeline`):
+- The combo is registered and runs end-to-end without crashes.
+- Per_stage lifecycle delivers stage-by-stage delegation with
+  feedback (each stage's name + tool hint + prev output reach the
+  orchestrator).
+- No retry loops, no INVALID_SESSION cascades, no completion-
+  validation deadlocks (1,450 unit + 5/5 per_stage regression tests
+  green).
+- The data-plane session_id override fix + the staged_pipeline
+  pre-hook cursor fix + the structural original_task propagation
+  + the name-based assignment reorder are all real, tested, and
+  ship across any combo using these handlers.
+
+What's NOT verified (and was the over-claim in daaa094):
+- That orchestrated_staged_pipeline produces a TRUE F25-mission
+  result. It does not. Content quality is gated by:
+    - gpt-4o worker behavior (placeholder confusion, component-UID
+      hallucination, skipping tools after one error)
+    - Aviary's 200-pax cap blocking F25's 239-pax spec at the MCP
+      server level
+    - Stage prompts that need extensive iteration to be unambiguous
+
+Sequential combos remain the only end-to-end-correct path:
+- sequential iterative_feedback: iepdeu70  12,755.86 kg (baseline)
+- sequential staged_pipeline:    u77aj8bg  12,532.68 kg
+
+Orchestrated `staged_pipeline` is **wired** with the per_stage
+architecture (a real framework win) but the content quality on
+dynamic workers requires more prompt iteration before claiming an
+end-to-end MDO result. Recommend deferring further content tuning
+of this combo to a separate session.
+
+
 ### 2026-05-26 — Verify per_stage lifecycle live: orchestrated_staged_pipeline works
 
 End-to-end live verification of the per_stage lifecycle_mode added

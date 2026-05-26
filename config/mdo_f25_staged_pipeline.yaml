@@ -38,9 +38,18 @@ mdo_f25_pipeline:
         (do not invent a different filename).
 
         Required tool sequence:
-          1. open_cpacs(source_type="path", source=<the path from TASK>)
+          1. The TASK above contains the absolute CPACS file path
+             starting with "/home/aipexws3/...D150_simple.xml". Use
+             that EXACT string as the `source` argument:
+             open_cpacs(source_type="path", source="<paste the full
+             absolute path here>"). Do NOT pass the literal text
+             "TASK" or angle brackets — paste the real path string.
           2. (optional) set_high_level_parameters to adjust wing/fuselage
-             toward the F25 reference (AR ~= 13.5, AREA ~= 135 m^2)
+             toward the F25 reference (AR ~= 13.5, AREA ~= 135 m^2).
+             Before calling this, you MUST call list_geometric_components
+             first to discover the real component UIDs in the file —
+             do NOT guess "D150_Wing" or "Wing"; the actual UIDs are
+             returned by that tool.
           3. generate_volume_mesh — ONCE — to produce the CFD mesh.
              Use far_field_distance >= 50, mesh_size_min ~= 1.0,
              mesh_size_max ~= 20, surface_mesh_size ~= 0.5.
@@ -100,9 +109,13 @@ mdo_f25_pipeline:
         those. Use the CPACS_FILE path from the previous-stage output
         (it's the same path that was in TASK).
 
-        Required tool sequence:
-          1. validate_cpacs_inputs(cpacs_file_path=<CPACS_FILE from prev>)
-          2. estimate_mass(cpacs_file_path=<same>, wing_mass_method="FLOPS")
+        Required tool sequence (use the actual CPACS path string from
+        the TASK above — the same path the geometry stage opened, the
+        full absolute path starting with "/home/aipexws3/..."):
+          1. validate_cpacs_inputs(cpacs_file_path="<paste the full
+             absolute path string>")
+          2. estimate_mass(cpacs_file_path="<paste the same path>",
+             wing_mass_method="FLOPS")
           3. (optional) get_cpacs_mass_breakdown for the per-component view
 
         Output (in DESIGN_STATE):
