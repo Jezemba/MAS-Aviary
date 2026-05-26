@@ -1,5 +1,65 @@
 ## [Unreleased]
 
+### 2026-05-25 (later) — Verify orchestrated_staged_pipeline framework fixes live (v8)
+
+End-to-end live verification of the eight commits on
+`feat/phase-l-orchestrated-staged-pipeline`. Run completed without
+any of the regression failure modes that blocked v1-v7.
+
+  wandb run:                   https://wandb.ai/jessicae/mas-aviary-stat/runs/7wbgfu74
+  wandb-reported fuel:         7,224.22 kg
+  Stage progression:           all 7 stages ran in order
+  Workflow_phases retries:     2 (recovery, not loop)
+  Required_result_signals errors:  0 (setup_only fix holds)
+  INVALID_SESSION errors:      0 (session_id override holds)
+  Generate_volume_mesh outside Stage 1:  0 (prompt tightening worked —
+                                 aero worker explicitly said "Since the
+                                 task specifies not to perform certain"
+                                 and skipped the duplicate mesh call)
+  CPACS hallucination:         0 (structural fix holds — workers used
+                                 the real /home/.../D150_simple.xml path
+                                 carried through every stage's context)
+  Tools loaded:                54 (tigl-mcp restored after the v6 kill
+                                 left it stuck on a runaway gmsh subproc;
+                                 v7's "Tool not found" was a transient
+                                 infra failure, NOT a code bug)
+
+Side-by-side, sequential vs orchestrated on the MDO-F25 pipeline:
+
+| Sequential combo | wandb | fuel_kg | Notes |
+|---|---|---|---|
+| `iterative_feedback` | iepdeu70 | 12,755.86 | baseline (F25 mission) |
+| `staged_pipeline` post-fix | u77aj8bg | 12,532.68 | sequential agents, F25 mission |
+| `orchestrated_staged_pipeline` v8 | **7wbgfu74** | **7,224.22** | orchestrated agents, Aviary-default mission |
+
+Known limitation (separate work item): the v8 fuel value reflects
+Aviary's default mission (1500 nmi / 162 pax / FL350), not the F25
+spec (2500 nmi / 239 pax / FL330). Confirmed in the log:
+`run_simulation` fired at line 530 BEFORE `configure_mission` at
+line 1392. The cause is `StagedPipelineHandler.execute` matching
+the orchestrator's assignments to pipeline stages BY ORDER — if the
+orchestrator's `assign_task` order differs from pipeline order
+(e.g. simulation_executor assigned before mission_architect), the
+wrong worker runs each stage_prompt. A future commit could add
+name-based matching, or constrain the orchestrator to assign in
+pipeline order. For now, the structural failure modes are all
+fixed and the combination is registered and runnable.
+
+Summary of the 8 commits on this branch:
+- 5bc41f3 wire mdo_f25_orchestrated_staged_pipeline combination
+- 01ed347 session_id override + setup_only signal check
+- ba73e73 propagate original_task to every stage's context
+- 810bb2f switch to openai/gpt-5 (later replaced)
+- 80f16a8 temperature 1.0 for gpt-5 compat
+- e73f33e pick litellm api_key by provider prefix
+- f911ca2 switch openai/gpt-5 -> openai/gpt-4o for smolagents compat
+- 59bd461 tighten stage_prompts to prevent duplicate work
+
+All 15 new regression tests across the session pass. Unit suite:
+1,439/1,439 green. Job 3 step 2 acceptance met at the framework
+level; content tuning remains as follow-up.
+
+
 ### 2026-05-25 (later) — Phase L Job 3 step 2: orchestrated_staged_pipeline wired
 
 Second of the four remaining MDO-F25 combinations. Wires
