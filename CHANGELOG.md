@@ -1,5 +1,67 @@
 ## [Unreleased]
 
+### 2026-05-27 (later) — Phase L Job 3 step 2 VERIFIED LIVE: orchestrated_staged_pipeline end-to-end
+
+wandb run [`7ngitswj`](https://wandb.ai/jessicae/mas-aviary-stat/runs/7ngitswj),
+combo `mdo_f25_orchestrated_staged_pipeline`, model Claude Sonnet 4.
+All 7 stages fired their signature tools cleanly; orchestrator's
+per_stage loop advanced one stage at a time without auto-advancing
+on failure; Aviary mission converged.
+
+Final values (wandb summary):
+- fuel_burned_kg = 13,141.99 (+8.6% above F25 spec 12,100 kg)
+- gtow_kg = 76,840.44 (under 90,000 kg constraint by 14%)
+- converged = True
+- VERDICT: COMPLETE (within 15% fuel bracket, all constraints met)
+
+Discipline-by-discipline verification (per Job 2 lesson from v11):
+
+| Stage | Signature tool | Outcome | Real values that fed downstream |
+|---|---|---|---|
+| 1 geometry | open_cpacs + generate_volume_mesh | clean | ~30 MB SU2 mesh, markers `aircraft` / `farfield` |
+| 2 aero | run_su2_solver + read_history_csv | converged | CL=0.1871, CD=0.0128, L/D=14.6 |
+| 3 structures | estimate_mass | OAS converged | OEM 33,783 kg, Wing 9,547 kg, MTOM 78,126 kg |
+| 4 propulsion | run_cycle | converged | SFC 0.456 lb/hr/lbf, Fn 28,011 lbf |
+| 5 mission | configure_mission + set_aircraft_parameters | recovered | configure failed at 239 pax then succeeded at 200; AR=11, AREA=130.1, SCALE_FACTOR=1.3 |
+| 6 simulation | run_simulation | converged in 9 iters / 4.9 s | fuel 13,142 kg, gtow 76,840 kg, wing 10,906 kg |
+| 7 mdo_integrator | check_constraints | VERDICT: COMPLETE | optimality_gap 8.6%, TASK_COMPLETE emitted |
+
+Cross-discipline coupling actually fired (this is what made v11 NOT
+a real success — v11's downstream stages ran on Aviary defaults):
+- SU2 CL=0.1871 → Aviary `Mission.Design.LIFT_COEFFICIENT` (Phase H)
+- SU2 CD → Aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR=0.7677` (Phase H)
+- mass-mcp wing mass → Aviary `Aircraft.Wing.MASS_SCALER=1.5916` (Phase K-A)
+- mass-mcp MTOM=78,126 kg → pycycle Fn_DES sizing (Phase K-B; the
+  resulting Fn=28,011 lbf is in line with MTOM·g/(L/D·N_eng) with margin)
+
+Mission recovery from the 200-pax cap was handled cleanly by the
+mission_architect worker on its own (no orchestrator retry needed):
+configure_mission(239) → "num_passengers must be <= 200" → worker
+re-called with 200 → succeeded.
+
+Side-by-side update vs the master MDO-F25 table:
+
+| Combo | wandb | fuel_kg | Notes |
+|---|---|---|---|
+| `sequential_iterative_feedback` | iepdeu70 | 12,755.86 | baseline |
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | Job 3 step 1 |
+| `orchestrated_staged_pipeline` v8 (setup_only) | 7wbgfu74 | 7,224.22 | broken — disciplines didn't fire |
+| `orchestrated_staged_pipeline` v17 (per_stage) | partial | — | SU2 stuck on RANS guesses |
+| **`orchestrated_staged_pipeline` v18 (per_stage)** | **7ngitswj** | **13,141.99** | **Job 3 step 2 verified, all 7 stages real** |
+| `orchestrated_iterative_feedback` | fup5hh0h | 13,206.34 | prior baseline |
+| `networked_iterative_feedback` | 4o22y281 | 11,615.86 | prior baseline |
+
+Job 3 step 2 is now closed. Remaining Job 3 work: step 3
+(sequential × graph_routed), step 4 (orchestrated × graph_routed),
+step 5 (networked × graph_routed).
+
+No new code or config changes in this entry — it documents the v18
+verification of the SU2-config commit `646af91` that landed earlier
+today. Run command was the one from the handoff:
+`./run_batch.sh --config config/mdo_f25_run_claude.yaml
+--combinations mdo_f25_orchestrated_staged_pipeline --repeats 1
+--max-retries 1 --timeout 30`.
+
 ### 2026-05-27 — Pin SU2 Euler cruise config + live SU2 test (Job 3 step 2 SU2 fix)
 
 The next block of work after v17 of mdo_f25_orchestrated_staged_pipeline
