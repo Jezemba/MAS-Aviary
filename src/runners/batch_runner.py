@@ -232,6 +232,29 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         strategy_config={"pipeline_template": "mdo_f25"},
         handler_config={"predefined_graph": "mdo_f25"},
     ),
+    CombinationConfig(
+        "mdo_f25_orchestrated_graph_routed",
+        "orchestrated",
+        "graph_routed",
+        # Orchestrator + graph_routed: the orchestrator builds the
+        # team of 7 MDO specialists (one per agent named in
+        # mdo_f25_graph.yaml's per-state ``agent`` field) and the
+        # graph_routed handler then dispatches each state to its
+        # named agent.
+        #
+        # lifecycle_mode=setup_only is critical here. The default
+        # ``active`` orchestrator wakes after every graph state and
+        # re-creates the 7-agent team (because the graph_routed
+        # handler dispatches one state per pass and the orchestrator
+        # sees the empty assignment queue and thinks team-build is
+        # incomplete). On the MDO-F25 graph (11 states) that means
+        # 11x team rebuild and the pipeline never reaches any tool
+        # past TASK_CLASSIFIED. With setup_only the orchestrator
+        # builds the team once, exits, and graph_routed runs the
+        # team through every state on its own.
+        strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
+        handler_config={"predefined_graph": "mdo_f25"},
+    ),
 ]
 
 # Backward-compatible alias used by stat_batch_runner.
