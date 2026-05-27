@@ -735,8 +735,12 @@ class OrchestratedStrategy(CoordinationStrategy):
             )
             return "\n".join(parts).strip()
 
-        # A worker just ran. Report what happened and ask the
-        # orchestrator to decide retry vs advance.
+        # A worker just ran. Report what happened and present BOTH
+        # retry and advance options every time — the orchestrator
+        # reads the output and decides. Don't try to guess success
+        # ourselves with brittle keyword detection; we already had
+        # one false-negative (the worker paraphrased "file not found"
+        # as natural language and our heuristic missed it).
         prev_stage_name = last_worker_msg.agent_name
         try:
             prev_idx = stages.index(prev_stage_name)
@@ -745,66 +749,61 @@ class OrchestratedStrategy(CoordinationStrategy):
         prev_content = last_worker_msg.content or ""
         prev_error = last_worker_msg.error or ""
 
-        # Heuristic: did the previous stage succeed?
-        # Strong success: no error AND no obvious "Error calling tool"
-        # in content. We surface this to the orchestrator so it can
-        # decide, but we always defer to its judgment.
-        looks_failed = bool(prev_error) or (
-            "Error calling tool" in prev_content
-            or "success\": false" in prev_content
-            or "FAILED" in prev_content.upper()
-        )
-
         parts.append(
             f"PREVIOUS STAGE: `{prev_stage_name}` (Stage {prev_idx + 1} of "
             f"{total}) just ran."
         )
         if prev_error:
-            parts.append(f"ERROR: {prev_error}")
+            parts.append(f"ERROR FIELD: {prev_error}")
         if prev_content:
             parts.append(f"OUTPUT:\n{prev_content[:1500]}")
         parts.append("")
+        parts.append(
+            "READ THE OUTPUT ABOVE CAREFULLY. Did the stage's signature "
+            "tool actually succeed? Examples of failure: "
+            "\"File not found\", \"does not exist\", \"Error calling tool\", "
+            "\"success: false\", \"INVALID_SESSION\", parameter rejected, "
+            "or any natural-language paraphrase of those. If you're "
+            "unsure, treat it as failed."
+        )
+        parts.append("")
+        parts.append("YOUR DECISION:")
 
-        if looks_failed and prev_idx >= 0:
-            # Encourage retry.
-            parts.append(
-                f"The previous stage appears to have FAILED. Read the "
-                f"error/output above carefully. You can EITHER:"
+        if prev_idx >= 0:
+            retry_hint = self._stage_tool_hint(prev_stage_name)
+            retry_line = (
+                f"  - If the stage FAILED: create a NEW worker named "
+                f"`{prev_stage_name}` (or modify) with the right tools "
             )
-            parts.append(
-                f"  - RETRY `{prev_stage_name}`: create a NEW worker "
-                f"for it with the right tools / corrected approach "
-                f"(or modify the existing assignment) and assign_task. "
-                f"The pipeline stays on this stage."
+            if retry_hint:
+                retry_line += f"({retry_hint}) "
+            retry_line += (
+                "and assign_task with a CORRECTED approach (e.g. exact "
+                "file paths verbatim, discover UIDs via list_geometric_"
+                "components before set_high_level_parameters, etc.). "
+                "Call DELEGATION_COMPLETE. The pipeline will retry this stage."
             )
-            if prev_idx + 1 < total:
-                next_stage = stages[prev_idx + 1]
-                parts.append(
-                    f"  - ADVANCE to Stage {prev_idx + 2}: `{next_stage}`. "
-                    f"Create a worker for it and assign_task. The "
-                    f"pipeline moves on, accepting the previous "
-                    f"failure."
-                )
+            parts.append(retry_line)
+
+        if prev_idx + 1 < total:
+            next_stage = stages[prev_idx + 1]
+            next_hint = self._stage_tool_hint(next_stage)
+            advance_line = (
+                f"  - If the stage SUCCEEDED: create a worker named "
+                f"`{next_stage}` "
+            )
+            if next_hint:
+                advance_line += f"with tools ({next_hint}) "
+            advance_line += (
+                "and assign_task. Call DELEGATION_COMPLETE. The pipeline "
+                "will advance to Stage " + str(prev_idx + 2) + "."
+            )
+            parts.append(advance_line)
         else:
-            # Encourage advance.
-            if prev_idx + 1 < total:
-                next_stage = stages[prev_idx + 1]
-                parts.append(
-                    f"NEXT STAGE: Stage {prev_idx + 2} of {total}: "
-                    f"`{next_stage}`."
-                )
-                hint = self._stage_tool_hint(next_stage)
-                if hint:
-                    parts.append(f"This stage needs one of these tools: {hint}.")
-                parts.append(
-                    "Create or reuse a worker for THIS stage and "
-                    "assign_task to it. Then call DELEGATION_COMPLETE."
-                )
-            else:
-                parts.append(
-                    "All pipeline stages have run. Call "
-                    "final_answer('TASK_COMPLETE') to terminate."
-                )
+            parts.append(
+                "  - If the stage SUCCEEDED: this is the LAST stage. "
+                "Call final_answer('TASK_COMPLETE') to terminate."
+            )
 
         return "\n".join(parts).strip()
 
