@@ -215,6 +215,23 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # estimate_mass before any peer calls set_aircraft_parameters.
         # That's part of what this combo measures.
     ),
+    CombinationConfig(
+        "mdo_f25_sequential_graph_routed",
+        "sequential",
+        "graph_routed",
+        # The graph_routed execution handler drives the 5-MCP MDO
+        # workflow as a state machine defined in
+        # config/mdo_f25_graph.yaml (11 states; TASK_CLASSIFIED ->
+        # GEOMETRY_SETUP -> AERO_ANALYSIS -> MASS_ESTIMATION ->
+        # PROPULSION_SIZING -> MISSION_CONFIG -> SIMULATION_RUN ->
+        # RESULTS_REVIEW -> COMPLETE, with ERROR_CLASSIFICATION and
+        # COMPLEXITY_ESCALATION as recovery paths). The sequential
+        # strategy delegates flow to the handler in graph_routed mode
+        # (sequential.py _graph_routed_mode) so the per-state agent
+        # roles come from config/mdo_f25_sequential_agents.yaml.
+        strategy_config={"pipeline_template": "mdo_f25"},
+        handler_config={"predefined_graph": "mdo_f25"},
+    ),
 ]
 
 # Backward-compatible alias used by stat_batch_runner.

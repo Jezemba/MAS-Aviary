@@ -139,17 +139,20 @@ def load_graph(data: dict) -> GraphDefinition:
 def load_graph_from_yaml(path: str) -> GraphDefinition:
     """Load a graph definition from a YAML file.
 
-    The YAML file may have the graph under a top-level key (e.g.
-    ``aviary_graph:`` or ``graph:``) or directly at the root.
+    The YAML file may have the graph under a top-level wrapper key
+    (e.g. ``aviary_graph:``, ``mdo_f25_graph:``, ``graph:``) or
+    directly at the root. The wrapper is detected structurally: any
+    top-level key whose value is a dict carrying ``initial_state`` is
+    treated as the graph block. Falls back to the root if no wrapper
+    is found.
     """
     from src.config.loader import load_yaml
 
     raw = load_yaml(path)
-    # Try common wrapper keys.
-    for key in ("aviary_graph", "graph", "custom_graph"):
-        if key in raw and isinstance(raw[key], dict):
-            return load_graph(raw[key])
-    # Assume the root *is* the graph definition.
+    if isinstance(raw, dict):
+        for value in raw.values():
+            if isinstance(value, dict) and "initial_state" in value:
+                return load_graph(value)
     return load_graph(raw)
 
 
