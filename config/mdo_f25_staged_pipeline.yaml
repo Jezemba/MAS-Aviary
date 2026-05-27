@@ -51,17 +51,22 @@ mdo_f25_pipeline:
              do NOT guess "D150_Wing" or "Wing"; the actual UIDs are
              returned by that tool.
           3. generate_volume_mesh — ONCE — to produce the CFD mesh.
-             Use these EXACT parameters (verified-fast on the F25
-             geometry):
-               far_field_distance=50, mesh_size_min=1.0,
-               mesh_size_max=20, surface_mesh_size=0.5,
+             Use these EXACT parameters (measured: ~12 s on F25
+             geometry; tests/test_mesh_generation_live.py pins this):
+               component_uid="Wing1",
+               surface_mesh_size=1.0,
+               mesh_size_min=0.3,
+               mesh_size_max=8.0,
+               far_field_distance=10.0,
                boundary_layer_enabled=False,
+               boundary_layer_thickness=0.01,
+               boundary_layer_layers=5,
+               boundary_layer_growth=1.2,
                output_format="su2"
-             Note: setting boundary_layer_enabled=True is physically
-             more accurate for CFD but causes gmsh to take 10+ min
-             on this geometry (boundary-layer extrusion is slow).
-             Leave it False for fast pipeline iteration; enable only
-             if you're willing to wait.
+             Note: setting boundary_layer_enabled=True is more
+             accurate for viscous CFD but the boundary-layer
+             extrusion makes gmsh significantly slower on this
+             geometry — only enable it if you have wall-clock budget.
 
         Output (in DESIGN_STATE):
           CPACS_FILE: <the path you used>
