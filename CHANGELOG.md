@@ -1,5 +1,54 @@
 ## [Unreleased]
 
+### 2026-05-27 — Pin SU2 Euler cruise config + live SU2 test (Job 3 step 2 SU2 fix)
+
+The next block of work after v17 of mdo_f25_orchestrated_staged_pipeline
+was diagnosing why Stage 2 (aerodynamics_analyst) iterated without
+converging. v17's orchestrated worker chose `SOLVER=RANS` on an
+Euler-grade no-BL mesh, hit "turbulence model must be specified" and
+"Reynolds number required" errors on consecutive run_su2_solver
+attempts, and ran out of context before recovering.
+
+Root cause: the `aerodynamics_analyst` stage_prompt was vague ("Mach
+0.78, AoA ~ 2 deg, freestream pressure / temperature for FL330
+standard atmosphere") and let workers drift into RANS guesses. The
+working sequential run (wandb u77aj8bg) used a specific Euler config
+that converged to rms_density < -8 in 207 s — but nothing in the
+config or test suite pinned it.
+
+Changes:
+
+1. **tests/test_su2_solver_live.py** (NEW). Mirrors
+   test_mesh_generation_live.py: opens CPACS, generates the volume
+   mesh with the pinned mesh params, then runs the full SU2 cycle
+   (create_su2_session → set_mesh → update_config_entries →
+   run_su2_solver → read_history_csv) with the F25 Euler cruise
+   config. Asserts success=true, CL/CD extracted, and final values
+   within sane envelope. Passed on first run: CL=0.1871, CD=0.0128,
+   L/D=14.61, mesh 12.0 s + solve 207.1 s = total 219.5 s. Matches
+   the sequential reference exactly.
+
+2. **config/mdo_f25_staged_pipeline.yaml**: replaced the vague Stage
+   2 guidance with the exact verbatim Euler config dict that
+   test_su2_solver_live.py validates. Added an explicit "DO NOT use
+   SOLVER=RANS" instruction (cites the no-BL mesh as the reason),
+   spelled out every step in the SU2 sequence with parameters, and
+   added a sanity envelope for downstream stages (CL in [0.05, 0.6],
+   CD in [0.002, 0.05]).
+
+What this does NOT fix:
+- The Aviary 200-pax cap (F25 spec is 239). Mission_architect
+  stage_prompt still says 239; will need a follow-up either to
+  patch aviary-mcp or relax the prompt to 200 with a note.
+- Whether the orchestrator's per_stage decision logic correctly
+  treats SU2 success and advances to Stage 3. That's the v18
+  pipeline run's job to verify.
+
+Verification followed in v18 will need to confirm row-by-row that
+each discipline actually fired (per Job 2 of the
+2026-05-27 handoff), not just that a fuel number landed in the
+F25 ballpark — v11's lesson.
+
 ### 2026-05-26 (later) — RETRACTION: v11 was not a real success + content fixes
 
 Earlier today I wrote a CHANGELOG entry (daaa094) claiming v11 of

@@ -93,21 +93,86 @@ mdo_f25_pipeline:
 
         DO NOT call open_cpacs — you do not need a TiGL session for SU2.
 
+        DO NOT use SOLVER=RANS or SOLVER=NAVIER_STOKES. The mesh from
+        Stage 1 has no boundary layer (boundary_layer_enabled=False),
+        which means viscous solvers will either error out (missing
+        KIND_TURB_MODEL / REYNOLDS_NUMBER) or produce garbage. Use
+        SOLVER=EULER, which is what the pinned config below sets.
+
         Required tool sequence:
           1. create_su2_session(base_name="f25_cruise")
           2. set_mesh(session_id=<su2 sid>, mesh_base64=<MESH_BASE64 ref
-             from previous stage's output>)
-          3. get_valid_config_options() — call this BEFORE update_config_entries
-             so you pick option combinations that pass SU2's static checks.
-          4. update_config_entries with F25 cruise: Mach 0.78, AoA ~ 2 deg,
-             freestream pressure / temperature for FL330 standard atmosphere
-          5. run_su2_solver
-          6. read_history_csv to get the converged CL / CD
+             from previous stage's output>, update_config=True)
+          3. update_config_entries(session_id=<su2 sid>, create_if_missing=True,
+             updates=<the EXACT dict below>). These values are pinned by
+             tests/test_su2_solver_live.py — they converged to rms_density
+             < -8 in ~207 s on this geometry (CL=0.187, CD=0.0128,
+             L/D=14.6). Do NOT substitute "reasonable" values; copy
+             verbatim:
+               {
+                 "SOLVER": "EULER",
+                 "MATH_PROBLEM": "DIRECT",
+                 "KIND_TURB_MODEL": "SA",
+                 "RESTART_SOL": "NO",
+                 "MACH_NUMBER": 0.78,
+                 "AOA": 2.0,
+                 "REYNOLDS_NUMBER": 30000000,
+                 "FREESTREAM_PRESSURE": 26500.0,
+                 "FREESTREAM_TEMPERATURE": 233.0,
+                 "REF_DIMENSIONALIZATION": "DIMENSIONAL",
+                 "REF_AREA": 61.39076274891849,
+                 "REF_LENGTH": 4.192320937872386,
+                 "REF_ORIGIN_MOMENT_X": 15.280145964476011,
+                 "REF_ORIGIN_MOMENT_Y": 6.54558738384396,
+                 "REF_ORIGIN_MOMENT_Z": -0.7921210525374252,
+                 "CONV_NUM_METHOD_FLOW": "JST",
+                 "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
+                 "NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES",
+                 "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
+                 "CFL_NUMBER": 1000,
+                 "CFL_ADAPT": "YES",
+                 "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+                 "MGCYCLE": "W_CYCLE",
+                 "MGLEVEL": 3,
+                 "LINEAR_SOLVER": "FGMRES",
+                 "LINEAR_SOLVER_PREC": "ILU",
+                 "LINEAR_SOLVER_ITER": 10,
+                 "LINEAR_SOLVER_ERROR": 1e-10,
+                 "ITER": 200,
+                 "CONV_FIELD": "RMS_DENSITY",
+                 "CONV_RESIDUAL_MINVAL": -8,
+                 "CONV_STARTITER": 10,
+                 "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
+                 "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
+                 "OUTPUT_FILES": "( RESTART, PARAVIEW, SURFACE_CSV )",
+                 "MARKER_EULER": "( aircraft )",
+                 "MARKER_FAR": "( farfield )",
+                 "MARKER_PLOTTING": "( aircraft )",
+                 "MARKER_MONITORING": "( aircraft )"
+               }
+             Note: the marker names `aircraft` and `farfield` are what
+             tigl-mcp's gmsh writes into the .su2 file. The data-plane
+             middleware also auto-corrects guesses (e.g. "wing",
+             "wall") to these names — so even if you copy from a
+             different mesh, the call will still work, but it's much
+             cheaper to copy verbatim.
+          4. run_su2_solver(session_id=<su2 sid>, solver="SU2_CFD",
+             max_runtime_seconds=300, capture_log_lines=100). Expect
+             ~210 s wall-clock. If success=false, READ THE log_tail
+             field for the SU2 error message — do NOT just retry.
+          5. read_history_csv(session_id=<su2 sid>, relative_path="history.csv",
+             max_rows=1000, skip_rows=0). The LAST row's CL and CD
+             columns are the converged values.
 
         Output (in DESIGN_STATE):
           CL: <value>  CD: <value>  L_D: <value>
           SOLVER_CONVERGED: <true/false>
           AERO_NOTES: <any caveats>
+        Sanity envelope for this geometry at Mach 0.78 / AoA 2°:
+          CL in [0.05, 0.6], CD in [0.002, 0.05].
+        If the converged values land outside that envelope, flag
+        SOLVER_CONVERGED=false in AERO_NOTES — downstream stages
+        otherwise propagate garbage.
 
     # ── Stage 3: Structures (mass-mcp / FLOPS) ────────────────────
     - name: "structures_analyst"
