@@ -1,5 +1,86 @@
 ## [Unreleased]
 
+### 2026-05-27 (even later) — Phase L Job 3 step 4 WIRED (partial; blocked on SESSION_ID leak)
+
+`mdo_f25_orchestrated_graph_routed` is wired up — combination is
+registered, lifecycle_mode is pinned to `setup_only` (regression
+guard in the new wiring test), 4 wiring tests pass and the full
+unit suite is green (1424 / 0 regressions). End-to-end live
+verification did NOT complete in this session because of a real
+architectural bug in the orchestrated -> graph_routed handoff.
+
+What works:
+- Single round of orchestrator team-build: 7 create_agent +
+  7 assign_task -> DELEGATION_COMPLETE, then orchestrator exits.
+  (Default `active` lifecycle re-built the team after every state
+  and burned 14 create_agent calls without ever reaching
+  open_cpacs; setup_only fixes that.)
+- graph_routed handler picks up after orchestrator exit and
+  dispatches TASK_CLASSIFIED through mission_architect.
+
+What's blocked: workers in subsequent states pass a session UUID
+as the open_cpacs `source` argument instead of the real CPACS
+path, so GEOMETRY_SETUP loops indefinitely on "File not found".
+
+Root cause traced (do this work first when picking step 4 back up):
+- src/coordination/strategies/orchestrated.py line 758 prepends
+  ``SESSION_ID: {session_id}\n\n`` to every worker invocation's
+  input_context during the execution phase.
+- src/coordination/graph_routed_handler.py line 352 takes the
+  incoming ``assignments[0].task`` (which is that input_context)
+  and uses it as the overall prompt — and ``_build_agent_context``
+  at line 672 prepends that prompt to every per-state worker
+  context.
+- Net effect: every worker in every state sees a literal
+  ``SESSION_ID: <uuid>`` line at the top of its prompt. The
+  geometry worker then calls ``open_cpacs(source_type="path",
+  source="<that-uuid>")`` because the UUID is the most "path-
+  like" thing in its visible context.
+
+This is the same class of bug commit 871dbf0 fixed for per_stage
+on the orchestrated-staged branch — but per_stage's fix was
+specific to ``_per_stage_execution``. graph_routed needs its
+own variant.
+
+Possible fix shapes (pick one in the follow-up session):
+1. In _run_execution_phase, drop the SESSION_ID prefix entirely
+   (the data-plane middleware auto-injects session_id at the
+   tool layer anyway, since commit 01ed347 on the orchestrated
+   branch). Risk: other strategies may rely on this prefix.
+2. In graph_routed_handler.execute, strip a leading
+   ``SESSION_ID: ...`` line from ``assignments[0].task`` before
+   using it as the prompt. Risk: brittle string-matching.
+3. Make orchestrated strategy detect graph_routed handler and
+   bypass its worker-input building entirely (let the handler
+   dispatch from the raw user task). Risk: largest blast radius
+   but cleanest separation.
+
+What landed in this session for step 4:
+- src/runners/batch_runner.py: CombinationConfig
+  ``mdo_f25_orchestrated_graph_routed`` with
+  ``strategy_config={"orchestrated": {"lifecycle_mode":
+  "setup_only"}}`` and ``handler_config={"predefined_graph":
+  "mdo_f25"}``.
+- tests/test_phase_l_mdo_orchestrated_graph_routed_wiring.py
+  (new, 4 tests): combination registered, lifecycle_mode pinned
+  to setup_only (regression guard), shared graph YAML still
+  loads, handler resolves predefined graph, Coordinator builds.
+
+Side-by-side updated MDO-F25 table:
+
+| Combo | wandb | fuel_kg | Status |
+|---|---|---|---|
+| `sequential_iterative_feedback` | iepdeu70 | 12,755.86 | baseline |
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | Job 3 step 1 verified |
+| `orchestrated_staged_pipeline` | 7ngitswj | 13,141.99 | Job 3 step 2 verified |
+| `sequential_graph_routed` | 81w57h3g | 12,755.86 | Job 3 step 3 verified |
+| **`orchestrated_graph_routed`** | **partial** | **—** | **Job 3 step 4 wired, blocked on SESSION_ID leak** |
+| `orchestrated_iterative_feedback` | fup5hh0h | 13,206.34 | prior baseline |
+| `networked_iterative_feedback` | 4o22y281 | 11,615.86 | prior baseline |
+
+Remaining: step 4 live verification (after the fix), step 5
+(networked x graph_routed).
+
 ### 2026-05-27 (later) — Phase L Job 3 step 3 VERIFIED LIVE: sequential_graph_routed end-to-end
 
 wandb run [`81w57h3g`](https://wandb.ai/jessicae/mas-aviary-stat/runs/81w57h3g),
