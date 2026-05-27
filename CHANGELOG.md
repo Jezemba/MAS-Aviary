@@ -1,5 +1,74 @@
 ## [Unreleased]
 
+### 2026-05-27 (later) — Phase L Job 3 step 3 VERIFIED LIVE: sequential_graph_routed end-to-end
+
+wandb run [`81w57h3g`](https://wandb.ai/jessicae/mas-aviary-stat/runs/81w57h3g),
+combo `mdo_f25_sequential_graph_routed`, model Claude Sonnet 4. The
+state-machine graph in `config/mdo_f25_graph.yaml` dispatched cleanly
+through all 7 MDO disciplines on the first try after the
+v18-aligned prompt rewrite:
+
+  TASK_CLASSIFIED -> GEOMETRY_SETUP -> AERO_ANALYSIS ->
+  MASS_ESTIMATION -> PROPULSION_SIZING -> MISSION_CONFIG ->
+  SIMULATION_RUN -> RESULTS_REVIEW -> COMPLETE
+
+Final values (wandb summary):
+- fuel_burned_kg = 12,755.86 (+5.4% above F25 spec 12,100 kg)
+- gtow_kg = 74,154.84 (-13.5% below F25 spec 85,700 kg)
+- converged = True
+- VERDICT: PASSED, 2/2 constraints met
+
+Discipline-by-discipline verification (per Job 2 lesson from v11 —
+never claim success on fuel number alone):
+
+| State | Signature tool | Outcome | Real values |
+|---|---|---|---|
+| TASK_CLASSIFIED | (classification) | classified as `complex` | (mission_architect dispatched) |
+| GEOMETRY_SETUP | open_cpacs + generate_volume_mesh | clean | MESH_BASE64 ref produced |
+| AERO_ANALYSIS | run_su2_solver + read_history_csv | converged | CL=0.1871, CD=0.0128, L/D=14.61 |
+| MASS_ESTIMATION | estimate_mass | FLOPS clean | OEM=35,725 kg, MTOM=78,126 kg |
+| PROPULSION_SIZING | run_cycle | CYCLE_CONVERGED | (SFC + Fn extracted) |
+| MISSION_CONFIG | configure_mission + set_aircraft_parameters | ✓ both fired | AR=11, AREA=130.1, SCALE_FACTOR=1.3, num_passengers=200 |
+| SIMULATION_RUN | run_simulation | converged | fuel=12,756, gtow=74,155, wing=8,540 |
+| RESULTS_REVIEW | check_constraints | VERDICT: PASSED | optimality_gap=-13.5%, 2/2 constraints |
+
+CL/CD match v18 (orchestrated_staged_pipeline) to the digit
+(0.1871070455 / 0.01280504022) — same fixture, same pinned Euler
+config from tests/test_su2_solver_live.py.
+
+Cross-discipline coupling fired automatically through the
+data-plane middleware (no manual plumbing in worker prompts):
+- SU2 CL=0.1871 -> Aviary Mission.Design.LIFT_COEFFICIENT (Phase H)
+- SU2 CD       -> Aviary SUBSONIC_DRAG_COEFF_FACTOR (Phase H)
+- mass-mcp wing -> Aviary Aircraft.Wing.MASS_SCALER (Phase K-A)
+- mass-mcp MTOM -> pycycle Fn_DES (Phase K-B)
+
+Minor observation: TASK_CLASSIFIED dispatches to mission_architect
+which is told only to classify complexity, but its underlying role
+spec from mdo_f25_sequential_agents.yaml leads it to also call
+get_design_space + set_aircraft_parameters before producing the
+complexity word. Not a blocker — the graph still received the
+complexity output and transitioned. Could be tightened by either
+narrowing the agent role in the classify state or routing
+TASK_CLASSIFIED to a stricter classifier persona; leaving as-is
+for now since it doesn't break the flow.
+
+Side-by-side updated MDO-F25 table:
+
+| Combo | wandb | fuel_kg | Notes |
+|---|---|---|---|
+| `sequential_iterative_feedback` | iepdeu70 | 12,755.86 | baseline |
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | Job 3 step 1 |
+| `orchestrated_staged_pipeline` v18 | 7ngitswj | 13,141.99 | Job 3 step 2 |
+| **`sequential_graph_routed`** | **81w57h3g** | **12,755.86** | **Job 3 step 3 verified, all 7 disciplines real** |
+| `orchestrated_iterative_feedback` | fup5hh0h | 13,206.34 | prior baseline |
+| `networked_iterative_feedback` | 4o22y281 | 11,615.86 | prior baseline |
+
+Job 3 step 3 is now closed. Remaining: step 4 (orchestrated x
+graph_routed), step 5 (networked x graph_routed). Both should
+benefit from the prompt rewrite on config/mdo_f25_graph.yaml
+landed in this branch.
+
 ### 2026-05-25 (later) — Verify pre-hook cursor fix + sequential_staged_pipeline live
 
 Re-ran mdo_f25_sequential_staged_pipeline end-to-end with the
