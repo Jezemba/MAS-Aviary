@@ -3,22 +3,25 @@
 # This file is loaded by StagedPipelineHandler via the
 # `pipeline_path` entry in handler_config (see batch_runner.py).
 # Stage names match the 7-agent template in
-# `config/mdo_f25_sequential_agents.yaml`; the agent's full role
-# definition (with discipline knowledge, MCP tool guidance, and F25
-# parameter context) lives there. The `stage_prompt` below is just
-# a short reminder of stage objective + completion keyword, since
-# the staged_pipeline handler APPENDS stage_prompt to the agent's
-# existing system prompt — there's no need to repeat the role here.
+# `config/mdo_f25_sequential_agents.yaml`.
+#
+# Stage_prompts are tightened (2026-05-25 after the v6 run on
+# orchestrated_staged_pipeline). The orchestrated-strategy workers
+# are created dynamically via `create_agent` with a generic persona
+# — they don't inherit the detailed role from the sequential agents
+# YAML. So each stage_prompt MUST be explicit about:
+#   (1) what tools to call (exact sequence),
+#   (2) what tools to AVOID (e.g. don't regenerate the mesh —
+#       the geometry stage already did that),
+#   (3) where inputs come from (the previous stages' outputs
+#       prepended via _build_context).
+# The original task (with CPACS file path, F25 mission spec) is
+# prepended to every stage's context after the 2026-05-25
+# original_task propagation fix, so workers always see the
+# authoritative D150_simple.xml path.
 #
 # Completion criteria are OBSERVATIONAL ONLY — they never block
 # advancement, they only record whether each stage hit its target.
-# Per-stage criteria use:
-#   - `tool_attempted` (most reliable signal for stages whose
-#     completion is determined by which MCP tool fires)
-#   - `output_contains` with `verdict_present` for stages whose
-#     completion is signalled by a keyword in the output (the
-#     handler's `verdict_patterns` in handler_config below picks
-#     up MDO-specific keywords as well as the defaults).
 
 mdo_f25_pipeline:
   stages:
@@ -31,24 +34,145 @@ mdo_f25_pipeline:
         description: "geometry_engineer opened a CPACS session via tigl-mcp"
       stage_prompt: |
         You are at the GEOMETRY ENGINEER stage of the MDO F25 pipeline.
-        Open the CPACS file, set wing/fuselage geometry per F25 spec, and
-        export the volume mesh for downstream CFD. Finish with a brief
-        DESIGN_STATE summary that includes CPACS_FILE: <path> and a one-
-        line GEOMETRY_SET marker so downstream stages can confirm.
+        The CPACS file path is in the TASK above — use that path verbatim
+        (do not invent a different filename).
+
+        Required tool sequence:
+          1. The TASK above contains the absolute CPACS file path
+             starting with "/home/aipexws3/...D150_simple.xml". Use
+             that EXACT string as the `source` argument:
+             open_cpacs(source_type="path", source="<paste the full
+             absolute path here>"). Do NOT pass the literal text
+             "TASK" or angle brackets — paste the real path string.
+          2. (optional) set_high_level_parameters to adjust wing/fuselage
+             toward the F25 reference (AR ~= 13.5, AREA ~= 135 m^2).
+             Before calling this, you MUST call list_geometric_components
+             first to discover the real component UIDs in the file —
+             do NOT guess "D150_Wing" or "Wing"; the actual UIDs are
+             returned by that tool.
+          3. generate_volume_mesh — ONCE — to produce the CFD mesh.
+             Use these EXACT parameters (measured: ~12 s on F25
+             geometry; tests/test_mesh_generation_live.py pins this):
+               component_uid="Wing1",
+               surface_mesh_size=1.0,
+               mesh_size_min=0.3,
+               mesh_size_max=8.0,
+               far_field_distance=10.0,
+               boundary_layer_enabled=False,
+               boundary_layer_thickness=0.01,
+               boundary_layer_layers=5,
+               boundary_layer_growth=1.2,
+               output_format="su2"
+             Note: setting boundary_layer_enabled=True is more
+             accurate for viscous CFD but the boundary-layer
+             extrusion makes gmsh significantly slower on this
+             geometry — only enable it if you have wall-clock budget.
+
+        Output (in DESIGN_STATE):
+          CPACS_FILE: <the path you used>
+          GEOMETRY_SET: <wing/fuselage summary>
+          MESH_BASE64: <the base64 ref returned by generate_volume_mesh>
+          MESH_SIZE_BYTES: <size of the mesh>
+
+        Downstream stages will read MESH_BASE64 — do NOT regenerate the
+        mesh in later stages.
 
     # ── Stage 2: Aerodynamics (SU2 CFD) ───────────────────────────
     - name: "aerodynamics_analyst"
       completion_criteria:
         type: "tool_attempted"
         check: "tool_called"
-        tool_name: "run_simulation"
+        tool_name: "run_su2_solver"
         description: "aerodynamics_analyst ran a CFD simulation via su2-mcp"
       stage_prompt: |
-        You are at the AERODYNAMICS ANALYST stage. Configure SU2 for the
-        F25 cruise design point, run the CFD, extract CL / CD / L_D from
-        history.csv, and write them into DESIGN_STATE. Output
-        SOLVER_CONVERGED: <true/false> so the next stage knows whether
-        to trust the aero numbers.
+        You are at the AERODYNAMICS ANALYST stage.
+
+        DO NOT call generate_volume_mesh — the GEOMETRY stage already
+        produced the mesh. Its base64 reference is in the previous-stage
+        output as MESH_BASE64. Use that reference.
+
+        DO NOT call open_cpacs — you do not need a TiGL session for SU2.
+
+        DO NOT use SOLVER=RANS or SOLVER=NAVIER_STOKES. The mesh from
+        Stage 1 has no boundary layer (boundary_layer_enabled=False),
+        which means viscous solvers will either error out (missing
+        KIND_TURB_MODEL / REYNOLDS_NUMBER) or produce garbage. Use
+        SOLVER=EULER, which is what the pinned config below sets.
+
+        Required tool sequence:
+          1. create_su2_session(base_name="f25_cruise")
+          2. set_mesh(session_id=<su2 sid>, mesh_base64=<MESH_BASE64 ref
+             from previous stage's output>, update_config=True)
+          3. update_config_entries(session_id=<su2 sid>, create_if_missing=True,
+             updates=<the EXACT dict below>). These values are pinned by
+             tests/test_su2_solver_live.py — they converged to rms_density
+             < -8 in ~207 s on this geometry (CL=0.187, CD=0.0128,
+             L/D=14.6). Do NOT substitute "reasonable" values; copy
+             verbatim:
+               {
+                 "SOLVER": "EULER",
+                 "MATH_PROBLEM": "DIRECT",
+                 "KIND_TURB_MODEL": "SA",
+                 "RESTART_SOL": "NO",
+                 "MACH_NUMBER": 0.78,
+                 "AOA": 2.0,
+                 "REYNOLDS_NUMBER": 30000000,
+                 "FREESTREAM_PRESSURE": 26500.0,
+                 "FREESTREAM_TEMPERATURE": 233.0,
+                 "REF_DIMENSIONALIZATION": "DIMENSIONAL",
+                 "REF_AREA": 61.39076274891849,
+                 "REF_LENGTH": 4.192320937872386,
+                 "REF_ORIGIN_MOMENT_X": 15.280145964476011,
+                 "REF_ORIGIN_MOMENT_Y": 6.54558738384396,
+                 "REF_ORIGIN_MOMENT_Z": -0.7921210525374252,
+                 "CONV_NUM_METHOD_FLOW": "JST",
+                 "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
+                 "NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES",
+                 "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
+                 "CFL_NUMBER": 1000,
+                 "CFL_ADAPT": "YES",
+                 "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+                 "MGCYCLE": "W_CYCLE",
+                 "MGLEVEL": 3,
+                 "LINEAR_SOLVER": "FGMRES",
+                 "LINEAR_SOLVER_PREC": "ILU",
+                 "LINEAR_SOLVER_ITER": 10,
+                 "LINEAR_SOLVER_ERROR": 1e-10,
+                 "ITER": 200,
+                 "CONV_FIELD": "RMS_DENSITY",
+                 "CONV_RESIDUAL_MINVAL": -8,
+                 "CONV_STARTITER": 10,
+                 "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
+                 "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
+                 "OUTPUT_FILES": "( RESTART, PARAVIEW, SURFACE_CSV )",
+                 "MARKER_EULER": "( aircraft )",
+                 "MARKER_FAR": "( farfield )",
+                 "MARKER_PLOTTING": "( aircraft )",
+                 "MARKER_MONITORING": "( aircraft )"
+               }
+             Note: the marker names `aircraft` and `farfield` are what
+             tigl-mcp's gmsh writes into the .su2 file. The data-plane
+             middleware also auto-corrects guesses (e.g. "wing",
+             "wall") to these names — so even if you copy from a
+             different mesh, the call will still work, but it's much
+             cheaper to copy verbatim.
+          4. run_su2_solver(session_id=<su2 sid>, solver="SU2_CFD",
+             max_runtime_seconds=300, capture_log_lines=100). Expect
+             ~210 s wall-clock. If success=false, READ THE log_tail
+             field for the SU2 error message — do NOT just retry.
+          5. read_history_csv(session_id=<su2 sid>, relative_path="history.csv",
+             max_rows=1000, skip_rows=0). The LAST row's CL and CD
+             columns are the converged values.
+
+        Output (in DESIGN_STATE):
+          CL: <value>  CD: <value>  L_D: <value>
+          SOLVER_CONVERGED: <true/false>
+          AERO_NOTES: <any caveats>
+        Sanity envelope for this geometry at Mach 0.78 / AoA 2°:
+          CL in [0.05, 0.6], CD in [0.002, 0.05].
+        If the converged values land outside that envelope, flag
+        SOLVER_CONVERGED=false in AERO_NOTES — downstream stages
+        otherwise propagate garbage.
 
     # ── Stage 3: Structures (mass-mcp / FLOPS) ────────────────────
     - name: "structures_analyst"
@@ -58,10 +182,25 @@ mdo_f25_pipeline:
         tool_name: "estimate_mass"
         description: "structures_analyst estimated component masses via mass-mcp"
       stage_prompt: |
-        You are at the STRUCTURES ANALYST stage. Use the CPACS geometry
-        from Stage 1 to estimate component masses (FLOPS or OAS),
-        produce OEM_KG and the wing-mass breakdown. Output the keyword
-        OEM_KG: <value> so downstream stages can pick it up.
+        You are at the STRUCTURES ANALYST stage.
+
+        DO NOT call open_cpacs or generate_volume_mesh — Stage 1 did
+        those. Use the CPACS_FILE path from the previous-stage output
+        (it's the same path that was in TASK).
+
+        Required tool sequence (use the actual CPACS path string from
+        the TASK above — the same path the geometry stage opened, the
+        full absolute path starting with "/home/aipexws3/..."):
+          1. validate_cpacs_inputs(cpacs_file_path="<paste the full
+             absolute path string>")
+          2. estimate_mass(cpacs_file_path="<paste the same path>",
+             wing_mass_method="FLOPS")
+          3. (optional) get_cpacs_mass_breakdown for the per-component view
+
+        Output (in DESIGN_STATE):
+          OEM_KG: <value>
+          WING_MASS_KG: <value>
+          MASS_ESTIMATION: <one-line summary>
 
     # ── Stage 4: Propulsion (pyCycle) ─────────────────────────────
     - name: "propulsion_analyst"
@@ -71,10 +210,25 @@ mdo_f25_pipeline:
         tool_name: "run_cycle"
         description: "propulsion_analyst ran a pyCycle design-point cycle"
       stage_prompt: |
-        You are at the PROPULSION ANALYST stage. Build the HBTF cycle at
-        the F25 cruise design point, extract SFC and net thrust. Output
-        SFC_CRUISE, NET_THRUST_CRUISE_LBF, and CYCLE_CONVERGED so the
-        mission stage can size fuel.
+        You are at the PROPULSION ANALYST stage.
+
+        Required tool sequence:
+          1. create_cycle_model(name="HBTF") — pyCycle's canonical
+             high-bypass turbofan
+          2. get_design_inputs — this returns the SHORT curated list of
+             settable design dials. DO NOT use list_variables (which
+             returns ~900 promoted names with no design-dial markers and
+             will lead you to set garbage paths).
+          3. set_inputs with the design dials at F25 cruise design point
+             (e.g. fan.PR ~= 1.5, splitter.BPR ~= 10, Fn_DES ~= 5000 lbf)
+          4. run_cycle(outputs_of_interest=["SFC", "Fn"])
+          5. get_outputs(variables=["SFC", "Fn"])
+          6. close_cycle_model
+
+        Output (in DESIGN_STATE):
+          SFC_CRUISE: <value> lb/hr/lbf
+          NET_THRUST_CRUISE_LBF: <value>
+          CYCLE_CONVERGED: <true/false>
 
     # ── Stage 5: Mission Architect (Aviary) ───────────────────────
     - name: "mission_architect"
@@ -84,12 +238,31 @@ mdo_f25_pipeline:
         tool_name: "set_aircraft_parameters"
         description: "mission_architect set aircraft parameters via aviary-mcp"
       stage_prompt: |
-        You are at the MISSION ARCHITECT stage. Create the Aviary
-        simulation session, configure the F25 mission (2500 nmi /
-        239 pax / Mach 0.78 / FL330), and call set_aircraft_parameters
-        with the geometry / aero / mass inputs from Stages 1-4. Use the
-        RELIABLE values (AR ~= 11.0, ENGINE_SCALE_FACTOR = 1.3) noted
-        in the agent role to avoid the Newton-solver out-of-range error.
+        You are at the MISSION ARCHITECT stage.
+
+        A session has been pre-created — its session_id is in the
+        previous-stage outputs (look for "session_id" or "SESSION_ID").
+        Reuse it. The data-plane middleware will also auto-inject the
+        right session_id even if you omit it, so prefer simple calls.
+
+        Required tool sequence:
+          1. configure_mission(range_nmi=2500, num_passengers=239,
+             cruise_mach=0.78, cruise_altitude_ft=33000,
+             optimizer_max_iter=200)
+          2. set_aircraft_parameters with parameters={
+               "Aircraft.Wing.ASPECT_RATIO": 11.0,
+               "Aircraft.Wing.AREA": 130.1,
+               "Aircraft.Wing.SWEEP": 25,
+               "Aircraft.Wing.TAPER_RATIO": 0.278,
+               "Aircraft.Fuselage.LENGTH": 37.79,
+               "Aircraft.Engine.SCALE_FACTOR": 1.3,
+             }
+             USE AR=11.0 (NOT the F25-target 15.6) and SCALE_FACTOR=1.3.
+             AR > 12 causes the climb-phase Newton solver to error.
+
+        Output:
+          MISSION_CONFIGURED: <true/false>
+          AIRCRAFT_PARAMETERS_SET: <true/false>
 
     # ── Stage 6: Simulation Executor (Aviary) ─────────────────────
     - name: "simulation_executor"
@@ -99,11 +272,19 @@ mdo_f25_pipeline:
         tool_name: "run_simulation"
         description: "simulation_executor ran the Aviary mission"
       stage_prompt: |
-        You are at the SIMULATION EXECUTOR stage. Run the Aviary
-        mission simulation, extract converged fuel/gtow/wing-mass.
-        Output fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg,
-        zero_fuel_weight_kg, and CONVERGED: <true/false> in the exact
-        field names downstream metrics scrape.
+        You are at the SIMULATION EXECUTOR stage.
+
+        Required tool sequence:
+          1. run_simulation — uses the session from previous stages
+          2. get_results — pulls converged fuel / gtow / wing-mass
+
+        Output (in EXACTLY these field names — downstream metrics scrape them):
+          fuel_burned_kg: <value>
+          gtow_kg: <value>
+          wing_mass_kg: <value>
+          reserve_fuel_kg: <value>
+          zero_fuel_weight_kg: <value>
+          CONVERGED: <true/false>
 
     # ── Stage 7: MDO Integrator ───────────────────────────────────
     - name: "mdo_integrator"
@@ -112,8 +293,22 @@ mdo_f25_pipeline:
         check: "verdict_present"
         description: "mdo_integrator produced a VERDICT keyword"
       stage_prompt: |
-        You are at the MDO INTEGRATOR stage — the final stage. Call
-        check_constraints with the F25 limits (fuel_burned_kg <= 15000,
-        gtow_kg <= 90000), assess the optimality gap vs the F25 spec
-        (MTOM 85,700 kg, fuel 12,100 kg), and produce a VERDICT line.
-        Output TASK_COMPLETE if VERDICT is COMPLETE.
+        You are at the MDO INTEGRATOR stage — the final stage.
+
+        Required:
+          1. check_constraints with F25 limits:
+             [{"variable": "fuel_burned_kg", "operator": "<=", "value": 15000},
+              {"variable": "gtow_kg",        "operator": "<=", "value": 90000}]
+          2. Compute the optimality gap vs F25 spec
+             (MTOM 85,700 kg, fuel 12,100 kg).
+          3. Produce a VERDICT line:
+             VERDICT: COMPLETE if all constraints met AND fuel within 15%
+             VERDICT: CONTINUE if constraints met but fuel >15% above spec
+             VERDICT: RETRY if constraints violated
+
+        Output:
+          fuel_burned_kg: <from previous stage>
+          gtow_kg: <from previous stage>
+          optimality_gap_pct: <vs 12,100 kg fuel reference>
+          VERDICT: <COMPLETE | CONTINUE | RETRY>
+        If VERDICT is COMPLETE, output TASK_COMPLETE on its own line.

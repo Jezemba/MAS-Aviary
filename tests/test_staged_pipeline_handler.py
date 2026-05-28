@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from src.coordination.completion_criteria import CompletionCriteria
+from src.coordination.completion_criteria import CompletionCriteria, CompletionResult
 from src.coordination.execution_handler import Assignment
 from src.coordination.stage_definition import PipelineDefinition, StageDefinition
 from src.coordination.staged_pipeline_handler import (
@@ -721,6 +721,250 @@ class TestStageResultFields:
             None,
         )
         assert handler.last_stage_results[0].output_length == len("hello world")
+
+
+# ---- Original-task propagation across stages -------------------------------
+
+
+class TestOriginalTaskPropagation:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline content
+    cascade: Stage 1 receives the original task (which carries the
+    CPACS file path, F25 mission spec, constraints) but Stages 2-7 see
+    only `previous_outputs` + `stage_prompt`. If Stage 1's worker
+    misinterprets and produces broken output, downstream workers
+    cannot recover the original context — they hallucinate filenames
+    and parameters.
+
+    Compare with iterative_feedback, where every worker is invoked
+    with the orchestrator's task directly, so the original context is
+    always one prompt away.
+
+    Fix: prepend `TASK: {original_task}` to every stage's context, not
+    just Stage 1. Cost ~few hundred tokens per stage; survival benefit
+    is large for orchestrated_staged_pipeline."""
+
+    def test_stage_one_includes_original_task(self):
+        # Sanity guard: Stage 1's behavior is unchanged.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="geometry_engineer",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Open the CPACS file.",
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        ctx = handler._build_context(
+            idx=0,
+            original_task="Use CPACS at /tmp/D150_simple.xml. F25 mission.",
+            assignment=Assignment(
+                agent_name="geometry_engineer",
+                task="Use CPACS at /tmp/D150_simple.xml. F25 mission.",
+            ),
+            stage=pipeline.stages[0],
+            previous_outputs=[],
+        )
+        assert "TASK: Use CPACS at /tmp/D150_simple.xml. F25 mission." in ctx
+        assert "Open the CPACS file." in ctx
+
+    def test_stage_two_also_includes_original_task(self):
+        # The new contract: stages beyond the first must ALSO see the
+        # original task. Without this, downstream workers lose the
+        # CPACS file path, mission spec, and constraints.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name="geometry_engineer",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Open the CPACS file.",
+                ),
+                StageDefinition(
+                    name="aerodynamics_analyst",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt="Run SU2 on the geometry.",
+                ),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        original_task = "Use CPACS at /tmp/D150_simple.xml. F25 mission, 2500 nmi."
+        ctx = handler._build_context(
+            idx=1,
+            original_task=original_task,
+            assignment=Assignment(
+                agent_name="aerodynamics_analyst",
+                task=original_task,
+            ),
+            stage=pipeline.stages[1],
+            previous_outputs=[(
+                "geometry_engineer",
+                "CPACS_FILE: /tmp/D150_simple.xml\nGEOMETRY_SET",
+                CompletionResult(met=True, reason="ok"),
+            )],
+        )
+        assert original_task in ctx, (
+            "Stage 2+ context must include the original task so workers "
+            "can recover file paths / mission spec / constraints even if "
+            "Stage 1's output is incomplete."
+        )
+        # Previous output must STILL be present — original task added,
+        # not replaced.
+        assert "CPACS_FILE: /tmp/D150_simple.xml" in ctx
+        assert "Run SU2 on the geometry." in ctx
+
+    def test_stage_seven_includes_original_task(self):
+        # All downstream stages — not just Stage 2 — must see the
+        # original task.
+        from src.coordination.execution_handler import Assignment
+
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(
+                    name=f"stage_{i}",
+                    completion_criteria=CompletionCriteria(type="any", check="always"),
+                    stage_prompt=f"Stage {i} work.",
+                )
+                for i in range(7)
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        original_task = "F25 design optimization."
+        ctx = handler._build_context(
+            idx=6,
+            original_task=original_task,
+            assignment=Assignment(agent_name="stage_6", task=original_task),
+            stage=pipeline.stages[6],
+            previous_outputs=[
+                (f"stage_{i}", f"Stage {i} done.", CompletionResult(met=True, reason="ok"))
+                for i in range(6)
+            ],
+        )
+        assert original_task in ctx
+
+
+# ---- Name-based stage-to-assignment matching -------------------------------
+
+
+class TestNameBasedAssignmentMatching:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline content
+    cascade (wandb 7wbgfu74): `execute()` paired assignments to stages
+    by INDEX, so when the orchestrator's `assign_task` order didn't
+    match the pipeline stage order, the wrong worker ran each stage
+    and the discipline tools (open_cpacs, run_su2_solver, estimate_mass,
+    run_cycle) never fired. v8 ran end-to-end but produced fuel=7,224
+    on Aviary defaults because the F25 disciplines did no real work.
+
+    Fix: pair stages to assignments by NAME match when possible. For
+    sequential strategy (where stage_agents are constructed in pipeline
+    order with matching names) the result is unchanged. For orchestrated
+    strategy (where the orchestrator's assign_task order is arbitrary),
+    the right worker now runs each stage_prompt.
+
+    Fallback: assignments whose agent_name doesn't match any stage
+    keep their original position so unrelated test scenarios continue
+    to work."""
+
+    def test_sequential_pipeline_order_unchanged(self):
+        # Sequential strategy: assignments come in pipeline order with
+        # matching names — name-based matching must produce the same
+        # pairing the original order-based matching did.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="aerodynamics_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("opened cpacs"),
+            "aerodynamics_analyst": _make_agent("ran SU2"),
+        }
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="geometry_engineer", task="t"),
+                Assignment(agent_name="aerodynamics_analyst", task="t"),
+            ],
+            agents,
+            None,
+        )
+        assert [m.metadata["stage_name"] for m in msgs] == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+        assert [m.agent_name for m in msgs] == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+
+    def test_orchestrated_reordered_assignments_match_by_name(self):
+        # The regression: orchestrator created agents in a different
+        # order than the pipeline. With order-based matching, the
+        # wrong worker ran each stage. With name-based matching, each
+        # stage gets its named worker.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="aerodynamics_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+                StageDefinition(name="structures_analyst",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("CPACS opened"),
+            "aerodynamics_analyst": _make_agent("CFD ran"),
+            "structures_analyst": _make_agent("mass estimated"),
+        }
+        # Assignment order ≠ pipeline order (orchestrator's choice).
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="structures_analyst", task="t"),
+                Assignment(agent_name="geometry_engineer", task="t"),
+                Assignment(agent_name="aerodynamics_analyst", task="t"),
+            ],
+            agents,
+            None,
+        )
+        # After name-based matching, stage→agent pairing follows the
+        # pipeline order, not the assignment order.
+        stage_to_agent = {m.metadata["stage_name"]: m.agent_name for m in msgs}
+        assert stage_to_agent["geometry_engineer"] == "geometry_engineer"
+        assert stage_to_agent["aerodynamics_analyst"] == "aerodynamics_analyst"
+        assert stage_to_agent["structures_analyst"] == "structures_analyst"
+
+    def test_unmatched_assignment_falls_through_to_end(self):
+        # An assignment whose agent_name doesn't match any stage
+        # should still get processed (with always-criteria fallback)
+        # AFTER all the named stages.
+        pipeline = PipelineDefinition(
+            stages=[
+                StageDefinition(name="geometry_engineer",
+                                completion_criteria=CompletionCriteria(type="any", check="always")),
+            ]
+        )
+        handler = _handler_with_pipeline(pipeline)
+        agents = {
+            "geometry_engineer": _make_agent("ok"),
+            "free_worker": _make_agent("freeform"),
+        }
+        msgs = handler.execute(
+            [
+                Assignment(agent_name="free_worker", task="t"),  # unmatched
+                Assignment(agent_name="geometry_engineer", task="t"),
+            ],
+            agents,
+            None,
+        )
+        # Named match comes first regardless of original position.
+        assert msgs[0].agent_name == "geometry_engineer"
+        # Unmatched assignment falls through to the end.
+        assert msgs[1].agent_name == "free_worker"
 
 
 # ---- Pre-hook session injection (cursor safety) ----------------------------

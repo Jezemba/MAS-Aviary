@@ -49,6 +49,17 @@ class OrchestratorContext:
     required_result_signals: list = field(default_factory=list)
     result_signals: set = field(default_factory=set)
 
+    # Orchestrator lifecycle: "active" keeps the orchestrator in the loop
+    # so it can react to runtime signals (e.g. retry parameters after a
+    # simulation failure); "setup_only" hands off to the execution_handler
+    # after team creation and the orchestrator can't re-intervene. In
+    # setup_only mode GatedFinalAnswer skips the result_signals check —
+    # there's nothing the orchestrator can do to fix a simulation that
+    # already failed, and re-rejecting DELEGATION_COMPLETE just produces
+    # a wasteful re-creation loop (observed 2026-05-25 on
+    # mdo_f25_orchestrated_staged_pipeline).
+    lifecycle_mode: str = "active"
+
 
 ORCHESTRATOR_TOOL_NAMES = frozenset(
     {
@@ -124,6 +135,10 @@ class GatedFinalAnswer(Tool):
 
         # Phase coverage check: verify assigned agents collectively cover
         # every required workflow phase (setup, execution, evaluation, etc.).
+        # SKIPPED in per_stage mode — orchestrator only delegates one
+        # stage at a time, so it can't satisfy all phases upfront.
+        if ctx.lifecycle_mode == "per_stage":
+            return answer
         missing = _check_phase_coverage(ctx)
         if missing:
             phase_detail = "; ".join(
@@ -140,6 +155,13 @@ class GatedFinalAnswer(Tool):
         # Only enforced when workers have already run and attempted the
         # relevant operation — on the first delegation (before any workers
         # execute), the check is skipped because no signals can exist yet.
+        #
+        # In setup_only lifecycle mode the orchestrator can't re-intervene
+        # after handoff, so re-rejecting DELEGATION_COMPLETE here just
+        # spins up a wasteful re-creation loop. Skip the check; the run
+        # surfaces the simulation failure via its metrics regardless.
+        if ctx.lifecycle_mode == "setup_only":
+            return answer
         missing_signals = _check_result_signals(ctx)
         if missing_signals:
             detail = ", ".join(missing_signals)

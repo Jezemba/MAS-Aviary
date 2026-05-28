@@ -423,3 +423,82 @@ class TestGatedFinalAnswerValidation:
         tool = GatedFinalAnswer(ctx)
         result = tool.forward("DELEGATION_COMPLETE - all tasks assigned")
         assert "DELEGATION_COMPLETE" in result
+
+
+class TestGatedFinalAnswerSetupOnlyResultSignals:
+    """Regression for the 2026-05-25 orchestrated_staged_pipeline retry
+    loop: GatedFinalAnswer rejected DELEGATION_COMPLETE because
+    `simulation_succeeded` wasn't in `result_signals` after a worker's
+    failed run_simulation, forcing the orchestrator to re-invoke and
+    re-create the same 7 agents in a wasteful loop.
+
+    For `lifecycle_mode=setup_only` the orchestrator builds the team
+    once and the execution_handler drives workers; the orchestrator
+    can't repair simulation failures because it doesn't get back
+    into the loop. So the result_signals check should NOT block
+    DELEGATION_COMPLETE in setup_only mode. The workflow_phases check
+    (team composition) is still legitimate because that's the
+    orchestrator's setup-time responsibility."""
+
+    def _make_context(self, *, lifecycle_mode="active"):
+        from src.tools.orchestrator_tools import OrchestratorContext
+
+        ctx = OrchestratorContext(
+            available_tools={},
+            agents={},
+            model=MagicMock(),
+            lifecycle_mode=lifecycle_mode,
+        )
+        ctx.created_agents = ["worker1"]
+        ctx.assignments = [{"agent_name": "worker1", "task": "do stuff"}]
+        ctx.required_result_signals = ["simulation_succeeded"]
+        # Mark simulation as attempted but not succeeded — this is the
+        # state that previously triggered the retry loop.
+        ctx.result_signals = {"simulation_attempted"}
+        return ctx
+
+    def test_active_mode_still_blocks_on_missing_simulation_signal(self):
+        # Sanity guard for the active-mode behavior (unchanged).
+        from src.tools.orchestrator_tools import GatedFinalAnswer
+
+        ctx = self._make_context(lifecycle_mode="active")
+        tool = GatedFinalAnswer(ctx)
+        with pytest.raises(ValueError, match="simulation_succeeded"):
+            tool.forward("DELEGATION_COMPLETE")
+
+    def test_setup_only_mode_skips_result_signal_check(self):
+        # The new path: setup_only orchestrators can't fix simulation
+        # failures after the fact, so DELEGATION_COMPLETE must
+        # accept-on-failure rather than loop.
+        from src.tools.orchestrator_tools import GatedFinalAnswer
+
+        ctx = self._make_context(lifecycle_mode="setup_only")
+        tool = GatedFinalAnswer(ctx)
+        # Should NOT raise.
+        result = tool.forward("DELEGATION_COMPLETE")
+        assert "DELEGATION_COMPLETE" in result
+
+    def test_setup_only_still_enforces_workflow_phases(self):
+        # workflow_phases coverage is a team-composition check, which
+        # IS the orchestrator's responsibility — setup_only must still
+        # enforce it.
+        from src.tools.orchestrator_tools import GatedFinalAnswer, OrchestratorContext
+
+        mock_agent = MagicMock()
+        # Agent has none of the required tools — phase will be uncovered.
+        mock_agent.tools = {}
+        ctx = OrchestratorContext(
+            available_tools={},
+            agents={"worker1": mock_agent},
+            model=MagicMock(),
+            lifecycle_mode="setup_only",
+        )
+        ctx.created_agents = ["worker1"]
+        ctx.assignments = [{"agent_name": "worker1", "task": "do stuff"}]
+        ctx.required_tool_phases = {
+            "geometry_setup": ["open_cpacs", "generate_volume_mesh"],
+        }
+
+        tool = GatedFinalAnswer(ctx)
+        with pytest.raises(ValueError, match="Workflow phases not covered"):
+            tool.forward("DELEGATION_COMPLETE")

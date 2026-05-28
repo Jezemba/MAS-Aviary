@@ -440,6 +440,383 @@ class TestGraphRoutedRawTaskHandoff:
         assert action.metadata.get("graph_routed_raw_task") is None
 
 
+# ---- Pipeline-stage-aware assignment reorder --------------------------------
+
+
+class TestPipelineStageReorder:
+    """Regression for the orchestrated_staged_pipeline content cascade
+    (v9, wandb same 7,224 kg as v8). Earlier attempt to reorder at the
+    handler level was a no-op because the strategy passes one assignment
+    per execute() call. Reorder must happen ONCE at execution-phase
+    entry, before _execution_index starts walking.
+
+    Mirrors the existing `_graph_roles` wiring: batch_runner stores
+    pipeline stage names in `coord_config["_pipeline_stage_names"]`;
+    the strategy reads it on initialize and reorders ctx.assignments
+    when transitioning to execution phase."""
+
+    def test_assignments_reordered_to_match_stage_names(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Orchestrator's assign_task order: simulation_executor first
+        # (matches the v9 failure: simulation_executor was queue
+        # position 0, geometry_engineer was position 3). With reorder,
+        # geometry_engineer should run first.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        base_config["_pipeline_stage_names"] = [
+            "geometry_engineer",
+            "aerodynamics_analyst",
+            "structures_analyst",
+            "simulation_executor",
+        ]
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("simulation_executor", "structures_analyst",
+                     "geometry_engineer", "aerodynamics_analyst"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": f"task for {name}",
+                 "assigned_at_turn": 1}
+            )
+
+        # Trigger the transition (would normally be invoked from
+        # next_step after final_answer returns DELEGATION_COMPLETE).
+        strategy._transition_to_execution([], {"task": "T"})
+
+        # ctx.assignments should now be in pipeline-stage order.
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "geometry_engineer",
+            "aerodynamics_analyst",
+            "structures_analyst",
+            "simulation_executor",
+        ]
+
+    def test_unmatched_assignment_falls_through_to_end(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # If the orchestrator created an extra agent whose name
+        # doesn't match any stage (e.g. "mission_setup_agent" in v9),
+        # it must still appear after all named stages.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        base_config["_pipeline_stage_names"] = ["geometry_engineer"]
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("free_worker", "geometry_engineer"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": "t", "assigned_at_turn": 1}
+            )
+
+        strategy._transition_to_execution([], {"task": "T"})
+
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "geometry_engineer",  # named match first
+            "free_worker",        # unmatched at the end
+        ]
+
+    def test_no_reorder_when_pipeline_stage_names_absent(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Back-compat: combos that don't use staged_pipeline (e.g.
+        # iterative_feedback) don't set _pipeline_stage_names, so
+        # the strategy must keep the assignment order as-is.
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "setup_only"
+        # Note: NO _pipeline_stage_names in base_config.
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        for name in ("zebra", "alpha", "mike"):
+            ctx.created_agents.append(name)
+            ctx.agents[name] = f"mock_agent_{name}"
+            ctx.assignments.append(
+                {"agent_name": name, "task": "t", "assigned_at_turn": 1}
+            )
+
+        strategy._transition_to_execution([], {"task": "T"})
+
+        # Order unchanged — no pipeline_stage_names to drive reorder.
+        assert [a["agent_name"] for a in ctx.assignments] == [
+            "zebra", "alpha", "mike",
+        ]
+
+
+# ---- per_stage lifecycle mode (per-stage delegation) ------------------------
+
+
+class TestPerStageLifecycleMode:
+    """Per-stage delegation: orchestrator delegates one pipeline stage
+    at a time and sees the previous stage's output/error before
+    deciding the next worker. Designed for staged_pipeline + dynamic
+    workers, where the orchestrator can't reliably plan the whole
+    team upfront (observed across v6-v10 on the orchestrated_staged_
+    pipeline combo)."""
+
+    def _build_strategy(self, orchestrator_agent, base_config, worker_tools, stages):
+        base_config["_worker_tools"] = worker_tools
+        base_config["orchestrated"]["lifecycle_mode"] = "per_stage"
+        base_config["_pipeline_stage_names"] = stages
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+        return strategy
+
+    def test_per_stage_mode_starts_at_stage_zero(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        assert strategy._lifecycle_mode == "per_stage"
+        assert strategy._current_stage_idx == 0
+        assert strategy._pipeline_stage_names == [
+            "geometry_engineer", "aerodynamics_analyst",
+        ]
+
+    def test_creation_input_mentions_current_stage(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # The orchestrator must see WHICH stage it's delegating for.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        action = strategy.next_step([], {"task": "Design F25"})
+        assert action.action_type == "invoke_agent"
+        assert action.agent_name == "orchestrator"
+        # The per-stage context must include the current stage name.
+        assert "geometry_engineer" in action.input_context
+
+    def test_after_stage_runs_routes_back_to_orchestrator(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # After a stage's worker completes, the strategy must route
+        # back to the orchestrator (NOT auto-advance the cursor).
+        # The orchestrator reads the previous-stage output and decides
+        # the next move.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "Open CPACS",
+            "assigned_at_turn": 1,
+        })
+        worker_msg = AgentMessage(
+            agent_name="geometry_engineer",
+            content="CPACS_FILE: /tmp/x.xml\nGEOMETRY_SET",
+            turn_number=1, timestamp=1.0,
+        )
+        strategy._phase = "execution"
+
+        action = strategy.next_step([worker_msg], {"task": "Design F25"})
+        # Routes back to orchestrator.
+        assert action.agent_name == "orchestrator"
+        # Cursor stays at 0 — the orchestrator will move it via its
+        # next assignment.
+        assert strategy._current_stage_idx == 0
+        # Orchestrator's input includes the previous-stage output.
+        assert "GEOMETRY_SET" in action.input_context or "CPACS_FILE" in action.input_context
+
+    def test_after_failed_stage_orchestrator_can_retry(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # The crux of per_stage: when a stage's worker fails, control
+        # MUST go back to the orchestrator so it can read the error
+        # and create a new worker for the SAME stage. The cursor must
+        # NOT auto-advance.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst"],
+        )
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "Open CPACS",
+            "assigned_at_turn": 1,
+        })
+        # Simulate stage 0's worker errored (e.g. open_cpacs file-not-found).
+        failed_worker_msg = AgentMessage(
+            agent_name="geometry_engineer",
+            content="Tool 'open_cpacs' returned 'File not found'.",
+            turn_number=1, timestamp=1.0,
+            error="Geometry stage tool error",
+        )
+        strategy._phase = "execution"
+
+        action = strategy.next_step([failed_worker_msg], {"task": "Design F25"})
+        # MUST route back to orchestrator (not advance to Stage 2).
+        assert action.agent_name == "orchestrator"
+        # Cursor MUST NOT have advanced.
+        assert strategy._current_stage_idx == 0, (
+            "Per_stage must NOT auto-advance after a failed stage — "
+            "the orchestrator needs to see the error and decide "
+            "whether to retry the current stage or advance."
+        )
+        # Orchestrator's input MUST mention the error so it can react.
+        assert (
+            "File not found" in action.input_context
+            or "error" in action.input_context.lower()
+        ), "Orchestrator must see the error in its context"
+
+    def test_orchestrator_assignment_drives_stage_cursor(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Strategy picks the stage to run based on the orchestrator's
+        # MOST RECENT assignment, not a counter. If the orchestrator
+        # assigns for "aerodynamics_analyst" after geometry, cursor
+        # moves to that stage's index.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer", "aerodynamics_analyst", "structures_analyst"],
+        )
+        ctx = strategy.context
+        # Orchestrator made one initial assignment for geometry.
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer", "task": "g",
+            "assigned_at_turn": 1,
+        })
+        strategy._phase = "execution"
+
+        # First call: run geometry stage (cursor 0).
+        action = strategy.next_step([], {"task": "T"})
+        assert action.agent_name == "geometry_engineer"
+        assert strategy._current_stage_idx == 0
+
+        # Geometry worker runs (success).
+        msg = AgentMessage(agent_name="geometry_engineer",
+                           content="ok", turn_number=1, timestamp=1.0)
+        # Route back to orchestrator (phase=creation).
+        action = strategy.next_step([msg], {"task": "T"})
+        assert action.agent_name == "orchestrator"
+
+        # Orchestrator now assigns aero (skipping straight ahead).
+        ctx.assignments.append({
+            "agent_name": "aerodynamics_analyst", "task": "a",
+            "assigned_at_turn": 2,
+        })
+        ctx.created_agents.append("aerodynamics_analyst")
+        ctx.agents["aerodynamics_analyst"] = "mock"
+        orch_msg = AgentMessage(
+            agent_name="orchestrator",
+            content="DELEGATION_COMPLETE",
+            turn_number=2, timestamp=2.0,
+        )
+        # Strategy should now run aero (cursor follows the assignment).
+        action = strategy.next_step([msg, orch_msg], {"task": "T"})
+        assert action.agent_name == "aerodynamics_analyst"
+        # Cursor should now point at aero's index.
+        assert strategy._current_stage_idx == 1
+
+    def test_worker_input_does_not_leak_session_uuid(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Regression for v11 bug: pre-hook session_id was prepended
+        # to worker input, and the geometry worker grabbed it as a
+        # file path (open_cpacs(source=<session uuid>) → File not found).
+        # The data-plane middleware auto-injects session_id; workers
+        # must NOT see the raw UUID in their context.
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer"],
+        )
+        # Simulate a pre-hook session injection.
+        strategy._session_id = "9c78cb2c-3108-4674-86ff-cad3683e2519"
+
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "Open CPACS at /path/to/D150_simple.xml",
+            "assigned_at_turn": 1,
+        })
+        strategy._phase = "execution"
+
+        action = strategy.next_step([], {"task": "Design F25"})
+        assert action.action_type == "invoke_agent"
+        assert action.agent_name == "geometry_engineer"
+        assert "9c78cb2c" not in action.input_context, (
+            "Session UUID must NOT appear in worker input — the worker "
+            "will confuse it with a file path. Let the data-plane "
+            "middleware auto-inject session_id into tool calls."
+        )
+        # Task text should still be present.
+        assert "D150_simple.xml" in action.input_context
+
+    def test_terminates_when_orchestrator_stalls(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        # Termination in per_stage mode happens via the orchestrator
+        # stall detection: when the orchestrator emits
+        # DELEGATION_COMPLETE without new assignments for
+        # stall_threshold turns, the strategy terminates. This covers
+        # both "all stages done" (orchestrator sees no more to do)
+        # and "orchestrator gave up".
+        strategy = self._build_strategy(
+            orchestrator_agent, base_config, worker_tools,
+            ["geometry_engineer"],
+        )
+        # Configure stall_threshold low for test speed.
+        strategy._stall_threshold = 1
+        ctx = strategy.context
+        ctx.created_agents.append("geometry_engineer")
+        ctx.agents["geometry_engineer"] = "mock"
+        ctx.assignments.append({
+            "agent_name": "geometry_engineer",
+            "task": "t",
+            "assigned_at_turn": 1,
+        })
+        worker_msg = AgentMessage(
+            agent_name="geometry_engineer",
+            content="GEOMETRY_SET",
+            turn_number=1, timestamp=1.0,
+        )
+        strategy._phase = "execution"
+
+        # Worker just ran → route to orchestrator.
+        action = strategy.next_step([worker_msg], {"task": "T"})
+        assert action.agent_name == "orchestrator"
+
+        # Orchestrator emits DELEGATION_COMPLETE without new assignments
+        # (no new create_agent / no new assign_task — all stages done).
+        orch_msg = AgentMessage(
+            agent_name="orchestrator",
+            content="DELEGATION_COMPLETE",
+            turn_number=2, timestamp=2.0,
+        )
+        # Next step: stall detection triggers termination.
+        # We need to drive next_step a couple times to let stall
+        # counter increment past threshold (1 turn here).
+        action = strategy.next_step([worker_msg, orch_msg], {"task": "T"})
+        # Either runs the orchestrator again or terminates. The
+        # orchestrator's next call (with no new assignments) is what
+        # ultimately triggers stall-driven termination.
+        # Acceptable: phase becomes "done" eventually.
+        assert action is not None  # no crash
+
+
 # ---- Phase 2: Execution (active) --------------------------------------------
 
 

@@ -508,12 +508,33 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         # different payload).
         resolved[key] = value
 
-    # Auto-inject session_id
-    if "session_id" not in resolved and _design_state and mcp_name:
+    # Auto-inject / override session_id.
+    #
+    # Two cases handled here:
+    #   (a) session_id MISSING — original behavior, inject from sessions[mcp]
+    #   (b) session_id PROVIDED but doesn't match the captured one — override.
+    # Case (b) is for orchestrated-strategy workers (fresh agents created via
+    # CreateAgent) that don't see the real UUID in their prompt context and
+    # hallucinate strings like "structures_analysis_session". Sequential
+    # workers don't hit case (b) because they see the session_id in
+    # previous-stage context and pass the correct UUID.
+    if _design_state and mcp_name and tool_name not in _NO_SESSION_TOOLS:
         stored_sid = _design_state.sessions.get(mcp_name)
-        if stored_sid and tool_name not in _NO_SESSION_TOOLS:
-            resolved["session_id"] = stored_sid
-            logger.info("Auto-injected session_id for %s from sessions[%s]", tool_name, mcp_name)
+        if stored_sid:
+            provided = resolved.get("session_id")
+            if provided is None or provided == "":
+                resolved["session_id"] = stored_sid
+                logger.info(
+                    "Auto-injected session_id for %s from sessions[%s]",
+                    tool_name, mcp_name,
+                )
+            elif provided != stored_sid:
+                logger.info(
+                    "Overrode hallucinated session_id %r with real %s for %s "
+                    "(mcp=%s)",
+                    provided, stored_sid, tool_name, mcp_name,
+                )
+                resolved["session_id"] = stored_sid
 
     # Auto-inject cpacs_file_path for mass-mcp tools
     if tool_name in _CPACS_PATH_TOOLS and _design_state:

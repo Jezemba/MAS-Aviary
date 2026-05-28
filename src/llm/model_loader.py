@@ -18,6 +18,24 @@ from src.llm.reliability import ReliabilityConfig
 from src.llm.thinking_model import ThinkingModel
 
 
+def _pick_litellm_api_key(model_id: str) -> str | None:
+    """Choose the env var that matches a litellm model_id's provider
+    prefix. Until 2026-05-25 we always tried ANTHROPIC_API_KEY first
+    and OPENAI_API_KEY as fallback — but when BOTH are set, the
+    Anthropic key wins and gets sent to OpenAI's endpoint on every
+    `openai/...` call, causing AuthenticationError. Map by prefix
+    instead."""
+    if model_id.startswith("openai/"):
+        return os.environ.get("OPENAI_API_KEY")
+    if model_id.startswith("anthropic/"):
+        return os.environ.get("ANTHROPIC_API_KEY")
+    if model_id.startswith("gemini/"):
+        return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    # Unknown / unprefixed model_id — keep the legacy fallback chain
+    # so older setups don't break.
+    return os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
+
+
 def load_model(config: LLMConfig) -> Model:
     """Create and return a model configured per the LLM config.
 
@@ -32,7 +50,7 @@ def load_model(config: LLMConfig) -> Model:
 
         return LiteLLMModel(
             model_id=config.model_id,
-            api_key=config.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            api_key=config.api_key or _pick_litellm_api_key(config.model_id),
             max_tokens=config.max_new_tokens,
             temperature=config.temperature,
         )

@@ -2,6 +2,14 @@ llm:
   model_id: "anthropic/claude-sonnet-4-20250514"
   backend: "litellm"
   max_new_tokens: 4096
+  # 2026-05-26: switched back to Claude from openai/gpt-4o after
+  # per_stage runs (v11-v14) showed gpt-4o workers consistently
+  # making sloppy errors (eliding file paths with "...", skipping
+  # open_cpacs and making up session UUIDs, paraphrasing tool errors
+  # in natural language that confused retry detection). Claude is
+  # generally more reliable at literal tool-arg passing. Earlier
+  # gpt-5 attempt produced ~20k reasoning tokens per step that
+  # smolagents couldn't parse — don't switch to that model family.
   temperature: 0.3
 
 mcp:

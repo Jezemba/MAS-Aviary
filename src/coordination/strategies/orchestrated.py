@@ -116,6 +116,15 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._executor = None
         self._total_turns: int = 0
         self._graph_roles: list[str] | None = None  # roles from graph-routed handler
+        self._pipeline_stage_names: list[str] | None = None  # stage names from staged_pipeline handler
+
+        # Per-stage delegation (lifecycle_mode="per_stage"): the
+        # orchestrator delegates ONE pipeline stage at a time, with
+        # the previous stage's output/error in its input context.
+        # Advances after each stage runs. Designed for orchestrated
+        # + staged_pipeline where the orchestrator can't reliably
+        # plan all 7 disciplines' tool needs upfront.
+        self._current_stage_idx: int = 0
 
         # Delegation progress tracking (detects stalls / direct completion).
         self._prev_created_count: int = 0
@@ -215,6 +224,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             on_delegation_change=self._sync_orchestrator_tools,
             required_tool_phases=config.get("_required_tool_phases", {}),
             required_result_signals=config.get("_required_result_signals", []),
+            lifecycle_mode=self._lifecycle_mode,
         )
 
         # Create orchestrator management tools.
@@ -266,6 +276,15 @@ class OrchestratedStrategy(CoordinationStrategy):
         # inject required role names so the orchestrator creates matching agents.
         self._graph_roles = config.get("_graph_roles")
 
+        # Pipeline stage names — when using a staged_pipeline execution
+        # handler, reorder ctx.assignments at execution-phase entry so
+        # each stage gets the worker whose name matches it. Without
+        # this, the orchestrator's arbitrary assign_task order pairs
+        # the wrong worker with each stage_prompt (observed 2026-05-25
+        # in wandb 7wbgfu74: simulation_executor ran Stage 1's
+        # geometry_engineer prompt and never called open_cpacs).
+        self._pipeline_stage_names = config.get("_pipeline_stage_names")
+
         # Reset phase state.
         self._phase = "creation"
         self._orchestrator_turns_used = 0
@@ -274,6 +293,7 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._prev_created_count = 0
         self._prev_assignment_count = 0
         self._stall_turns = 0
+        self._current_stage_idx = 0
         self._signals_scanned_up_to = 0
         self._signal_retry_count = 0
 
@@ -533,7 +553,9 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._sync_orchestrator_tools()
 
         # Build input context for orchestrator.
-        if not history:
+        if self._lifecycle_mode == "per_stage" and self._pipeline_stage_names:
+            input_context = self._build_per_stage_context(history, current_state)
+        elif not history:
             input_context = current_state.get("task", "")
         else:
             input_context = self._format_context_for_orchestrator(history)
@@ -547,6 +569,8 @@ class OrchestratedStrategy(CoordinationStrategy):
 
     def _execution_step(self, history: list, current_state: dict) -> CoordinationAction:
         """Phase 2: execute assigned tasks."""
+        if self._lifecycle_mode == "per_stage":
+            return self._per_stage_execution(history, current_state)
         if self._lifecycle_mode == "setup_only":
             return self._setup_only_execution(history, current_state)
         else:
@@ -562,6 +586,17 @@ class OrchestratedStrategy(CoordinationStrategy):
         if self._graph_roles and self._context:
             self._register_graph_role_aliases()
 
+        # Reorder assignments to match pipeline stage order when a
+        # staged_pipeline handler is in use. The orchestrator's
+        # assign_task order is arbitrary; the handler pairs assignments
+        # to stages by index, so without this reorder each stage_prompt
+        # is delivered to the wrong worker and the discipline tools
+        # never fire (the v9 cascade: open_cpacs / run_su2_solver /
+        # estimate_mass / run_cycle all reported "Expected tool ... was
+        # not called" while the pipeline advanced over empty work).
+        if self._pipeline_stage_names and self._context and self._context.assignments:
+            self._reorder_assignments_by_stage_name()
+
         if not self._context or not self._context.assignments:
             self._phase = "done"
             return CoordinationAction(
@@ -572,6 +607,40 @@ class OrchestratedStrategy(CoordinationStrategy):
             )
 
         return self._execution_step(history, current_state)
+
+    def _reorder_assignments_by_stage_name(self) -> None:
+        """Reorder ctx.assignments so each pipeline stage's same-named
+        worker runs first. Called once at execution-phase entry when
+        _pipeline_stage_names is set (staged_pipeline handler in use).
+
+        Mutates ctx.assignments in place. Assignments whose agent_name
+        doesn't match any stage keep their relative order at the end
+        of the list (preserves the existing fallback for surplus
+        workers).
+        """
+        if not self._context or not self._pipeline_stage_names:
+            return
+        original = list(self._context.assignments)
+        name_to_assignment: dict[str, dict] = {}
+        for a in original:
+            agent_name = a.get("agent_name") if isinstance(a, dict) else getattr(a, "agent_name", None)
+            if agent_name and agent_name not in name_to_assignment:
+                name_to_assignment[agent_name] = a
+
+        ordered: list[dict] = []
+        consumed_ids: set[int] = set()
+        for stage_name in self._pipeline_stage_names:
+            matched = name_to_assignment.get(stage_name)
+            if matched is not None and id(matched) not in consumed_ids:
+                ordered.append(matched)
+                consumed_ids.add(id(matched))
+
+        for a in original:
+            if id(a) not in consumed_ids:
+                ordered.append(a)
+
+        self._context.assignments.clear()
+        self._context.assignments.extend(ordered)
 
     def _retry_via_orchestrator(self, history: list) -> CoordinationAction:
         """Loop back to the orchestrator after workers failed a required signal.
@@ -622,6 +691,230 @@ class OrchestratedStrategy(CoordinationStrategy):
                 "phase": "creation",
                 "orchestrator_turn": self._orchestrator_turns_used,
                 "retry_reason": "simulation_failed",
+            },
+        )
+
+    def _build_per_stage_context(self, history: list, current_state: dict) -> str:
+        """Build the orchestrator's input context for per-stage mode.
+
+        Two cases:
+          (a) FIRST turn (no worker history yet): tell the orchestrator
+              about Stage 1 and ask it to delegate.
+          (b) FOLLOWING a worker run: include the previous stage's
+              output AND error context. Ask the orchestrator to decide
+              whether to RETRY the just-failed stage or ADVANCE to the
+              next one. The orchestrator's choice is implicit in
+              which agent_name it assign_tasks for next."""
+        parts: list[str] = []
+        stages = self._pipeline_stage_names or []
+        total = len(stages)
+
+        # Find the most recent worker message and its outcome.
+        last_worker_msg = None
+        for m in reversed(history):
+            if isinstance(m, AgentMessage) and m.agent_name != self._orchestrator_name:
+                last_worker_msg = m
+                break
+
+        if last_worker_msg is None:
+            # First turn — original task + Stage 1 delegation.
+            parts.append(current_state.get("task", ""))
+            parts.append("")
+            stage_name = stages[0] if stages else "stage_1"
+            parts.append(
+                f"PER-STAGE DELEGATION — Stage 1 of {total}: `{stage_name}`."
+            )
+            hint = self._stage_tool_hint(stage_name)
+            if hint:
+                parts.append(f"This stage needs one of these tools: {hint}.")
+            parts.append(
+                "Create a single worker for THIS stage with the right "
+                "tools, assign_task to it, then call final_answer with "
+                "DELEGATION_COMPLETE. Do NOT create workers for later "
+                "stages — you'll be called again for each."
+            )
+            return "\n".join(parts).strip()
+
+        # A worker just ran. Report what happened and present BOTH
+        # retry and advance options every time — the orchestrator
+        # reads the output and decides. Don't try to guess success
+        # ourselves with brittle keyword detection; we already had
+        # one false-negative (the worker paraphrased "file not found"
+        # as natural language and our heuristic missed it).
+        prev_stage_name = last_worker_msg.agent_name
+        try:
+            prev_idx = stages.index(prev_stage_name)
+        except ValueError:
+            prev_idx = -1
+        prev_content = last_worker_msg.content or ""
+        prev_error = last_worker_msg.error or ""
+
+        parts.append(
+            f"PREVIOUS STAGE: `{prev_stage_name}` (Stage {prev_idx + 1} of "
+            f"{total}) just ran."
+        )
+        if prev_error:
+            parts.append(f"ERROR FIELD: {prev_error}")
+        if prev_content:
+            parts.append(f"OUTPUT:\n{prev_content[:1500]}")
+        parts.append("")
+        parts.append(
+            "READ THE OUTPUT ABOVE CAREFULLY. Did the stage's signature "
+            "tool actually succeed? Examples of failure: "
+            "\"File not found\", \"does not exist\", \"Error calling tool\", "
+            "\"success: false\", \"INVALID_SESSION\", parameter rejected, "
+            "or any natural-language paraphrase of those. If you're "
+            "unsure, treat it as failed."
+        )
+        parts.append("")
+        parts.append("YOUR DECISION:")
+
+        if prev_idx >= 0:
+            retry_hint = self._stage_tool_hint(prev_stage_name)
+            retry_line = (
+                f"  - If the stage FAILED: create a NEW worker named "
+                f"`{prev_stage_name}` (or modify) with the right tools "
+            )
+            if retry_hint:
+                retry_line += f"({retry_hint}) "
+            retry_line += (
+                "and assign_task with a CORRECTED approach (e.g. exact "
+                "file paths verbatim, discover UIDs via list_geometric_"
+                "components before set_high_level_parameters, etc.). "
+                "Call DELEGATION_COMPLETE. The pipeline will retry this stage."
+            )
+            parts.append(retry_line)
+
+        if prev_idx + 1 < total:
+            next_stage = stages[prev_idx + 1]
+            next_hint = self._stage_tool_hint(next_stage)
+            advance_line = (
+                f"  - If the stage SUCCEEDED: create a worker named "
+                f"`{next_stage}` "
+            )
+            if next_hint:
+                advance_line += f"with tools ({next_hint}) "
+            advance_line += (
+                "and assign_task. Call DELEGATION_COMPLETE. The pipeline "
+                "will advance to Stage " + str(prev_idx + 2) + "."
+            )
+            parts.append(advance_line)
+        else:
+            parts.append(
+                "  - If the stage SUCCEEDED: this is the LAST stage. "
+                "Call final_answer('TASK_COMPLETE') to terminate."
+            )
+
+        return "\n".join(parts).strip()
+
+    def _stage_tool_hint(self, stage_name: str) -> str:
+        """Best-effort: map a pipeline stage name to a tool-list hint
+        based on the required_tool_phases dict (defined in the
+        orchestrator agents YAML). Falls back to the empty string if
+        no obvious match."""
+        if not self._context or not self._context.required_tool_phases:
+            return ""
+        # Simple substring matching: phase "geometry_setup" matches
+        # stage "geometry_engineer"; "aerodynamic_analysis" matches
+        # "aerodynamics_analyst"; etc.
+        stage_stem = stage_name.split("_")[0].lower()  # "geometry", "aerodynamics", ...
+        for phase, tools in self._context.required_tool_phases.items():
+            if stage_stem in phase.lower() or phase.lower().startswith(stage_stem[:4]):
+                return ", ".join(tools)
+        return ""
+
+    def _per_stage_execution(self, history, current_state) -> CoordinationAction:
+        """Per-stage mode: the ORCHESTRATOR drives stage progression
+        via its assignments. After each worker run, control routes
+        back to the orchestrator with the worker's output/error so
+        the orchestrator can decide:
+          - retry the same stage (create a new worker for the same
+            stage name with corrected approach)
+          - advance to the next stage (create a worker for the next
+            stage's name)
+          - skip a stage (delegate for a later stage)
+
+        The strategy's job: pick the assignment whose name matches
+        a pipeline stage, run it, capture the result. The cursor
+        (_current_stage_idx) follows the orchestrator's choice — it
+        is set from the agent_name of the assignment we run, not
+        auto-incremented.
+
+        Termination is via the existing stall detection in
+        _creation_step: when the orchestrator emits DELEGATION_COMPLETE
+        without adding new assignments for stall_threshold turns, the
+        loop exits.
+        """
+        if not self._pipeline_stage_names:
+            # Defensive: per_stage mode without stage names is a
+            # mis-configuration; fall back to setup_only behavior.
+            return self._setup_only_execution(history, current_state)
+
+        # If the previous turn was a worker (not the orchestrator),
+        # the stage just RAN. Route back to the orchestrator so it
+        # can react to the output / error and decide next steps.
+        # Critically: do NOT advance the cursor here. The cursor
+        # follows the orchestrator's assignment, not a counter.
+        last_was_worker = (
+            history
+            and isinstance(history[-1], AgentMessage)
+            and history[-1].agent_name != self._orchestrator_name
+        )
+        if last_was_worker:
+            self._phase = "creation"
+            self._orchestrator_turns_used = 0
+            self._stall_turns = 0
+            return self._creation_step(history, current_state)
+
+        # Otherwise, find an unrun assignment for some pipeline
+        # stage. Prefer the MOST RECENT assignment whose agent_name
+        # matches any pipeline stage. The orchestrator's most recent
+        # choice tells us which stage to run.
+        assignments = (self._context.assignments if self._context else []) or []
+        stage_names_set = set(self._pipeline_stage_names)
+        match = None
+        for a in reversed(assignments):
+            if a.get("agent_name") in stage_names_set:
+                match = a
+                break
+        if match is None:
+            # Orchestrator hasn't (yet) assigned for any pipeline
+            # stage. Route back to it.
+            self._phase = "creation"
+            self._orchestrator_turns_used = 0
+            return self._creation_step(history, current_state)
+
+        # Sync cursor to whatever stage we're about to run, so other
+        # code paths (logs, metadata) see the correct stage.
+        try:
+            self._current_stage_idx = self._pipeline_stage_names.index(
+                match["agent_name"]
+            )
+        except ValueError:
+            pass  # match not in stages — shouldn't happen given the filter
+
+        # Build worker input. Just task + previous-stage output. NO
+        # SESSION_ID injection (workers confuse it with file paths;
+        # see test_worker_input_does_not_leak_session_uuid).
+        prev = ""
+        if history:
+            last = history[-1]
+            prev = last.content if isinstance(last, AgentMessage) else str(last)
+        input_context = (
+            f"{match['task']}\n\nContext from previous agent:\n{prev}"
+            if prev
+            else match['task']
+        )
+
+        return CoordinationAction(
+            action_type="invoke_agent",
+            agent_name=match["agent_name"],
+            input_context=input_context,
+            metadata={
+                "phase": "execution",
+                "lifecycle_mode": "per_stage",
+                "current_stage_idx": self._current_stage_idx,
+                "stage_name": match["agent_name"],
             },
         )
 

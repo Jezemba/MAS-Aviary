@@ -190,6 +190,25 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
     ),
     CombinationConfig(
+        "mdo_f25_orchestrated_staged_pipeline",
+        "orchestrated",
+        "staged_pipeline",
+        # Orchestrated org + staged_pipeline handler. Uses the new
+        # per_stage lifecycle_mode (2026-05-26): the orchestrator
+        # delegates ONE pipeline stage at a time, sees the previous
+        # stage's output/error before deciding the next worker, and
+        # creates/reuses workers iteratively. Earlier setup_only
+        # attempt (commits 5bc41f3..80b78e8, runs v1-v10) hit a
+        # content cascade — the orchestrator couldn't reliably plan
+        # all 7 disciplines' tool needs upfront, workers improvised
+        # tool calls, completion criteria missed, and the pipeline
+        # advanced over empty work. Per-stage delegation gives the
+        # orchestrator a tight feedback loop so it can react to each
+        # stage's reality.
+        strategy_config={"orchestrated": {"lifecycle_mode": "per_stage"}},
+        handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
+    ),
+    CombinationConfig(
         "mdo_f25_orchestrated_iterative_feedback",
         "orchestrated",
         "iterative_feedback",
@@ -1093,6 +1112,30 @@ def _execute_combination(
                 # can read it during initialize() (e.g. networked strategy
                 # skips phase gating for staged_pipeline).
                 coordinator.config["execution_handler"] = combo.handler
+
+                # When combining orchestrated + staged_pipeline, resolve
+                # the pipeline up front and inject stage names so the
+                # strategy can reorder ctx.assignments at execution-
+                # phase entry. Without this, the orchestrator's
+                # arbitrary assign_task order pairs the wrong worker
+                # with each stage_prompt (the v8/v9 cascade where
+                # geometry_engineer's stage_prompt ran on the
+                # simulation_executor worker and open_cpacs was never
+                # called).
+                if combo.org_structure == "orchestrated" and combo.handler == "staged_pipeline":
+                    try:
+                        pipeline = handler._resolve_pipeline()
+                        stage_names = [s.name for s in pipeline.stages]
+                        if stage_names:
+                            coordinator.config["_pipeline_stage_names"] = stage_names
+                            # The strategy reads this on initialize();
+                            # initialize() has already run by this
+                            # point (Coordinator.from_config), so push
+                            # it onto the live strategy as well.
+                            if hasattr(coordinator.strategy, "_pipeline_stage_names"):
+                                coordinator.strategy._pipeline_stage_names = stage_names
+                    except Exception:
+                        pass
 
                 # When combining orchestrated + graph_routed, extract graph
                 # roles and wire them into the strategy so it can register
