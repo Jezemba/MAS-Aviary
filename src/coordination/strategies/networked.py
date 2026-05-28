@@ -245,6 +245,11 @@ class NetworkedStrategy(CoordinationStrategy):
                 "review_verdict": None,
                 "review_passed": None,
                 "states_visited": [],
+                # Feedback channel: RESULTS_REVIEW writes its
+                # RECOMMENDED_CHANGE here so MISSION_CONFIG can evolve
+                # the design across graph passes (parity with the
+                # graph_routed handler's _state_dict).
+                "recommended_changes": "",
             }
             self._graph_complete = False
             # Snapshot toolsets for graph-driven tool filtering.
@@ -917,8 +922,19 @@ class NetworkedStrategy(CoordinationStrategy):
         prompt = state_def.agent_prompt or ""
         try:
             prompt = prompt.format(**self._graph_state_dict)
-        except KeyError:
-            pass  # Missing keys left as-is
+        except (KeyError, IndexError, ValueError):
+            pass  # Prompts with literal braces (JSON examples) left as-is
+        # Targeted feedback-loop substitution. MISSION_CONFIG's prompt
+        # carries literal braces (parameters={...}) which make
+        # str.format raise above, so {recommended_changes} never
+        # resolves via format — do it explicitly (parity with the
+        # graph_routed handler's _build_agent_context).
+        if "{recommended_changes}" in prompt:
+            rec = self._graph_state_dict.get("recommended_changes") or (
+                "(none yet — this is the first pass; use the baseline "
+                "values below)"
+            )
+            prompt = prompt.replace("{recommended_changes}", rec)
 
         parts = [
             "You are part of a networked team of agents. Each agent handles "
@@ -1008,6 +1024,7 @@ class NetworkedStrategy(CoordinationStrategy):
         from src.coordination.graph_routed_handler import (
             _extract_complexity,
             _extract_execution_result,
+            _extract_recommended_change,
             _extract_review_result,
         )
 
@@ -1019,6 +1036,12 @@ class NetworkedStrategy(CoordinationStrategy):
         review = _extract_review_result(content)
         if review:
             self._graph_state_dict.update(review)
+
+        # Feedback loop: capture the integrator's RECOMMENDED_CHANGE so
+        # the next pass's MISSION_CONFIG can evolve the design.
+        rec = _extract_recommended_change(content)
+        if rec:
+            self._graph_state_dict["recommended_changes"] = rec
 
         exec_result = _extract_execution_result(content)
         if exec_result:

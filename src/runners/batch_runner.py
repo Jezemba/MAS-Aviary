@@ -255,6 +255,23 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
         handler_config={"predefined_graph": "mdo_f25"},
     ),
+    CombinationConfig(
+        "mdo_f25_networked_graph_routed",
+        "networked",
+        "graph_routed",
+        # Networked + graph_routed: the networked strategy drives the
+        # state machine ITSELF (networked.py _graph_driven_next_step,
+        # one state per turn with bypass_handler=True) rather than
+        # delegating to the graph_routed handler. It builds each
+        # worker's context from the per-state agent_prompt ONLY (no
+        # full-task text), so there is no task-pollution / SESSION_ID
+        # leak. workflow_phases is disabled because the graph manages
+        # the workflow. The shared config/mdo_f25_graph.yaml drives
+        # the 11 states; peers come from
+        # config/mdo_f25_networked_agents.yaml.
+        strategy_config={"networked": {"workflow_phases": []}},
+        handler_config={"predefined_graph": "mdo_f25"},
+    ),
 ]
 
 # Backward-compatible alias used by stat_batch_runner.
