@@ -63,6 +63,11 @@ class TodoEntry:
     created_at: float = field(default_factory=time.time)
     claimed_at: float | None = None
     completed_at: float | None = None
+    # Names of TODOs that must be DONE before this one can be claimed.
+    # Empty = no prerequisites (claimable immediately). Used by the
+    # graph+concurrent_blackboard DAG-executor: a graph node becomes
+    # available only once its predecessor nodes are complete.
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -253,19 +258,29 @@ class Blackboard:
     # so a peer that holds the lock to claim a TODO is also safe to read
     # entries in the same critical section.
 
-    def seed_todos(self, todos: list[tuple[str, str]]) -> int:
-        """Seed the TODO list with (name, description) pairs.
+    def seed_todos(self, todos: list[tuple]) -> int:
+        """Seed the TODO list with (name, description) or
+        (name, description, depends_on) tuples.
 
-        Idempotent on duplicates — a name already on the board is left
-        alone (preserves any existing claim/result). Returns the number
-        of NEW TODOs added.
+        ``depends_on`` is an optional list of TODO names that must be
+        DONE before this TODO can be claimed (DAG ordering for the
+        graph+concurrent_blackboard executor). Idempotent on duplicates
+        — a name already on the board is left alone (preserves any
+        existing claim/result). Returns the number of NEW TODOs added.
         """
         with self._lock:
             added = 0
-            for name, description in todos:
+            for entry in todos:
+                name = entry[0]
+                description = entry[1] if len(entry) >= 2 else ""
+                depends_on = list(entry[2]) if len(entry) >= 3 and entry[2] else []
                 if name in self._todos:
                     continue
-                self._todos[name] = TodoEntry(name=name, description=description)
+                self._todos[name] = TodoEntry(
+                    name=name,
+                    description=description,
+                    depends_on=depends_on,
+                )
                 added += 1
             return added
 
@@ -285,6 +300,7 @@ class Blackboard:
                     created_at=t.created_at,
                     claimed_at=t.claimed_at,
                     completed_at=t.completed_at,
+                    depends_on=list(t.depends_on),
                 )
                 for t in self._todos.values()
             ]
@@ -292,6 +308,39 @@ class Blackboard:
     def read_pending_todos(self) -> list[TodoEntry]:
         """Snapshot of TODOs in pending status only."""
         return [t for t in self.read_todos() if t.status == TODO_STATUS_PENDING]
+
+    def _deps_satisfied(self, todo: TodoEntry) -> bool:
+        """True iff every dependency of ``todo`` is DONE. Caller holds the lock."""
+        for dep in todo.depends_on:
+            dep_todo = self._todos.get(dep)
+            if dep_todo is None or dep_todo.status != TODO_STATUS_DONE:
+                return False
+        return True
+
+    def read_available_todos(self) -> list[TodoEntry]:
+        """Snapshot of TODOs that are claimable RIGHT NOW: pending (or
+        previously failed) AND all dependencies DONE. This is what the
+        DAG-executor exposes to concurrent peers so they only pick up
+        graph nodes whose predecessors have completed."""
+        with self._lock:
+            out = []
+            for t in self._todos.values():
+                if t.status in (TODO_STATUS_PENDING, TODO_STATUS_FAILED) and self._deps_satisfied(t):
+                    out.append(
+                        TodoEntry(
+                            name=t.name,
+                            description=t.description,
+                            status=t.status,
+                            assigned_to=t.assigned_to,
+                            result=t.result,
+                            failure_reason=t.failure_reason,
+                            created_at=t.created_at,
+                            claimed_at=t.claimed_at,
+                            completed_at=t.completed_at,
+                            depends_on=list(t.depends_on),
+                        )
+                    )
+            return out
 
     def claim_todo(self, name: str, agent: str) -> tuple[bool, str]:
         """Atomically claim a pending TODO for an agent.
@@ -315,6 +364,19 @@ class Blackboard:
                     False,
                     f"TODO {name!r} is currently claimed by {todo.assigned_to!r} — "
                     f"{agent!r}, pick a different TODO",
+                )
+            # DAG gating: cannot claim a node whose prerequisites aren't
+            # done yet. Tells the peer which dependency is blocking so it
+            # picks a different (available) node.
+            if not self._deps_satisfied(todo):
+                unmet = [
+                    d for d in todo.depends_on
+                    if (self._todos.get(d) is None or self._todos[d].status != TODO_STATUS_DONE)
+                ]
+                return (
+                    False,
+                    f"TODO {name!r} is blocked — waiting on {unmet!r} to be done first. "
+                    f"{agent!r}, claim an available TODO instead",
                 )
             # Allow re-claim by the same agent (idempotent) and fresh
             # claim of a previously-failed TODO.
@@ -376,7 +438,17 @@ class Blackboard:
                 return "(TODO board empty)"
             lines = []
             for t in self._todos.values():
-                row = f"  - {t.name:14s} status={t.status}"
+                row = f"  - {t.name:18s} status={t.status}"
+                # Surface DAG availability so peers know what's claimable.
+                if t.status in (TODO_STATUS_PENDING, TODO_STATUS_FAILED):
+                    if self._deps_satisfied(t):
+                        row += " [AVAILABLE]"
+                    else:
+                        unmet = [
+                            d for d in t.depends_on
+                            if (self._todos.get(d) is None or self._todos[d].status != TODO_STATUS_DONE)
+                        ]
+                        row += f" [BLOCKED on {unmet}]"
                 if t.assigned_to:
                     row += f" assigned_to={t.assigned_to}"
                 if t.result:

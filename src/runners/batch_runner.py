@@ -259,17 +259,26 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         "mdo_f25_networked_graph_routed",
         "networked",
         "graph_routed",
-        # Networked + graph_routed: the networked strategy drives the
-        # state machine ITSELF (networked.py _graph_driven_next_step,
-        # one state per turn with bypass_handler=True) rather than
-        # delegating to the graph_routed handler. It builds each
-        # worker's context from the per-state agent_prompt ONLY (no
-        # full-task text), so there is no task-pollution / SESSION_ID
-        # leak. workflow_phases is disabled because the graph manages
-        # the workflow. The shared config/mdo_f25_graph.yaml drives
-        # the 11 states; peers come from
+        # Networked + graph_routed as a DAG-executor (true networked
+        # coordination over a graph workflow): the graph defines the
+        # work DAG (one TODO per agent-bearing state, depends_on from
+        # the success-path edges) and the concurrent_blackboard peers
+        # pull AVAILABLE nodes, claim them atomically (CodeCRDT), run
+        # the node's signature MCP tool, mark done -> unlocks dependents
+        # (networked.py _graph_concurrent_next_step). The networked
+        # layer controls assignment/claiming; the graph controls which
+        # work is exposed when. selection_mode=concurrent_blackboard is
+        # what activates the DAG-executor (without it the graph short-
+        # circuits to the serial one-state-per-turn path). workflow_phases
+        # disabled — the graph DAG manages ordering. Shares
+        # config/mdo_f25_graph.yaml; peers from
         # config/mdo_f25_networked_agents.yaml.
-        strategy_config={"networked": {"workflow_phases": []}},
+        strategy_config={
+            "networked": {
+                "workflow_phases": [],
+                "selection_mode": "concurrent_blackboard",
+            }
+        },
         handler_config={"predefined_graph": "mdo_f25"},
     ),
 ]

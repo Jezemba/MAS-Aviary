@@ -602,3 +602,63 @@ class TestConcurrentClaimSafety:
             )
         # All 20 TODOs got claimed (no orphan).
         assert len(per_todo_wins) == n_todos
+
+
+class TestTodoDependencies:
+    """DAG gating for the graph+concurrent_blackboard executor: a TODO
+    with depends_on can only be claimed once those deps are DONE."""
+
+    def test_seed_with_deps_and_availability(self, bb_soft):
+        bb_soft.seed_todos([
+            ("geometry", "mesh", []),
+            ("aero", "su2", ["geometry"]),
+            ("mass", "flops", ["geometry"]),
+        ])
+        avail = {t.name for t in bb_soft.read_available_todos()}
+        # Only the no-dependency node is available at the start.
+        assert avail == {"geometry"}
+
+    def test_dependent_unlocks_after_predecessor_done(self, bb_soft):
+        bb_soft.seed_todos([
+            ("geometry", "mesh", []),
+            ("aero", "su2", ["geometry"]),
+        ])
+        bb_soft.claim_todo("geometry", "agent_1")
+        bb_soft.complete_todo("geometry", "agent_1", "mesh ready")
+        avail = {t.name for t in bb_soft.read_available_todos()}
+        assert "aero" in avail
+
+    def test_claim_blocked_todo_is_rejected(self, bb_soft):
+        bb_soft.seed_todos([
+            ("geometry", "mesh", []),
+            ("aero", "su2", ["geometry"]),
+        ])
+        ok, msg = bb_soft.claim_todo("aero", "agent_2")
+        assert ok is False
+        assert "blocked" in msg.lower()
+        assert "geometry" in msg
+
+    def test_claim_unblocks_then_succeeds(self, bb_soft):
+        bb_soft.seed_todos([
+            ("geometry", "mesh", []),
+            ("aero", "su2", ["geometry"]),
+        ])
+        bb_soft.claim_todo("geometry", "agent_1")
+        bb_soft.complete_todo("geometry", "agent_1", "done")
+        ok, _ = bb_soft.claim_todo("aero", "agent_2")
+        assert ok is True
+
+    def test_render_shows_available_and_blocked(self, bb_soft):
+        bb_soft.seed_todos([
+            ("geometry", "mesh", []),
+            ("aero", "su2", ["geometry"]),
+        ])
+        rendered = bb_soft.render_todos()
+        assert "[AVAILABLE]" in rendered  # geometry
+        assert "[BLOCKED" in rendered      # aero
+
+    def test_two_arg_seed_still_works(self, bb_soft):
+        # Backward compatibility: (name, description) pairs with no deps.
+        n = bb_soft.seed_todos([("geometry", "mesh"), ("aero", "su2")])
+        assert n == 2
+        assert {t.name for t in bb_soft.read_available_todos()} == {"geometry", "aero"}

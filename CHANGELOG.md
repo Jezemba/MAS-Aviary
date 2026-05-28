@@ -1,5 +1,76 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+5) — networked_graph_routed redesigned as a DAG-executor (architecture verified; execution hardening pending)
+
+Per the user's correction: networked × graph_routed was using the OLD
+serial graph path (one peer per state), NOT the revamped
+concurrent_blackboard code — because `next_step` short-circuited to
+`_graph_driven_next_step` whenever a graph was present, before the
+selection_mode check. The user's design: the graph defines the WORK
+DAG (nodes + dependencies); the concurrent networked peers PULL
+available nodes, claim them atomically, execute, mark done -> unlock
+dependents. Networked controls assignment/claiming; the graph controls
+which work is exposed when.
+
+Implemented the DAG-executor:
+- **blackboard.py**: `TodoEntry.depends_on`; `seed_todos` accepts
+  `(name, desc, depends_on)`; `read_available_todos()` (pending +
+  all deps DONE); `claim_todo` rejects a node whose deps aren't done;
+  `render_todos` shows `[AVAILABLE]` / `[BLOCKED on ...]`. +6 tests.
+- **networked.py**: when graph + `selection_mode=concurrent_blackboard`,
+  `next_step` routes to the new `_graph_concurrent_next_step` (instead
+  of the serial path). `_derive_graph_todos` walks the graph's
+  forward/success edges to build one TODO per agent-bearing state with
+  `depends_on` = its predecessor (skipping routing-only states; the
+  precise `'complex'` marker avoids the substring trap where "complex"
+  matches "complexity == 'simple'"). The shared parallel_run task
+  carries the DAG protocol + the authoritative TASK + a per-node
+  playbook (each node's full agent_prompt incl. its signature tool).
+- **batch_runner.py**: combo now pins
+  `selection_mode=concurrent_blackboard` (what activates the executor).
+
+Live dry-run (wandb `oqm4sj30`) — ARCHITECTURE VERIFIED up to the
+point the run was cut off:
+- TODOs derived as the full 7-discipline dependency chain.
+- 3 peers raced and atomically claimed (CodeCRDT at-most-one-winner
+  observed on TASK_CLASSIFIED).
+- Dependency gating worked: board showed BLOCKED nodes unlocking as
+  predecessors completed (TASK_CLASSIFIED done -> GEOMETRY done ->
+  AERO claimed -> rest BLOCKED in chain).
+- Real discipline tools fired: geometry ran open_cpacs +
+  generate_volume_mesh and marked done; **aero got materially further
+  than the old serial path — agent_2 claimed AERO and started SU2
+  setup (create_su2_session x2, set_mesh)**.
+
+**Why the run did NOT finish — the Anthropic API ran out of credits
+mid-run** (this is the actual root cause, confirmed in the log):
+`invalid_request_error: "Your credit balance is too low to access the
+Anthropic API."` agent_2 was actively progressing through SU2 setup
+when its next LLM call was rejected; its ReAct loop died, so AERO
+stayed `claimed` (a SYMPTOM of the credit cutoff, NOT a logic
+deadlock) and the run ended status=failed / zero fuel. End-to-end
+live verification is therefore BLOCKED on topping up credits, not on
+a code defect.
+
+Separately observed (efficiency, not the failure cause): 113
+read_todos calls and ~530k input tokens by step 15 — the concurrent
+peers re-read the board a lot and every peer carries the full
+node-playbook each cycle, which burns tokens/credits fast. Worth a
+tuning pass (claim-one-then-stop, exit immediately when nothing is
+AVAILABLE, trim the per-cycle playbook) to make a full run cheaper —
+but this is optimization, not correctness.
+
+Optional hardening for robustness (CodeCRDT-style, arxiv 2510.18893):
+a claim LEASE/timeout that auto-releases a `claimed` TODO not
+completed within a window, so a peer interrupted mid-node (as here)
+can have the node retried instead of it staying stuck.
+
+Net: the DAG-executor is the correct structure and was running
+correctly (derivation, atomic claiming, dependency gating, real tool
+execution all verified) until Anthropic credits were exhausted. Re-run
+after topping up credits to confirm end-to-end. Unit suite 1442
+passed (+6 blackboard dep tests).
+
 ### 2026-05-27 (latest+4) — Phase L Job 3 step 5: networked_graph_routed wired + walked (aero OMITTED)
 
 `mdo_f25_networked_graph_routed` is wired (the 5th and final Job 3

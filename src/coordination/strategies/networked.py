@@ -77,6 +77,8 @@ class NetworkedStrategy(CoordinationStrategy):
         self._graph_current_state: str | None = None
         self._graph_state_dict: dict = {}
         self._graph_complete: bool = False
+        # Ordered agent-node names when graph runs as a concurrent DAG.
+        self._graph_todo_order: list[str] = []
 
         # Selection mode. Three values:
         #   "round_robin" — default. Strategy picks one peer per turn in
@@ -210,7 +212,10 @@ class NetworkedStrategy(CoordinationStrategy):
         # peer threads have something to race for. The seed comes from
         # the coord YAML — different design tasks ship different seeds.
         # Format: list of {name, description} dicts.
-        if self._selection_mode == "concurrent_blackboard":
+        # SKIP this when a graph is present: graph+concurrent derives its
+        # TODOs from the graph DAG (below), and the YAML todo_seed would
+        # pollute the board with a second, conflicting set.
+        if self._selection_mode == "concurrent_blackboard" and config.get("_graph_def") is None:
             todo_seed = net_config.get("todo_seed", []) or []
             seed_pairs: list[tuple[str, str]] = []
             for entry in todo_seed:
@@ -255,6 +260,21 @@ class NetworkedStrategy(CoordinationStrategy):
             # Snapshot toolsets for graph-driven tool filtering.
             for name, agent in self._agents.items():
                 self._full_toolsets[name] = dict(agent.tools)
+
+            # DAG-executor: when peers coordinate via concurrent_blackboard,
+            # seed the TODO board FROM the graph — one TODO per agent-bearing
+            # state, with depends_on derived from the success-path edges so a
+            # node only becomes claimable once its predecessor is done.
+            if self._selection_mode == "concurrent_blackboard" and self._blackboard is not None:
+                graph_todos = self._derive_graph_todos()
+                if graph_todos:
+                    self._blackboard.seed_todos(graph_todos)
+                    # The linear F25 chain needs enough re-fire cycles for
+                    # peers to pick up each node as its predecessor unlocks.
+                    self._max_concurrent_runs = max(
+                        self._max_concurrent_runs, len(graph_todos) + 2
+                    )
+                    self._concurrent_runs_dispatched = 0
 
         # Reset state.
         self._rotation_index = 0
@@ -337,8 +357,17 @@ class NetworkedStrategy(CoordinationStrategy):
                 input_context="No agents available",
             )
 
-        # ----- Graph-driven mode: one graph state per turn -----
+        # ----- Graph mode -----
         if self._graph is not None:
+            # concurrent_blackboard + graph = DAG-executor: the graph
+            # defines the workflow DAG (nodes + dependencies); concurrent
+            # peers pull AVAILABLE nodes (predecessors done), claim them
+            # atomically, execute, mark done -> unlocks dependents. The
+            # networked layer controls task assignment/claiming; the graph
+            # controls which work is exposed when.
+            if self._selection_mode == "concurrent_blackboard":
+                return self._graph_concurrent_next_step(history, current_state)
+            # Otherwise: serial one-state-per-turn graph rotation.
             return self._graph_driven_next_step(history, current_state)
 
         # Update agent order to include any spawned agents.
@@ -1005,6 +1034,155 @@ class NetworkedStrategy(CoordinationStrategy):
             agent_name=agent_name,
             input_context=input_context,
             metadata=meta,
+        )
+
+    # -- Graph + concurrent (DAG-executor) --------------------------------------
+
+    def _next_forward_state(self, state, seen_agent: list[str]) -> str | None:
+        """Pick the forward transition target when deriving the work DAG.
+
+        Prefer the 'full pipeline / success' branch: a transition whose
+        target is NOT an already-collected agent node (those are
+        retry/back edges) and, among routing choices, the one whose
+        condition reads as forward progress (complex / success / passed).
+        """
+        if not state.transitions:
+            return None
+        # Precise (quoted / operator) markers so the full-pipeline branch
+        # is chosen. NOTE: bare "complex" would substring-match
+        # "complexity == 'simple'" — use the quoted literal "'complex'".
+        forward_markers = ("'complex'", "== true", "'passed'")
+        # First pass: a forward-condition transition to an uncollected node.
+        for t in state.transitions:
+            cond = (t.condition or "").lower()
+            if t.target not in seen_agent and any(m in cond for m in forward_markers):
+                return t.target
+        # Second pass: any transition to an uncollected node.
+        for t in state.transitions:
+            if t.target not in seen_agent:
+                return t.target
+        # All targets already collected (pure back-edges) — stop.
+        return None
+
+    def _derive_graph_todos(self) -> list[tuple[str, str, list[str]]]:
+        """Build one TODO per agent-bearing graph state on the forward
+        (success) path, with depends_on = the previous agent node, so the
+        concurrent peers execute the graph as a dependency DAG. Routing-
+        only states (agent=None) are followed THROUGH but not turned into
+        TODOs. Records the ordered node names in self._graph_todo_order.
+        Returns (name, short_description, depends_on) tuples."""
+        if self._graph is None:
+            return []
+        states = self._graph.states
+        todos: list[tuple[str, str, list[str]]] = []
+        seen_agent: list[str] = []
+        cur = self._graph.initial_state
+        prev_agent: str | None = None
+        for _ in range(len(states) * 2 + 2):
+            if cur is None or cur in self._graph.terminal_states:
+                break
+            state = states.get(cur)
+            if state is None:
+                break
+            if state.agent is not None and cur not in seen_agent:
+                dep = [prev_agent] if prev_agent else []
+                todos.append((cur, state.description or cur, dep))
+                seen_agent.append(cur)
+                prev_agent = cur
+            nxt = self._next_forward_state(state, seen_agent)
+            if nxt is None or nxt == cur:
+                break
+            cur = nxt
+        self._graph_todo_order = [name for name, _desc, _dep in todos]
+        return todos
+
+    def _build_graph_concurrent_task(self) -> str:
+        """Build the shared task for a parallel_run cycle in graph+concurrent
+        mode: the DAG protocol + the authoritative TASK + a per-node
+        playbook (each node's full agent_prompt) so a peer that claims a
+        node knows exactly what to do, including its signature MCP tool."""
+        parts: list[str] = [
+            "You are one of several CONCURRENT peer engineers executing an "
+            "aircraft-design workflow that is defined as a DAG of TODO nodes "
+            "on the shared blackboard. Each turn:\n"
+            "  1. Call read_todos. Pick a node marked [AVAILABLE] (its "
+            "prerequisites are DONE). NEVER pick a node marked [BLOCKED] — "
+            "its inputs aren't ready.\n"
+            "  2. Call claim_todo(<name>). If it fails (another peer won it, "
+            "or it's blocked), read_todos again and claim a DIFFERENT "
+            "[AVAILABLE] node — do NOT retry the same one.\n"
+            "  3. Do EXACTLY the work in that node's NODE block below, "
+            "INCLUDING actually calling its signature MCP tool (e.g. "
+            "run_su2_solver for AERO_ANALYSIS). You MUST run the real tool — "
+            "do not merely describe or claim it.\n"
+            "  4. write_blackboard your key results, then "
+            "mark_todo_done(<name>, <short result>). Completing a node "
+            "unlocks the nodes that depend on it.\n"
+            "  5. If another node is now [AVAILABLE] and you have step "
+            "budget, claim and do it too. Otherwise stop.\n"
+            "Only mark a node done AFTER its signature tool actually "
+            "succeeded. If the tool fails, mark_todo_failed so a peer can retry."
+        ]
+        if self._task:
+            parts.append(
+                "TASK (authoritative — contains the absolute CPACS file path "
+                f"and mission spec):\n{self._task}"
+            )
+        playbook = [
+            "NODE PLAYBOOK — find the node you claimed and follow its steps "
+            "exactly:"
+        ]
+        for name in getattr(self, "_graph_todo_order", []):
+            state = self._graph.states.get(name) if self._graph else None
+            if state is None:
+                continue
+            prompt = state.agent_prompt or ""
+            if "{recommended_changes}" in prompt:
+                rec = self._graph_state_dict.get("recommended_changes") or (
+                    "(none yet — first pass; use the baseline values)"
+                )
+                prompt = prompt.replace("{recommended_changes}", rec)
+            playbook.append(f"\n=== NODE {name} ===\n{prompt}")
+        parts.append("\n".join(playbook))
+        return "\n\n".join(parts)
+
+    def _graph_concurrent_next_step(
+        self, history: list, current_state: dict
+    ) -> CoordinationAction:
+        """DAG-executor dispatch: fire all peers in parallel to claim and
+        execute AVAILABLE graph-node TODOs. Terminate when every node is
+        done or the cycle budget is exhausted."""
+        bb = self._blackboard
+        if bb is not None and bb.all_todos_done():
+            self._graph_complete = True
+            return CoordinationAction(
+                action_type="terminate",
+                agent_name=None,
+                input_context="",
+                metadata={"reason": "all graph TODOs done"},
+            )
+        if self._concurrent_runs_dispatched >= self._max_concurrent_runs:
+            return CoordinationAction(
+                action_type="terminate",
+                agent_name=None,
+                input_context="",
+                metadata={
+                    "reason": "graph concurrent max cycles reached",
+                    "cycles_dispatched": self._concurrent_runs_dispatched,
+                },
+            )
+        self._concurrent_runs_dispatched += 1
+        return CoordinationAction(
+            action_type="parallel_run",
+            agent_name=None,
+            input_context=self._build_graph_concurrent_task(),
+            metadata={
+                "peers": list(self._agent_order),
+                "turn": self._total_turns + 1,
+                "cycle": self._concurrent_runs_dispatched,
+                "selection_mode": "concurrent_blackboard",
+                "graph_dag": True,
+            },
         )
 
     def _advance_graph_state(self, history: list) -> None:

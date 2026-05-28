@@ -78,6 +78,66 @@ class TestNetworkedGraphRoutedShape:
         assert combo.handler_config["predefined_graph"] == "mdo_f25"
         # workflow_phases disabled — the graph manages the workflow.
         assert combo.strategy_config["networked"]["workflow_phases"] == []
+        # selection_mode=concurrent_blackboard activates the DAG-executor
+        # (without it the graph short-circuits to the serial path).
+        assert (
+            combo.strategy_config["networked"]["selection_mode"]
+            == "concurrent_blackboard"
+        )
+
+    def test_graph_derives_linear_dag_todos(self):
+        """The DAG-executor derives one TODO per agent-bearing state on
+        the success path, each depending on its predecessor — covering
+        all 7 disciplines (not just the simple-complexity shortcut)."""
+        from src.coordination.graph_definition import load_graph_from_yaml
+        from src.coordination.strategies.networked import NetworkedStrategy
+
+        graph = load_graph_from_yaml("config/mdo_f25_graph.yaml")
+        strat = NetworkedStrategy()
+        strat._graph = graph
+        todos = strat._derive_graph_todos()
+        names = [name for name, _desc, _dep in todos]
+        # Full pipeline, in order — must include AERO_ANALYSIS (the node
+        # that was omitted by the serial path) and the structures /
+        # propulsion disciplines, NOT the simple-complexity shortcut.
+        assert names == [
+            "TASK_CLASSIFIED",
+            "GEOMETRY_SETUP",
+            "AERO_ANALYSIS",
+            "MASS_ESTIMATION",
+            "PROPULSION_SIZING",
+            "MISSION_CONFIG",
+            "SIMULATION_RUN",
+            "RESULTS_REVIEW",
+        ]
+        # Linear dependency chain: each node depends on the previous.
+        deps = {name: dep for name, _desc, dep in todos}
+        assert deps["GEOMETRY_SETUP"] == ["TASK_CLASSIFIED"]
+        assert deps["AERO_ANALYSIS"] == ["GEOMETRY_SETUP"]
+        assert deps["RESULTS_REVIEW"] == ["SIMULATION_RUN"]
+        assert deps["TASK_CLASSIFIED"] == []
+
+    def test_concurrent_mode_seeds_graph_todos_with_deps(self):
+        """initialize() in graph+concurrent mode seeds the blackboard
+        TODO board from the graph DAG (deps gated), and only the root
+        node is available at start."""
+        from src.coordination.graph_definition import load_graph_from_yaml
+        from src.coordination.strategies.networked import NetworkedStrategy
+
+        graph = load_graph_from_yaml("config/mdo_f25_graph.yaml")
+        strat = NetworkedStrategy()
+        strat.initialize({}, {
+            "_graph_def": graph,
+            "networked": {
+                "workflow_phases": [],
+                "selection_mode": "concurrent_blackboard",
+            },
+        })
+        assert strat._blackboard is not None
+        all_names = {t.name for t in strat._blackboard.read_todos()}
+        assert "AERO_ANALYSIS" in all_names  # the full pipeline is seeded
+        avail = {t.name for t in strat._blackboard.read_available_todos()}
+        assert avail == {"TASK_CLASSIFIED"}  # only the root is claimable
 
     def test_shared_graph_yaml_still_loads(self):
         from src.coordination.graph_definition import load_graph_from_yaml
