@@ -10,6 +10,7 @@ from src.coordination.graph_routed_handler import (
     _extract_complexity,
     _extract_error_type,
     _extract_execution_result,
+    _extract_recommended_change,
     _extract_review_result,
     _strip_session_id_prefix,
 )
@@ -820,6 +821,76 @@ class TestStripSessionIdPrefix:
         task, sid = _strip_session_id_prefix(original)
         assert sid is None
         assert task == original
+
+
+class TestExtractRecommendedChange:
+    """The RESULTS_REVIEW state emits a RECOMMENDED_CHANGE line; the
+    handler captures it so the next pass's design state can evolve the
+    design (graph optimization-loop feedback path)."""
+
+    def test_extracts_recommendation_line(self):
+        text = (
+            "VERDICT: MINOR_ISSUES\n"
+            "RECOMMENDED_CHANGE: Aircraft.Wing.SWEEP -> decrease, "
+            "Aircraft.Wing.ASPECT_RATIO -> increase to improve L/D\n"
+            "Some trailing analysis."
+        )
+        rec = _extract_recommended_change(text)
+        assert rec is not None
+        assert "SWEEP -> decrease" in rec
+        assert "ASPECT_RATIO -> increase" in rec
+        # Stops at end of line — trailing analysis not captured.
+        assert "trailing analysis" not in rec
+
+    def test_tolerates_markdown_bold(self):
+        rec = _extract_recommended_change("**RECOMMENDED_CHANGE:** lower the sweep")
+        assert rec == "lower the sweep"
+
+    def test_ignores_empty_template_placeholder(self):
+        # The prompt template's own "<param -> direction>" must not be
+        # mistaken for a real recommendation.
+        assert _extract_recommended_change("RECOMMENDED_CHANGE: <param -> direction>") is None
+
+    def test_returns_none_when_absent(self):
+        assert _extract_recommended_change("no recommendation in here") is None
+
+
+class TestRecommendedChangeStateThreading:
+    """End-to-end: the handler defaults recommended_changes on init,
+    updates it from a review output, and substitutes the
+    {recommended_changes} placeholder into MISSION_CONFIG's prompt
+    (which str.format can't resolve because of its literal braces)."""
+
+    def _handler(self):
+        h = GraphRoutedHandler({"predefined_graph": "mdo_f25"})
+        g = h._load_graph({})
+        h._graph = g
+        h._state_dict = {
+            "recommended_changes": "",
+            "last_agent_output": "",
+            "last_error": "",
+        }
+        return h, g
+
+    def test_first_pass_shows_default_not_literal_placeholder(self):
+        h, g = self._handler()
+        ctx = h._build_agent_context("TASK", g.states["MISSION_CONFIG"], "MISSION_CONFIG")
+        assert "{recommended_changes}" not in ctx
+        assert "first pass" in ctx
+        # Baseline parameters still present.
+        assert "ASPECT_RATIO" in ctx
+
+    def test_recommendation_flows_into_mission_config_prompt(self):
+        h, g = self._handler()
+        # Simulate a review output updating the feedback channel.
+        h._update_state_from_output(
+            "VERDICT: MINOR_ISSUES\nRECOMMENDED_CHANGE: SWEEP -> decrease",
+            "RESULTS_REVIEW",
+        )
+        assert h._state_dict["recommended_changes"] == "SWEEP -> decrease"
+        ctx = h._build_agent_context("TASK", g.states["MISSION_CONFIG"], "MISSION_CONFIG")
+        assert "SWEEP -> decrease" in ctx
+        assert "{recommended_changes}" not in ctx
 
     def test_extract_review_verdict_passed(self):
         assert _extract_review_result("PASSED")["review_verdict"] == "passed"

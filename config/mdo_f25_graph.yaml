@@ -277,6 +277,9 @@ mdo_f25_graph:
 
         TOOLS: configure_mission, set_aircraft_parameters
 
+        FEEDBACK FROM PREVIOUS REVIEW PASS:
+          {recommended_changes}
+
         1. Call configure_mission(range_nmi=2500, num_passengers=200,
              cruise_mach=0.78, cruise_altitude_ft=33000,
              optimizer_max_iter=200).
@@ -284,22 +287,39 @@ mdo_f25_graph:
            num_passengers <= 200 — use 200 here (v18 worker recovered
            from this cap on its own; doing it pre-emptively saves a
            round-trip).
-        2. Call set_aircraft_parameters(parameters={
+        2. Call set_aircraft_parameters with the BASELINE below, then
+           apply any nudges from the FEEDBACK above (see step 3):
              "Aircraft.Wing.ASPECT_RATIO": 11.0,
              "Aircraft.Wing.AREA": 130.1,
              "Aircraft.Wing.SWEEP": 25.0,
              "Aircraft.Wing.TAPER_RATIO": 0.278,
              "Aircraft.Fuselage.LENGTH": 37.79,
+             "Aircraft.Fuselage.MAX_HEIGHT": 4.06,
+             "Aircraft.Fuselage.MAX_WIDTH": 3.76,
              "Aircraft.Engine.SCALE_FACTOR": 1.3
-           })
-           USE AR=11.0 (NOT the F25-target 15.6) and SCALE_FACTOR=1.3.
-           AR > 12 causes Aviary's climb-phase Newton solver to error.
-           v18 verified these reliable values produced a converged
-           mission (wandb 7ngitswj).
+           Always set MAX_HEIGHT=4.06 and MAX_WIDTH=3.76 (the F25
+           fuselage cross-section). Leaving these at the bloated
+           Aviary defaults (~5.4 x 4.9) adds parasitic drag and is
+           the main reason a pass can land fuel well above target.
+        3. APPLY THE FEEDBACK. If the FEEDBACK above names parameter
+           changes (e.g. "Aircraft.Wing.SWEEP -> decrease,
+           Aircraft.Wing.ASPECT_RATIO -> increase"), nudge those
+           parameters from the baseline in the stated direction by a
+           SMALL step, staying STRICTLY inside these reliable bounds
+           (outside them Aviary's Newton solver NaNs or the model
+           extrapolates):
+             ASPECT_RATIO in [9.0, 11.5]   (NEVER exceed 11.5)
+             AREA         in [110.0, 135.0]
+             SWEEP        in [20.0, 30.0]
+             TAPER_RATIO  in [0.25, 0.35]
+             SCALE_FACTOR in [1.1, 1.4]
+           Step sizes ~ AR +/-0.3, SWEEP +/-2, AREA +/-5,
+           SCALE_FACTOR +/-0.05. If the FEEDBACK says "(none ...)"
+           or is empty, just use the baseline unchanged.
 
            Only set ONE of {AREA, SPAN, ASPECT_RATIO} per call.
-           The response includes a "valid" boolean; if false, adjust
-           parameters and call again.
+           The response includes a "valid" boolean; if false, pull the
+           offending parameter back toward the baseline and call again.
 
            The data-plane middleware also auto-injects
            Mission.Design.LIFT_COEFFICIENT (from SU2 CL) and
@@ -309,8 +329,9 @@ mdo_f25_graph:
 
         State "success" only if the last set_aircraft_parameters
         call returned valid: true. State "fail" otherwise.
-        Output: MISSION_CONFIGURED, AIRCRAFT_PARAMETERS_SET,
-        SESSION_ID.
+        Output: MISSION_CONFIGURED, AIRCRAFT_PARAMETERS_SET, the
+        actual parameter values you used (so the next pass can see
+        them), and SESSION_ID.
       description: "Mission configuration and parameter integration via Aviary"
       transitions:
         - condition: "execution_success == true"

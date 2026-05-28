@@ -227,6 +227,33 @@ def _extract_review_result(text: str) -> dict:
     return result
 
 
+# A review/integrator state may emit a RECOMMENDED_CHANGE line naming
+# the parameter nudges to apply on the next optimization pass, e.g.
+#   RECOMMENDED_CHANGE: Aircraft.Wing.SWEEP -> decrease, AR -> increase
+# Capturing it lets a downstream design state (MISSION_CONFIG) evolve
+# the design between graph passes instead of re-applying fixed values
+# and looping on the same verdict forever. Tolerates optional markdown
+# bold (**...**) and ':' / arrow variants.
+_RECOMMENDED_CHANGE_RE = re.compile(
+    r"\*{0,2}RECOMMENDED_CHANGE\*{0,2}\s*:?\s*(.+?)(?:\n|$)",
+    re.IGNORECASE,
+)
+
+
+def _extract_recommended_change(text: str) -> str | None:
+    """Extract the RECOMMENDED_CHANGE line from an integrator/review
+    output. Returns the recommendation text (one line) or None."""
+    m = _RECOMMENDED_CHANGE_RE.search(text)
+    if not m:
+        return None
+    rec = m.group(1).strip().strip("*").strip()
+    # Ignore the empty placeholder form the prompt template itself
+    # carries (e.g. "<param -> direction>").
+    if not rec or rec.startswith("<"):
+        return None
+    return rec
+
+
 # ---------------------------------------------------------------------------
 # Execution result extraction
 # ---------------------------------------------------------------------------
@@ -409,6 +436,11 @@ class GraphRoutedHandler(ExecutionHandler):
             "last_error": "",
             "attempt_history": [],
             "states_visited": [],
+            # Feedback channel: the RESULTS_REVIEW state writes its
+            # RECOMMENDED_CHANGE here; design states (MISSION_CONFIG)
+            # read it via the {recommended_changes} placeholder so the
+            # optimization loop evolves the design across passes.
+            "recommended_changes": "",
         }
 
         # Inject pre-hook session_id if set via set_session_id().
@@ -718,8 +750,22 @@ class GraphRoutedHandler(ExecutionHandler):
         if state_def.agent_prompt:
             try:
                 formatted = state_def.agent_prompt.format(**self._state_dict)
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, ValueError):
+                # Prompts that contain literal braces (e.g. JSON
+                # examples like parameters={...}) make str.format
+                # raise — fall back to the raw prompt.
                 formatted = state_def.agent_prompt
+            # Targeted placeholder substitution that survives the
+            # str.format fallback above. The feedback-loop placeholder
+            # {recommended_changes} lives in MISSION_CONFIG's prompt,
+            # which also carries literal braces, so str.format never
+            # resolves it — do it explicitly here.
+            if "{recommended_changes}" in formatted:
+                rec = self._state_dict.get("recommended_changes") or (
+                    "(none yet — this is the first pass; use the "
+                    "baseline values below)"
+                )
+                formatted = formatted.replace("{recommended_changes}", rec)
             parts.append(formatted)
 
         # Internal representations (mental model).
@@ -751,6 +797,14 @@ class GraphRoutedHandler(ExecutionHandler):
         review = _extract_review_result(content)
         if review:
             self._state_dict.update(review)
+
+        # Recommended-change extraction (feedback loop). When a review
+        # state recommends parameter nudges, stash them so the next
+        # pass's design state can apply them. Persists until the next
+        # review overwrites it.
+        rec = _extract_recommended_change(content)
+        if rec:
+            self._state_dict["recommended_changes"] = rec
 
         # Execution result extraction.
         exec_result = _extract_execution_result(content)

@@ -1,5 +1,92 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+2) — Phase L Job 3 step 4 VERIFIED LIVE + graph optimization-loop feedback path
+
+Closes the feedback-loop follow-up from the previous entry, and with
+it step 4 (mdo_f25_orchestrated_graph_routed) is now verified
+end-to-end with a natural PASSED -> COMPLETE termination.
+
+wandb run [`r4svbo5u`](https://wandb.ai/jessicae/mas-aviary-stat/runs/r4svbo5u):
+- fuel_burned_kg = 12,755.86 (+5.4% vs F25 spec 12,100 kg)
+- gtow_kg = 74,154.84 (-13.5% vs 85,700)
+- wing_mass_kg = 8,539.83
+- VERDICT: PASSED on the FIRST pass ("RECOMMENDED_CHANGE: none
+  required"), graph -> COMPLETE, completed_total=1.
+
+Identical fuel to step 3 (sequential_graph_routed, 81w57h3g) — same
+fixture, same params, now the same fuselage. All disciplines fired
+real tools (SU2 EULER converged CD=0.0128 L/D=14.61, estimate_mass,
+run_cycle CYCLE_CONVERGED, run_simulation converged).
+
+Two changes landed:
+
+1. **Fuselage pin (the decisive fuel fix).**
+   config/mdo_f25_graph.yaml MISSION_CONFIG now always sets
+   Aircraft.Fuselage.MAX_HEIGHT=4.06 and MAX_WIDTH=3.76 (the F25
+   cross-section). The previous entry's +14.38% fuel gap came from
+   leaving these at Aviary's bloated defaults (~5.4 x 4.9), which add
+   parasitic drag. Pinning them dropped fuel 13,840 -> 12,755 kg and
+   flipped the verdict MINOR_ISSUES -> PASSED. This is why the run
+   now terminates in one pass instead of looping.
+
+2. **Optimization-loop feedback path (the requested follow-up).**
+   The graph_routed handler now threads the integrator's
+   RECOMMENDED_CHANGE into the next pass so the design can evolve
+   when pass 1 does NOT pass:
+   - src/coordination/graph_routed_handler.py:
+     `_extract_recommended_change()` parses the
+     `RECOMMENDED_CHANGE:` line (tolerates markdown bold, arrow
+     variants, ignores the empty `<param -> direction>` template).
+     `_update_state_from_output` stashes it in
+     `_state_dict["recommended_changes"]` (initialized to "" so the
+     placeholder always resolves; persists until the next review
+     overwrites it).
+   - `_build_agent_context` substitutes the `{recommended_changes}`
+     placeholder explicitly via str.replace. This is necessary
+     because MISSION_CONFIG's prompt contains literal braces (JSON
+     examples like `parameters={...}`), which make
+     `str.format(**state_dict)` raise and fall back to the raw
+     prompt — so the placeholder would never resolve via format.
+     Also widened the format except to catch ValueError (a lone `{`
+     raises ValueError, not KeyError).
+   - MISSION_CONFIG's prompt grew a "FEEDBACK FROM PREVIOUS REVIEW
+     PASS: {recommended_changes}" section and an "APPLY THE FEEDBACK"
+     step with reliable parameter bounds (AR in [9.0, 11.5], SWEEP in
+     [20, 30], AREA in [110, 135], TAPER in [0.25, 0.35], SCALE in
+     [1.1, 1.4]) so nudges stay inside Aviary's Newton-solver-safe
+     envelope. On the first pass the placeholder resolves to "(none
+     yet — use the baseline)".
+
+   The feedback path was NOT exercised live this run because pass 1
+   PASSED outright (the fuselage fix closed the gap). It is the
+   mechanism for any future combo/fixture where pass 1 lands
+   MINOR_ISSUES — instead of looping on identical passes (the prior
+   entry's failure mode), the design now nudges per the integrator's
+   recommendation each pass. Unit-tested in
+   tests/test_graph_routed_handler.py::TestExtractRecommendedChange
+   (4) and ::TestRecommendedChangeStateThreading (2).
+
+Full unit suite: 1436 passed (+6), no regressions. The
+graph_routed_handler change is shared with sequential_graph_routed
+(step 3) — verified no-op there (its MISSION_CONFIG already passed
+on pass 1; the placeholder/format-fallback behavior is unchanged
+for prompts without the placeholder).
+
+Side-by-side (step 4 now fully verified):
+
+| Combo | wandb | fuel_kg | Status |
+|---|---|---|---|
+| `sequential_iterative_feedback` | iepdeu70 | 12,755.86 | baseline |
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | step 1 verified |
+| `orchestrated_staged_pipeline` | 7ngitswj | 13,141.99 | step 2 verified |
+| `sequential_graph_routed` | 81w57h3g | 12,755.86 | step 3 verified |
+| **`orchestrated_graph_routed`** | **r4svbo5u** | **12,755.86** | **step 4 verified (PASSED, 1 pass)** |
+| `orchestrated_iterative_feedback` | fup5hh0h | 13,206.34 | prior baseline |
+| `networked_iterative_feedback` | 4o22y281 | 11,615.86 | prior baseline |
+
+Job 3 step 4 is now closed. Remaining: step 5 (networked x
+graph_routed).
+
 ### 2026-05-27 (latest+1) — Phase L Job 3 step 4 discipline-verified; graph optimization-loop feedback gap found
 
 Ran mdo_f25_orchestrated_graph_routed to a full first pass (the two
