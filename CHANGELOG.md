@@ -1,5 +1,72 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+3) — IMPORTANT: geometry stage is NOT coupled (tigl-mcp morph is a no-op)
+
+While scoping the "genuine MDO closure" (feed the integrator's
+RECOMMENDED_CHANGE back into the GEOMETRY stage so the wing
+re-shapes -> re-meshes -> re-solves -> new CL/CD), we discovered a
+hard tool-layer limitation that affects how ALL the MDO-F25 runs to
+date should be interpreted.
+
+**Finding: tigl-mcp cannot actually change the aircraft geometry.**
+`set_high_level_parameters` writes to an isolated in-memory
+`component.parameters` dict that NOTHING in the geometry/mesh path
+reads. Proven empirically (open_cpacs -> mesh -> set params ->
+mesh again):
+- `set_high_level_parameters(Wing1, {span:50, area:110, sweep:35,
+  aspect_ratio:16})` SUCCEEDS (get_high_level_parameters reflects
+  the new dict).
+- BUT `get_wing_summary` still reports the ORIGINAL geometry
+  (span 33.9, area 61.4, AR 18.73) — it computes from the live
+  TiGL CAD, not from that dict.
+- AND `generate_volume_mesh` returns a BYTE-IDENTICAL mesh
+  (sha256 3f4accec26ddead0, 41,024,044 bytes) before and after.
+  It exports via `tigl.exportWingBREPByUID(uid, ...)` — the loaded
+  CPACS CAD, keyed only by UID, never the parameters dict.
+
+There is no other geometry-mutating tool in tigl-mcp (full tool
+list: open/close_cpacs, get_*/list_* inspectors,
+export_component_mesh, export_configuration_cad,
+generate_volume_mesh, intersect_*, sample_component_surface,
+set_high_level_parameters). So the wing CANNOT be re-shaped through
+the MCP.
+
+**What this means for the MDO-F25 pipeline:**
+- Every run (all combos, all wandb runs to date) meshes and solves
+  the SAME baseline D150_simple wing. That's why SU2 ALWAYS returns
+  CL=0.1871 / CD=0.0128 regardless of what AR/AREA the mission
+  stage sets. The CFD result is a FIXED aero seed, not a design
+  variable.
+- The cross-discipline coupling that DOES work is the data-plane
+  parameter injection (Phase H aero CL/CD -> Aviary, Phase K-A
+  wing mass -> Aviary, Phase K-B MTOM -> pycycle Fn_DES). These
+  are real and verified.
+- The "design optimization" happens entirely in Aviary's
+  parametric/FLOPS space (AR, AREA, SWEEP, fuselage, engine scale).
+  It is NOT a fully-coupled aero<->geometry MDO: when the optimizer
+  changes AR, the CFD is not re-run on the new shape.
+
+In short: the framework couples aero/mass/propulsion RESULTS into
+the mission sizing, but it does NOT close the geometry<->CFD loop,
+because the geometry MCP has no working morph. The
+graph_routed feedback loop (previous entry) correctly evolves the
+Aviary parameters, but cannot evolve the CFD geometry.
+
+**Follow-up (deferred to a dedicated session, needs tigl-mcp branch
+authorization):** make `set_high_level_parameters` (or a new tool)
+actually deform the geometry — write the change into the CPACS/TiXI
+XML (scale wing positionings for span, section chords for area/AR),
+then rebuild the TiGL configuration so `exportWingBREPByUID`
+reflects the morph. This is an inverse parametric-modeling task
+(high-level AR/area/sweep -> CPACS sections/positionings) and lives
+in the tigl-mcp repo, not MAS-Aviary. Only after that can the
+GEOMETRY stage consume RECOMMENDED_CHANGE for a true closed loop.
+
+No code changed in MAS-Aviary for this entry — it documents the
+blocker and corrects the interpretation of the coupling. The graph
+prompts still (correctly) keep GEOMETRY/AERO fixed, since morphing
+would be a no-op today.
+
 ### 2026-05-27 (latest+2) — Phase L Job 3 step 4 VERIFIED LIVE + graph optimization-loop feedback path
 
 Closes the feedback-loop follow-up from the previous entry, and with
