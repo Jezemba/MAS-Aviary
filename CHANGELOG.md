@@ -1,5 +1,58 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+6) — DAG-executor: true parallelism (explicit deps) + churn/cost reduction + self-healing claims
+
+Follow-up to the DAG-executor: make it actually PARALLEL (not a linear
+chain) and much cheaper per run, addressing the user's point that "not
+everything needs input from the previous step."
+
+Root cause of the prior linear behavior: (1) mdo_f25_graph.yaml only
+had single forward transitions (control flow), and (2) _derive_graph_todos
+chained each node to its immediate predecessor. The TRUE data
+dependencies (verified against data_plane.py couplings) have
+parallelism.
+
+Changes:
+- **graph_definition.py**: new `GraphState.depends_on` (explicit DATA
+  dependencies, distinct from transitions). `None` = not in the DAG;
+  `[]` = a root. Backward-compatible (aviary graph unaffected).
+- **mdo_f25_graph.yaml**: declared the real dependency DAG on the 7
+  discipline states:
+    GEOMETRY: []          AERO: [GEOMETRY]      MASS: [GEOMETRY]
+    PROPULSION: [MASS]     MISSION: [AERO,MASS]
+    SIMULATION: [MISSION]  RESULTS: [SIMULATION, PROPULSION]
+  -> after GEOMETRY, AERO ∥ MASS run in parallel; PROPULSION starts
+  once MASS is done (alongside AERO); MISSION waits for AERO+MASS
+  (the framework does NOT couple propulsion into mission, so it
+  doesn't gate it); RESULTS waits for SIMULATION + PROPULSION. The
+  TASK_CLASSIFIED classifier declares no deps -> excluded from the
+  DAG (GEOMETRY is the root).
+- **networked.py `_derive_graph_todos`**: prefers explicit depends_on
+  when any state declares it (parallel DAG); falls back to the linear
+  walk otherwise (aviary).
+- **Churn / cost** (`_graph_concurrent_next_step` +
+  `_build_graph_concurrent_task`): each cycle now fires only
+  `min(available_nodes, peers)` peers (linear stretch = 1 peer; a
+  parallel branch = 2) and the per-cycle playbook is TRIMMED to only
+  the currently-available nodes' prompts. The prior implementation
+  fired all 3 peers with the full 7-node playbook every cycle — that
+  drove the 113 read_todos churn and ~530k tokens that burned credits
+  fast. Peers are now told "claim ONE node, finish it, STOP" so idle
+  peers don't spin on read_todos.
+- **Self-healing claims** (`Blackboard.release_claimed_todos`): between
+  synchronous cycles no peer holds a claim, so any still-`claimed`
+  node is a dropped claim (a peer errored / was cut off mid-node, as
+  happened on the credit error last run). The executor releases such
+  nodes back to pending for retry — robust against mid-node interrupts.
+
+Tests: parallel-DAG derivation (AERO & MASS both depend only on
+GEOMETRY; classifier excluded), AERO∥MASS unlock together, dropped-
+claim self-heal; +6 blackboard dependency tests. Full suite 1442
+passed.
+
+Next: live re-run to confirm AERO∥MASS parallelism, SU2 completes,
+and the token/credit burn is materially lower than wandb oqm4sj30.
+
 ### 2026-05-27 (latest+5) — networked_graph_routed redesigned as a DAG-executor (architecture verified; execution hardening pending)
 
 Per the user's correction: networked × graph_routed was using the OLD

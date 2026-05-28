@@ -424,6 +424,23 @@ class Blackboard:
             todo.claimed_at = None
             return True, f"{agent!r} marked {name!r} failed: {reason[:80]}"
 
+    def release_claimed_todos(self) -> list[str]:
+        """Reset every CLAIMED-but-not-done TODO back to PENDING and clear
+        its owner. Used by the DAG-executor BETWEEN synchronous parallel
+        cycles: at that point no peer is actively holding a claim, so any
+        TODO still 'claimed' is a dropped claim (its peer errored or was
+        cut off mid-node, e.g. on an API error) and must be freed for
+        retry. Returns the names that were released."""
+        with self._lock:
+            released = []
+            for t in self._todos.values():
+                if t.status == TODO_STATUS_CLAIMED:
+                    t.status = TODO_STATUS_PENDING
+                    t.assigned_to = None
+                    t.claimed_at = None
+                    released.append(t.name)
+            return released
+
     def all_todos_done(self) -> bool:
         """True iff the TODO list is non-empty AND every TODO is done."""
         with self._lock:

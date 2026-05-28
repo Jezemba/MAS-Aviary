@@ -42,6 +42,14 @@ class GraphState:
     description: str
     transitions: list[GraphTransition] = field(default_factory=list)
     agent_prompt: str | None = None
+    # Explicit DATA-dependency edges (distinct from transitions, which are
+    # control-flow/retry routing). Names of states whose work must be DONE
+    # before this state's work can run. Used by the concurrent
+    # graph+blackboard DAG-executor to parallelize independent disciplines
+    # (e.g. AERO and MASS both depend only on GEOMETRY, not on each other).
+    # ``None`` = not declared (state is not part of the explicit DAG);
+    # ``[]`` = declared with no prerequisites (a DAG root).
+    depends_on: list[str] | None = None
 
 
 @dataclass
@@ -94,6 +102,7 @@ def _load_state(name: str, data: dict) -> GraphState:
         description=data.get("description", ""),
         transitions=transitions,
         agent_prompt=data.get("agent_prompt"),
+        depends_on=data.get("depends_on"),
     )
 
 

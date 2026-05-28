@@ -85,10 +85,12 @@ class TestNetworkedGraphRoutedShape:
             == "concurrent_blackboard"
         )
 
-    def test_graph_derives_linear_dag_todos(self):
-        """The DAG-executor derives one TODO per agent-bearing state on
-        the success path, each depending on its predecessor — covering
-        all 7 disciplines (not just the simple-complexity shortcut)."""
+    def test_graph_derives_parallel_dag_todos(self):
+        """The DAG-executor uses the graph's explicit depends_on to build
+        a PARALLEL work DAG: the 7 disciplines (classifier excluded), with
+        AERO and MASS both depending only on GEOMETRY (so they run in
+        parallel), PROPULSION on MASS, MISSION on AERO+MASS, RESULTS on
+        SIMULATION+PROPULSION."""
         from src.coordination.graph_definition import load_graph_from_yaml
         from src.coordination.strategies.networked import NetworkedStrategy
 
@@ -96,12 +98,10 @@ class TestNetworkedGraphRoutedShape:
         strat = NetworkedStrategy()
         strat._graph = graph
         todos = strat._derive_graph_todos()
-        names = [name for name, _desc, _dep in todos]
-        # Full pipeline, in order — must include AERO_ANALYSIS (the node
-        # that was omitted by the serial path) and the structures /
-        # propulsion disciplines, NOT the simple-complexity shortcut.
-        assert names == [
-            "TASK_CLASSIFIED",
+        names = {name for name, _desc, _dep in todos}
+        # The 7 disciplines participate; the TASK_CLASSIFIED classifier
+        # (no depends_on) is excluded — GEOMETRY is the DAG root.
+        assert names == {
             "GEOMETRY_SETUP",
             "AERO_ANALYSIS",
             "MASS_ESTIMATION",
@@ -109,18 +109,21 @@ class TestNetworkedGraphRoutedShape:
             "MISSION_CONFIG",
             "SIMULATION_RUN",
             "RESULTS_REVIEW",
-        ]
-        # Linear dependency chain: each node depends on the previous.
+        }
+        assert "TASK_CLASSIFIED" not in names
         deps = {name: dep for name, _desc, dep in todos}
-        assert deps["GEOMETRY_SETUP"] == ["TASK_CLASSIFIED"]
+        assert deps["GEOMETRY_SETUP"] == []
+        # AERO and MASS are PARALLEL — both depend only on GEOMETRY.
         assert deps["AERO_ANALYSIS"] == ["GEOMETRY_SETUP"]
-        assert deps["RESULTS_REVIEW"] == ["SIMULATION_RUN"]
-        assert deps["TASK_CLASSIFIED"] == []
+        assert deps["MASS_ESTIMATION"] == ["GEOMETRY_SETUP"]
+        assert deps["PROPULSION_SIZING"] == ["MASS_ESTIMATION"]
+        assert set(deps["MISSION_CONFIG"]) == {"AERO_ANALYSIS", "MASS_ESTIMATION"}
+        assert set(deps["RESULTS_REVIEW"]) == {"SIMULATION_RUN", "PROPULSION_SIZING"}
 
-    def test_concurrent_mode_seeds_graph_todos_with_deps(self):
-        """initialize() in graph+concurrent mode seeds the blackboard
-        TODO board from the graph DAG (deps gated), and only the root
-        node is available at start."""
+    def test_concurrent_dag_unlocks_aero_and_mass_in_parallel(self):
+        """initialize() seeds the DAG; only GEOMETRY is claimable at start,
+        and completing GEOMETRY makes BOTH AERO and MASS available at once
+        (the parallelism the design unlocks)."""
         from src.coordination.graph_definition import load_graph_from_yaml
         from src.coordination.strategies.networked import NetworkedStrategy
 
@@ -133,11 +136,38 @@ class TestNetworkedGraphRoutedShape:
                 "selection_mode": "concurrent_blackboard",
             },
         })
-        assert strat._blackboard is not None
-        all_names = {t.name for t in strat._blackboard.read_todos()}
-        assert "AERO_ANALYSIS" in all_names  # the full pipeline is seeded
-        avail = {t.name for t in strat._blackboard.read_available_todos()}
-        assert avail == {"TASK_CLASSIFIED"}  # only the root is claimable
+        bb = strat._blackboard
+        assert bb is not None
+        assert {t.name for t in bb.read_available_todos()} == {"GEOMETRY_SETUP"}
+        bb.claim_todo("GEOMETRY_SETUP", "agent_1")
+        bb.complete_todo("GEOMETRY_SETUP", "agent_1", "mesh ready")
+        # Both independent disciplines become claimable simultaneously.
+        assert {t.name for t in bb.read_available_todos()} == {
+            "AERO_ANALYSIS",
+            "MASS_ESTIMATION",
+        }
+
+    def test_release_claimed_todos_self_heals_dropped_claim(self):
+        """A node claimed but not completed (peer cut off mid-node) is
+        released back to pending between cycles so it can be retried."""
+        from src.coordination.graph_definition import load_graph_from_yaml
+        from src.coordination.strategies.networked import NetworkedStrategy
+
+        graph = load_graph_from_yaml("config/mdo_f25_graph.yaml")
+        strat = NetworkedStrategy()
+        strat.initialize({}, {
+            "_graph_def": graph,
+            "networked": {
+                "workflow_phases": [],
+                "selection_mode": "concurrent_blackboard",
+            },
+        })
+        bb = strat._blackboard
+        bb.claim_todo("GEOMETRY_SETUP", "agent_1")  # claimed, never completed
+        assert {t.name for t in bb.read_available_todos()} == set()  # blocked
+        released = bb.release_claimed_todos()
+        assert "GEOMETRY_SETUP" in released
+        assert {t.name for t in bb.read_available_todos()} == {"GEOMETRY_SETUP"}
 
     def test_shared_graph_yaml_still_loads(self):
         from src.coordination.graph_definition import load_graph_from_yaml

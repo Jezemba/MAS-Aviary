@@ -90,6 +90,9 @@ mdo_f25_graph:
         Output: TIGL_SESSION_ID, CPACS_FILE, MESH_BASE64,
         MESH_SIZE_BYTES.
       description: "Parametric geometry setup via TiGL"
+      # DATA-dependency DAG (for the concurrent networked executor):
+      # geometry is the root — it only needs the CPACS path from the task.
+      depends_on: []
       transitions:
         - condition: "execution_success == true"
           target: "AERO_ANALYSIS"
@@ -178,6 +181,8 @@ mdo_f25_graph:
         Output: SU2_SESSION_ID, CL_CRUISE, CD_CRUISE, L_OVER_D,
         SOLVER_CONVERGED.
       description: "CFD aerodynamic analysis via SU2 (Euler cruise)"
+      # Needs the mesh from GEOMETRY only — runs in PARALLEL with MASS.
+      depends_on: ["GEOMETRY_SETUP"]
       transitions:
         - condition: "execution_success == true"
           target: "MASS_ESTIMATION"
@@ -221,6 +226,9 @@ mdo_f25_graph:
         within [10,000, 100,000] kg. State "fail" otherwise.
         Output: OEM_KG, WING_MASS_KG, MTOM_KG, MASS_METHOD.
       description: "Structural mass estimation via CPACS-Mass"
+      # Needs the CPACS file from GEOMETRY only (NOT aero) — runs in
+      # PARALLEL with AERO.
+      depends_on: ["GEOMETRY_SETUP"]
       transitions:
         - condition: "execution_success == true"
           target: "PROPULSION_SIZING"
@@ -261,6 +269,9 @@ mdo_f25_graph:
         Output: PYCYCLE_SESSION_ID, SFC_CRUISE, NET_THRUST_LBF,
         CYCLE_CONVERGED.
       description: "Engine cycle sizing via pyCycle (HBTF)"
+      # Needs MTOM from MASS (Phase K-B Fn_DES sizing). Independent of
+      # AERO, so it can run alongside aero/mission.
+      depends_on: ["MASS_ESTIMATION"]
       transitions:
         - condition: "execution_success == true"
           target: "MISSION_CONFIG"
@@ -333,6 +344,10 @@ mdo_f25_graph:
         actual parameter values you used (so the next pass can see
         them), and SESSION_ID.
       description: "Mission configuration and parameter integration via Aviary"
+      # Needs SU2 CL/CD (Phase H) + mass wing-scaler (Phase K-A). The
+      # framework does NOT plumb propulsion output into the mission, so
+      # MISSION does not wait on PROPULSION.
+      depends_on: ["AERO_ANALYSIS", "MASS_ESTIMATION"]
       transitions:
         - condition: "execution_success == true"
           target: "SIMULATION_RUN"
@@ -375,6 +390,7 @@ mdo_f25_graph:
         State "success" if converged=true. State "fail" otherwise.
         Output: SESSION_ID + the result fields above.
       description: "Run Aviary mission and extract converged results"
+      depends_on: ["MISSION_CONFIG"]
       transitions:
         - condition: "execution_success == true"
           target: "RESULTS_REVIEW"
@@ -430,6 +446,10 @@ mdo_f25_graph:
 
         Include SESSION_ID in your output.
       description: "Constraint evaluation and MDO assessment"
+      # Waits for the mission result AND for propulsion to have run
+      # (propulsion's SFC/Fn feeds nothing downstream, so gate it here
+      # so the verdict still reflects a completed propulsion discipline).
+      depends_on: ["SIMULATION_RUN", "PROPULSION_SIZING"]
       transitions:
         - condition: "review_verdict == 'passed'"
           target: "COMPLETE"

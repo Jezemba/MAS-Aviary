@@ -1065,15 +1065,39 @@ class NetworkedStrategy(CoordinationStrategy):
         return None
 
     def _derive_graph_todos(self) -> list[tuple[str, str, list[str]]]:
-        """Build one TODO per agent-bearing graph state on the forward
-        (success) path, with depends_on = the previous agent node, so the
-        concurrent peers execute the graph as a dependency DAG. Routing-
-        only states (agent=None) are followed THROUGH but not turned into
-        TODOs. Records the ordered node names in self._graph_todo_order.
-        Returns (name, short_description, depends_on) tuples."""
+        """Build the TODO DAG from the graph.
+
+        Preferred path: if any state declares an explicit ``depends_on``
+        (true DATA dependencies), use those — this lets independent
+        disciplines run in PARALLEL (e.g. AERO and MASS both depend only
+        on GEOMETRY, not on each other). Only states that declare
+        depends_on participate (so classifier/routing states are
+        excluded automatically).
+
+        Fallback (no explicit deps declared, e.g. the aviary graph): walk
+        the forward/success edges and chain each agent node to its
+        immediate predecessor (a linear pipeline).
+
+        Records the ordered node names in self._graph_todo_order and
+        returns (name, short_description, depends_on) tuples."""
         if self._graph is None:
             return []
         states = self._graph.states
+
+        # --- Explicit-DAG mode -------------------------------------------
+        explicit = [
+            (name, s) for name, s in states.items()
+            if s.agent is not None and s.depends_on is not None
+        ]
+        if explicit:
+            todos = [
+                (name, s.description or name, list(s.depends_on))
+                for name, s in explicit
+            ]
+            self._graph_todo_order = [name for name, _s in explicit]
+            return todos
+
+        # --- Linear fallback (no explicit deps) --------------------------
         todos: list[tuple[str, str, list[str]]] = []
         seen_agent: list[str] = []
         cur = self._graph.initial_state
@@ -1096,43 +1120,39 @@ class NetworkedStrategy(CoordinationStrategy):
         self._graph_todo_order = [name for name, _desc, _dep in todos]
         return todos
 
-    def _build_graph_concurrent_task(self) -> str:
-        """Build the shared task for a parallel_run cycle in graph+concurrent
-        mode: the DAG protocol + the authoritative TASK + a per-node
-        playbook (each node's full agent_prompt) so a peer that claims a
-        node knows exactly what to do, including its signature MCP tool."""
+    def _build_graph_concurrent_task(self, available_names: list[str]) -> str:
+        """Build the shared task for one parallel_run cycle: the DAG
+        protocol + the authoritative TASK + a playbook containing ONLY the
+        currently-AVAILABLE nodes' instructions. Trimming the playbook to
+        available nodes (instead of all nodes every cycle) is the big token
+        saver — a peer only ever needs the node it can actually claim now."""
         parts: list[str] = [
             "You are one of several CONCURRENT peer engineers executing an "
-            "aircraft-design workflow that is defined as a DAG of TODO nodes "
-            "on the shared blackboard. Each turn:\n"
-            "  1. Call read_todos. Pick a node marked [AVAILABLE] (its "
-            "prerequisites are DONE). NEVER pick a node marked [BLOCKED] — "
-            "its inputs aren't ready.\n"
-            "  2. Call claim_todo(<name>). If it fails (another peer won it, "
-            "or it's blocked), read_todos again and claim a DIFFERENT "
-            "[AVAILABLE] node — do NOT retry the same one.\n"
-            "  3. Do EXACTLY the work in that node's NODE block below, "
+            "aircraft-design workflow defined as a DAG of TODO nodes on the "
+            "shared blackboard. Do this ONCE, then stop:\n"
+            "  1. Call claim_todo(<name>) for ONE of the AVAILABLE nodes "
+            "listed below. If it fails (another peer won it), claim a "
+            "DIFFERENT listed node. If every listed node is already claimed, "
+            "STOP immediately — do NOT loop on read_todos.\n"
+            "  2. Do EXACTLY the work in that node's NODE block below, "
             "INCLUDING actually calling its signature MCP tool (e.g. "
             "run_su2_solver for AERO_ANALYSIS). You MUST run the real tool — "
-            "do not merely describe or claim it.\n"
-            "  4. write_blackboard your key results, then "
-            "mark_todo_done(<name>, <short result>). Completing a node "
-            "unlocks the nodes that depend on it.\n"
-            "  5. If another node is now [AVAILABLE] and you have step "
-            "budget, claim and do it too. Otherwise stop.\n"
-            "Only mark a node done AFTER its signature tool actually "
-            "succeeded. If the tool fails, mark_todo_failed so a peer can retry."
+            "do not merely describe it.\n"
+            "  3. write_blackboard your key results, then "
+            "mark_todo_done(<name>, <short result>). Then STOP — your peers "
+            "and the next cycle handle the rest.\n"
+            "Mark a node done ONLY after its signature tool succeeded; if the "
+            "tool fails, call mark_todo_failed so another peer can retry."
         ]
+        if available_names:
+            parts.append("AVAILABLE NODES you may claim right now: " + ", ".join(available_names))
         if self._task:
             parts.append(
                 "TASK (authoritative — contains the absolute CPACS file path "
                 f"and mission spec):\n{self._task}"
             )
-        playbook = [
-            "NODE PLAYBOOK — find the node you claimed and follow its steps "
-            "exactly:"
-        ]
-        for name in getattr(self, "_graph_todo_order", []):
+        playbook = ["NODE PLAYBOOK — follow the steps for the node you claim:"]
+        for name in available_names:
             state = self._graph.states.get(name) if self._graph else None
             if state is None:
                 continue
@@ -1149,9 +1169,11 @@ class NetworkedStrategy(CoordinationStrategy):
     def _graph_concurrent_next_step(
         self, history: list, current_state: dict
     ) -> CoordinationAction:
-        """DAG-executor dispatch: fire all peers in parallel to claim and
-        execute AVAILABLE graph-node TODOs. Terminate when every node is
-        done or the cycle budget is exhausted."""
+        """DAG-executor dispatch: each cycle, fire only as many peers as
+        there are AVAILABLE nodes (so a linear stretch uses 1 peer and a
+        parallel branch like AERO+MASS uses 2), with a playbook trimmed to
+        those nodes. Terminate when every node is done or the cycle budget
+        is exhausted."""
         bb = self._blackboard
         if bb is not None and bb.all_todos_done():
             self._graph_complete = True
@@ -1171,13 +1193,36 @@ class NetworkedStrategy(CoordinationStrategy):
                     "cycles_dispatched": self._concurrent_runs_dispatched,
                 },
             )
+
+        # Self-heal dropped claims: between synchronous cycles no peer is
+        # actively holding a claim, so any still-'claimed' node is a peer
+        # that errored / was cut off mid-node (e.g. an API error). Release
+        # it back to pending so the next cycle can retry it.
+        if bb is not None:
+            bb.release_claimed_todos()
+
+        available = bb.read_available_todos() if bb is not None else []
+        available_names = [t.name for t in available]
+        if not available_names:
+            # Nothing claimable (everything done or in-flight claimed) — end.
+            self._graph_complete = True
+            return CoordinationAction(
+                action_type="terminate",
+                agent_name=None,
+                input_context="",
+                metadata={"reason": "no available graph TODOs"},
+            )
+        # Fire one peer per available node (capped at the peer count) so we
+        # exploit real parallelism without idle peers churning read_todos.
+        n_peers = max(1, min(len(available_names), len(self._agent_order)))
+        peers = list(self._agent_order)[:n_peers]
         self._concurrent_runs_dispatched += 1
         return CoordinationAction(
             action_type="parallel_run",
             agent_name=None,
-            input_context=self._build_graph_concurrent_task(),
+            input_context=self._build_graph_concurrent_task(available_names),
             metadata={
-                "peers": list(self._agent_order),
+                "peers": peers,
                 "turn": self._total_turns + 1,
                 "cycle": self._concurrent_runs_dispatched,
                 "selection_mode": "concurrent_blackboard",
