@@ -168,6 +168,32 @@ def _extract_complexity(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+# Matches a leading ``SESSION_ID: <value>`` line that the orchestrated
+# strategy prepends to worker input (strategies/orchestrated.py
+# _run_execution_phase). When that string is used as the graph's
+# overall task it propagates into every per-state worker prompt, and
+# the geometry worker calls open_cpacs(source=<that-uuid>) because the
+# UUID is the most path-like token it sees. Strip it here so the graph
+# task is clean; the session_id is preserved on the handler via
+# set_session_id() / the captured group below.
+_SESSION_ID_PREFIX_RE = re.compile(
+    r"^\s*SESSION_ID:\s*(\S+)\s*\n+",
+    re.IGNORECASE,
+)
+
+
+def _strip_session_id_prefix(task: str) -> tuple[str, str | None]:
+    """Remove a leading ``SESSION_ID: <value>`` line from a task string.
+
+    Returns ``(cleaned_task, session_id_or_None)``. If no prefix is
+    present, returns the task unchanged and ``None``.
+    """
+    m = _SESSION_ID_PREFIX_RE.match(task)
+    if not m:
+        return task, None
+    return task[m.end():], m.group(1)
+
+
 # ---------------------------------------------------------------------------
 # Review extraction
 # ---------------------------------------------------------------------------
@@ -349,7 +375,14 @@ class GraphRoutedHandler(ExecutionHandler):
         if not assignments:
             return messages
 
-        task = assignments[0].task
+        # The orchestrated strategy prepends "SESSION_ID: <uuid>" to
+        # worker input. If that lands at the top of the graph task it
+        # leaks into every per-state prompt and workers mistake the
+        # UUID for a file path (open_cpacs source). Strip it, and keep
+        # the session_id if we don't already have one from set_session_id.
+        task, leaked_sid = _strip_session_id_prefix(assignments[0].task)
+        if leaked_sid and not self._session_id:
+            self._session_id = leaked_sid
 
         # 1. Load and validate graph.
         graph = self._load_graph(agents)

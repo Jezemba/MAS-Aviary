@@ -665,6 +665,29 @@ class OrchestratedStrategy(CoordinationStrategy):
         assignment = assignments[self._execution_index]
         self._execution_index += 1
 
+        # Graph-routed handoff (mirrors the sequential strategy, which
+        # passes the RAW user task to the handler). The graph_routed
+        # handler runs the ENTIRE state machine from one overall task
+        # and drives each state with its OWN per-state prompt. Feeding
+        # it a per-agent assignment (e.g. mission_architect's "optimize
+        # parameters" task) pollutes every state's context: TASK_CLASSIFIED
+        # then sees an optimization task instead of a classify prompt,
+        # mission_architect optimizes instead of emitting a complexity
+        # word, no transition fires, and the graph stalls. Hand the
+        # handler the raw user task so its per-state prompts drive flow.
+        if self._graph_roles:
+            raw_task = current_state.get("task", "") or assignment["task"]
+            return CoordinationAction(
+                action_type="invoke_agent",
+                agent_name=assignment["agent_name"],
+                input_context=raw_task,
+                metadata={
+                    "phase": "execution",
+                    "assignment_index": self._execution_index,
+                    "graph_routed_raw_task": True,
+                },
+            )
+
         # Build input: task + previous agent output.
         if history:
             last = history[-1]
@@ -748,6 +771,23 @@ class OrchestratedStrategy(CoordinationStrategy):
         # Run next worker.
         assignment = assignments[self._execution_index]
         self._execution_index += 1
+
+        # Graph-routed handoff — see the matching block in
+        # _setup_only_execution. Hand the handler the RAW user task so
+        # its per-state prompts (not the orchestrator's per-agent task)
+        # drive the state machine.
+        if self._graph_roles:
+            raw_task = current_state.get("task", "") or assignment["task"]
+            return CoordinationAction(
+                action_type="invoke_agent",
+                agent_name=assignment["agent_name"],
+                input_context=raw_task,
+                metadata={
+                    "phase": "execution",
+                    "assignment_index": self._execution_index,
+                    "graph_routed_raw_task": True,
+                },
+            )
 
         if history:
             last = history[-1]

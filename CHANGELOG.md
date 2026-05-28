@@ -1,5 +1,76 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest) — Phase L Job 3 step 4 UNBLOCKED: orchestrated->graph_routed handoff fixed
+
+The two blockers documented in the previous entry are fixed. A
+dry-run (mdo_f25_orchestrated_graph_routed, setup_only) now walks
+the full coupled graph on the first pass with every discipline
+firing real tools:
+
+  TASK_CLASSIFIED (classify) -> GEOMETRY_SETUP (open_cpacs with the
+  REAL /home/.../D150_simple.xml path + generate_volume_mesh) ->
+  AERO_ANALYSIS (SU2 EULER converged, CD=0.01280504022, L/D=14.612,
+  SOLVER_CONVERGED) -> MASS_ESTIMATION (estimate_mass, OEM=35,725 kg)
+  -> PROPULSION_SIZING (run_cycle, CYCLE_CONVERGED, NET_THRUST=6,336
+  lbf) -> MISSION_CONFIG (configure_mission + set_aircraft_parameters)
+  -> SIMULATION_RUN (run_simulation converged, exit_code 0) ->
+  RESULTS_REVIEW (check_constraints -> VERDICT: MINOR_ISSUES).
+
+The MINOR_ISSUES verdict loops back to GEOMETRY_SETUP per the graph's
+transitions (review_verdict != 'passed' -> GEOMETRY_SETUP). The
+dry-run was stopped after the first complete pass — the fix
+validation (all 7 disciplines fire real tools end-to-end) was the
+goal; the loop-back is expected graph behavior, not a bug. A full
+run would iterate until PASSED or the complex budget (max_passes 25)
+is hit.
+
+Notably NET_THRUST=6,336 lbf is the Phase K-B coupled value
+(MTOM 78,126 kg x 0.0811 lbf/kg), confirming cross-discipline
+coupling fires under orchestrated+graph_routed too.
+
+Two fixes landed:
+
+1. **Raw-task handoff (the real fix).**
+   src/coordination/strategies/orchestrated.py — both
+   `_setup_only_execution` and `_active_execution` now detect the
+   graph_routed handler (`self._graph_roles`) and hand it the RAW
+   user task (`current_state["task"]`) instead of the orchestrator's
+   per-agent assignment. Previously the per-agent task (e.g.
+   mission_architect's "optimize the parameters") became the graph's
+   overall task and polluted every per-state prompt, so
+   TASK_CLASSIFIED saw an optimization task instead of a classify
+   prompt, mission_architect optimized instead of emitting a
+   complexity word, no transition fired, and the graph stalled. This
+   mirrors what the sequential strategy already does
+   (sequential.py: `input_context=self._task`) — which is why
+   sequential_graph_routed (step 3) worked and orchestrated didn't.
+   Tests: tests/test_orchestrated_strategy.py::
+   TestGraphRoutedRawTaskHandoff (2 cases — raw task passed when
+   _graph_roles set; per-agent assignment preserved otherwise).
+
+2. **SESSION_ID strip (defensive backstop).**
+   src/coordination/graph_routed_handler.py — `execute()` strips a
+   leading `SESSION_ID: <uuid>` line from the incoming task before
+   using it as the graph prompt (and captures the uuid into
+   `self._session_id` if not already set). Even with fix #1, this
+   guards against any future caller that prepends the session line.
+   The previous symptom was the geometry worker calling
+   open_cpacs(source=<session-uuid>) -> "File not found" -> infinite
+   GEOMETRY_SETUP retry loop. Tests:
+   tests/test_graph_routed_handler.py::TestStripSessionIdPrefix
+   (4 cases). Verified no-op for sequential_graph_routed (raw task
+   has no SESSION_ID prefix) so step 3 is byte-identical.
+
+Full unit suite: 1430 passed (+6 new tests), no regressions. The
+two backward-compat tests that assert the SESSION_ID prefix in the
+orchestrated per-agent path (test_design_state.py:166,
+test_mdo_f25_integration.py:422) still pass — fix #1 only changes
+the graph_routed branch, fix #2 only touches the handler.
+
+Remaining for step 4: a full live run to a PASSED verdict (deferred
+to confirm with user — graph_routed can iterate several ~4-min
+passes). Then step 5 (networked x graph_routed).
+
 ### 2026-05-27 (even later) — Phase L Job 3 step 4 WIRED (partial; blocked on SESSION_ID leak)
 
 `mdo_f25_orchestrated_graph_routed` is wired up — combination is

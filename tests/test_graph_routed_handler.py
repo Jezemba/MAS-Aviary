@@ -11,6 +11,7 @@ from src.coordination.graph_routed_handler import (
     _extract_error_type,
     _extract_execution_result,
     _extract_review_result,
+    _strip_session_id_prefix,
 )
 
 # ---- Mock agents -----------------------------------------------------------
@@ -784,6 +785,41 @@ class TestExtractionHelpers:
 
     def test_extract_review_failed(self):
         assert _extract_review_result("REVIEW_FAILED")["review_passed"] is False
+
+
+class TestStripSessionIdPrefix:
+    """The orchestrated strategy prepends ``SESSION_ID: <uuid>`` to
+    worker input. When that input becomes the graph's overall task it
+    leaks into every per-state worker prompt and the geometry worker
+    passes the UUID to open_cpacs as a file path. The handler strips
+    it on the way in."""
+
+    def test_strips_leading_session_id_line(self):
+        task, sid = _strip_session_id_prefix(
+            "SESSION_ID: 5baca407-bfda-493a-8234-baf03171fb56\n\n"
+            "Open the CPACS file at /tmp/foo.xml and mesh it."
+        )
+        assert sid == "5baca407-bfda-493a-8234-baf03171fb56"
+        assert task == "Open the CPACS file at /tmp/foo.xml and mesh it."
+        assert "SESSION_ID" not in task
+
+    def test_single_newline_separator(self):
+        task, sid = _strip_session_id_prefix("SESSION_ID: abc-123\nDo the work.")
+        assert sid == "abc-123"
+        assert task == "Do the work."
+
+    def test_no_prefix_returns_task_unchanged(self):
+        original = "Open the CPACS file at /tmp/foo.xml and mesh it."
+        task, sid = _strip_session_id_prefix(original)
+        assert sid is None
+        assert task == original
+
+    def test_session_id_not_at_start_is_left_alone(self):
+        # Only a LEADING prefix is stripped; a mid-text mention stays.
+        original = "Do the work.\nSESSION_ID: abc-123"
+        task, sid = _strip_session_id_prefix(original)
+        assert sid is None
+        assert task == original
 
     def test_extract_review_verdict_passed(self):
         assert _extract_review_result("PASSED")["review_verdict"] == "passed"

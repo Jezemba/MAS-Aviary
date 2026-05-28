@@ -362,6 +362,84 @@ class TestSetupOnlyExecution:
         assert s.phase == "done"
 
 
+class TestGraphRoutedRawTaskHandoff:
+    """When a graph_routed handler is in play (``_graph_roles`` set), the
+    orchestrated strategy must hand the handler the RAW user task, NOT
+    the orchestrator's per-agent assignment. The graph_routed handler
+    runs the whole state machine from one task and drives each state
+    with its own per-state prompt; feeding it a per-agent task (e.g.
+    mission_architect's "optimize parameters") stalls the graph at
+    TASK_CLASSIFIED. See orchestrated.py _setup_only_execution."""
+
+    def _setup_graph_routed(self, orchestrator_agent, base_config, worker_tools):
+        base_config["_worker_tools"] = worker_tools
+        # graph roles signal that a graph_routed handler is downstream.
+        base_config["_graph_roles"] = [
+            "mission_architect",
+            "geometry_engineer",
+        ]
+        agents = {"orchestrator": orchestrator_agent}
+        strategy = OrchestratedStrategy()
+        strategy.initialize(agents, base_config)
+
+        ctx = strategy.context
+        ctx.created_agents.extend(["mission_architect", "geometry_engineer"])
+        ctx.agents["mission_architect"] = "mock_ma"
+        ctx.agents["geometry_engineer"] = "mock_ge"
+        # The orchestrator's per-agent task — deliberately a rich,
+        # specific task that would pollute the graph's TASK_CLASSIFIED
+        # prompt if it leaked through.
+        ctx.assignments.extend(
+            [
+                {
+                    "agent_name": "mission_architect",
+                    "task": "Optimize the mission parameters: tune AR, area, sweep.",
+                    "assigned_at_turn": 1,
+                },
+                {
+                    "agent_name": "geometry_engineer",
+                    "task": "Open the CPACS file and mesh the wing.",
+                    "assigned_at_turn": 2,
+                },
+            ]
+        )
+        strategy._phase = "execution"
+        return strategy
+
+    def test_hands_raw_task_not_per_agent_assignment(
+        self, orchestrator_agent, base_config, worker_tools
+    ):
+        s = self._setup_graph_routed(orchestrator_agent, base_config, worker_tools)
+        raw_task = "Run the full MDO loop on /tmp/f25.xml and minimize fuel."
+        action = s.next_step([], {"task": raw_task})
+
+        assert action.action_type == "invoke_agent"
+        # The handler must receive the raw user task verbatim...
+        assert action.input_context == raw_task
+        # ...NOT the orchestrator's per-agent assignment text...
+        assert "Optimize the mission parameters" not in action.input_context
+        # ...and NOT a leaked SESSION_ID prefix.
+        assert "SESSION_ID" not in action.input_context
+        assert action.metadata.get("graph_routed_raw_task") is True
+
+    def test_non_graph_routed_still_uses_assignment_task(
+        self, strategy_with_tools
+    ):
+        # Regression guard: without _graph_roles, the normal per-agent
+        # assignment path is preserved (assignment task in context).
+        ctx = strategy_with_tools.context
+        ctx.created_agents.append("w1")
+        ctx.agents["w1"] = "mock"
+        ctx.assignments.append(
+            {"agent_name": "w1", "task": "Do the specific thing", "assigned_at_turn": 1}
+        )
+        strategy_with_tools._phase = "execution"
+        action = strategy_with_tools.next_step([], {"task": "raw task"})
+        assert action.agent_name == "w1"
+        assert "Do the specific thing" in action.input_context
+        assert action.metadata.get("graph_routed_raw_task") is None
+
+
 # ---- Phase 2: Execution (active) --------------------------------------------
 
 
