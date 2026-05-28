@@ -1,5 +1,84 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+4) — Phase L Job 3 step 5: networked_graph_routed wired + walked (aero OMITTED)
+
+`mdo_f25_networked_graph_routed` is wired (the 5th and final Job 3
+combo). The networked strategy drives the shared mdo_f25 graph
+itself (networked.py _graph_driven_next_step, one state per turn,
+bypass_handler=True), building each worker's context from the
+per-state agent_prompt ONLY — so unlike orchestrated it has no
+task-pollution / SESSION_ID leak (open_cpacs used the real path
+on the first try). Plus feedback-loop parity: _advance_graph_state
+captures RECOMMENDED_CHANGE and the {recommended_changes}
+placeholder resolves in the networked path (targeted replace, since
+the literal JSON braces defeat str.format).
+
+Dry-run (wandb [`xugsxcx8`](https://wandb.ai/jessicae/mas-aviary-stat/runs/xugsxcx8)):
+the graph walked all states end-to-end TASK_CLASSIFIED ->
+GEOMETRY_SETUP -> AERO_ANALYSIS -> MASS_ESTIMATION ->
+PROPULSION_SIZING -> MISSION_CONFIG -> SIMULATION_RUN ->
+RESULTS_REVIEW -> COMPLETE, terminated VERDICT: PASSED,
+fuel 12,794.88 kg (+5.7%), gtow 74,197.83 kg, completed_total=1.
+
+**BUT — honest caveat: the aero discipline did NOT actually run.**
+eval_result was `omission` (the harness caught it). Discipline
+signature-tool tally:
+
+| Discipline | Signature tool | Fired? |
+|---|---|---|
+| geometry | open_cpacs + generate_volume_mesh | YES |
+| aero | run_su2_solver | **NO (0 calls)** |
+| structures | estimate_mass | YES |
+| propulsion | run_cycle | YES |
+| mission | configure_mission + set_aircraft_parameters | YES |
+| simulation | run_simulation | YES |
+| results | check_constraints | YES |
+
+6/7 disciplines fired their signature tool; AERO was omitted. The
+aero peer (agent_1) over-coordinated — it posted an
+`aero_analysis_claim` to the blackboard, called create_su2_session
+twice, then spent its step budget on repeated read_blackboard calls
+(~15 steps, 520k tokens) and NEVER called run_su2_solver. The graph
+advanced AERO_ANALYSIS -> MASS_ESTIMATION on `execution_success ==
+true` derived from the peer's text claim, not real CFD. The integrator
+then issued PASSED on the fuel number (the v11 trap), but the eval
+harness flagged the omission.
+
+Why the fuel still landed at +5.7% despite no CFD: the MISSION_CONFIG
+fuselage pin (4.06/3.76) + the mass (K-A) and propulsion (K-B)
+couplings carried it, and Aviary used its default cruise CL since
+Phase H (SU2 CL/CD injection) had nothing to inject (read_history_csv
+never ran).
+
+**Characterization, not a quick fix:** this is inherent to the
+networked combo — it is intentionally structure-less (peers
+coordinate freely via blackboard, no enforcement that each completes
+its heavy tool). The graph_routed handler combos (sequential/
+orchestrated) enforce one agent per state through their step budget;
+the networked rotation lets a peer burn its budget on coordination.
+Reliable SU2 execution under networked would need either a per-state
+step-budget guard that reserves steps for the signature tool, or a
+"you MUST call run_su2_solver before claiming done" gate in the
+AERO_ANALYSIS prompt for the networked framing. Deferred — noted as
+a follow-up. The combo is wired, the graph walks, and the framework
+is correct; the gap is networked agent behavior on the one
+long-running discipline.
+
+Side-by-side, all 5 Job 3 combos:
+
+| Combo | wandb | fuel_kg | Status |
+|---|---|---|---|
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | step 1 verified (all disciplines) |
+| `orchestrated_staged_pipeline` | 7ngitswj | 13,141.99 | step 2 verified (all disciplines) |
+| `sequential_graph_routed` | 81w57h3g | 12,755.86 | step 3 verified (all disciplines) |
+| `orchestrated_graph_routed` | r4svbo5u | 12,755.86 | step 4 verified (all disciplines) |
+| `networked_graph_routed` | xugsxcx8 | 12,794.88 | step 5 wired + walks + PASSED, but aero OMITTED (eval=omission) |
+
+Unit suite: 1436 passed, +4 networked wiring tests. All 5 Job 3
+coordination combinations are now wired. Steps 1-4 are
+discipline-verified; step 5 walks end-to-end but needs a networked
+behavior fix for reliable SU2 execution (follow-up).
+
 ### 2026-05-27 (latest+3) — IMPORTANT: geometry stage is NOT coupled (tigl-mcp morph is a no-op)
 
 While scoping the "genuine MDO closure" (feed the integrator's
