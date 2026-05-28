@@ -1,5 +1,87 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+1) — Phase L Job 3 step 4 discipline-verified; graph optimization-loop feedback gap found
+
+Ran mdo_f25_orchestrated_graph_routed to a full first pass (the two
+handoff fixes from the previous entry in place). Pass 1 walked every
+discipline with real tools and produced a real, constraint-satisfying
+result:
+
+- GEOMETRY: open_cpacs (real path) + generate_volume_mesh
+- AERO: SU2 EULER converged, CL=0.1871, CD=0.0128, L/D=14.61
+- MASS: estimate_mass, OEM≈35,725 kg
+- PROPULSION: run_cycle converged, Fn=6,336 lbf (Phase K-B coupled
+  from MTOM, confirming cross-discipline coupling fires here)
+- MISSION: configure_mission(pax=200) + set_aircraft_parameters
+- SIM: run_simulation converged, fuel=13,840.28 kg, gtow=80,318.52 kg
+- RESULTS: check_constraints 2/2 satisfied (fuel ≤ 15,000 margin
+  1,160 kg; gtow ≤ 90,000 margin 9,681 kg), VERDICT: MINOR_ISSUES
+
+VERDICT reasoning (from the integrator's own output): gtow_gap =
+-6.28% (GOOD), fuel_gap = +14.38% above the 12,100 kg F25 target
+(POOR, >10%). All hard constraints pass, but fuel is above the
+target band, so the integrator correctly judged "valid but
+improvable" and the graph routed MINOR_ISSUES -> GEOMETRY_SETUP for
+another optimization pass. The loop STRUCTURE works as designed.
+
+**Finding (the reason the full multi-pass run was stopped): the
+optimization loop has no feedback path.** Every pass is
+deterministic and identical:
+- The integrator emits a RECOMMENDED_CHANGE (e.g. "decrease
+  Aircraft.Wing.SWEEP, increase Aircraft.Wing.ASPECT_RATIO to
+  improve L/D").
+- But MISSION_CONFIG's per-state prompt pins fixed parameters
+  (AR=11, AREA=130.1, SWEEP=25, SCALE_FACTOR=1.3), so the next pass
+  re-applies the SAME values, re-runs SU2/Aviary, and lands the
+  SAME fuel=13,840 kg, the SAME MINOR_ISSUES verdict.
+- Net: the graph loops to the handler's 50-transition safety valve
+  (~6 passes) without the design ever evolving, and never reaches
+  PASSED. So a full run would burn ~24 min recording 6 identical
+  passes.
+
+This affects all *_graph_routed combos that don't land PASSED on
+pass 1. Step 3 (sequential_graph_routed, wandb 81w57h3g) only
+avoided it by happening to land fuel +5.4% (under the threshold)
+on pass 1, so its integrator said PASSED and it terminated cleanly.
+The feedback gap was always there; step 3 just never triggered the
+loop.
+
+**Follow-up task (not done this session):** thread the integrator's
+RECOMMENDED_CHANGE into the next pass so the design actually
+evolves. Sketch of the work:
+- The graph_routed handler already extracts review_verdict from the
+  RESULTS_REVIEW output (graph_routed_handler.py _extract_review_result
+  / _update_state_from_output). Extend it to also parse
+  RECOMMENDED_CHANGE (param -> direction) into _state_dict.
+- MISSION_CONFIG's agent_prompt currently hard-pins AR/AREA/SWEEP.
+  Make it consume a {recommended_changes} placeholder from
+  _state_dict (the handler already does .format(**self._state_dict)
+  on agent_prompts, so a placeholder will resolve) so each pass
+  nudges parameters per the last verdict instead of resetting them.
+- Guard the AR>12 Newton-solver limit and Aviary's 200-pax cap so
+  the nudges stay in the reliable envelope.
+- Then a full run can converge MINOR_ISSUES -> PASSED across passes
+  and terminate at COMPLETE with an improving fuel trajectory.
+
+Step 4 status: combination wired + both handoff bugs fixed + every
+discipline verified firing real tools on a complete pass. The
+multi-pass convergence is deferred to the feedback-loop follow-up.
+
+Side-by-side (step 4 marked discipline-verified, single pass):
+
+| Combo | wandb | fuel_kg | Status |
+|---|---|---|---|
+| `sequential_iterative_feedback` | iepdeu70 | 12,755.86 | baseline |
+| `sequential_staged_pipeline` | u77aj8bg | 12,532.68 | step 1 verified |
+| `orchestrated_staged_pipeline` | 7ngitswj | 13,141.99 | step 2 verified |
+| `sequential_graph_routed` | 81w57h3g | 12,755.86 | step 3 verified (PASSED pass 1) |
+| `orchestrated_graph_routed` | (pass-1) | 13,840.28 | step 4 discipline-verified; multi-pass convergence pending feedback-loop follow-up |
+| `orchestrated_iterative_feedback` | fup5hh0h | 13,206.34 | prior baseline |
+| `networked_iterative_feedback` | 4o22y281 | 11,615.86 | prior baseline |
+
+Remaining: step 4 feedback-loop follow-up (above), then step 5
+(networked x graph_routed).
+
 ### 2026-05-27 (latest) — Phase L Job 3 step 4 UNBLOCKED: orchestrated->graph_routed handoff fixed
 
 The two blockers documented in the previous entry are fixed. A
