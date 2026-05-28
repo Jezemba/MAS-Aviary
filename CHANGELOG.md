@@ -6,6 +6,18 @@ Closes the feedback-loop follow-up from the previous entry, and with
 it step 4 (mdo_f25_orchestrated_graph_routed) is now verified
 end-to-end with a natural PASSED -> COMPLETE termination.
 
+> **NOTE / TODO (revisit later):** MISSION_CONFIG currently hard-pins
+> the design BASELINE in its prompt — AR=11.0, AREA=130.1, SWEEP=25,
+> TAPER=0.278, fuselage MAX_HEIGHT=4.06 / MAX_WIDTH=3.76,
+> SCALE_FACTOR=1.3. These are correct F25 values, but pinning them
+> means the pipeline STARTS from a near-optimal design rather than
+> discovering it. The fuselage pin in particular is doing the heavy
+> lifting (it's what makes pass 1 PASS). Cleaner long-term: let the
+> GEOMETRY stage drive fuselage/wing dims from the CPACS file so the
+> mission stage isn't hard-coding them. Tracked as a follow-up; the
+> feedback loop below is what lets the design EVOLVE from a
+> non-optimal start, so the pin is a convenience, not a dependency.
+
 wandb run [`r4svbo5u`](https://wandb.ai/jessicae/mas-aviary-stat/runs/r4svbo5u):
 - fuel_burned_kg = 12,755.86 (+5.4% vs F25 spec 12,100 kg)
 - gtow_kg = 74,154.84 (-13.5% vs 85,700)
