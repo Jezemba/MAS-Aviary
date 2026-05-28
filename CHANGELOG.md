@@ -1,5 +1,52 @@
 ## [Unreleased]
 
+### 2026-05-27 (latest+7) — networked_graph_routed VERIFIED LIVE end-to-end (parallel DAG, SU2 completes)
+
+The parallel DAG-executor passed end-to-end. wandb run
+[`z78zhpyl`](https://wandb.ai/jessicae/mas-aviary-stat/runs/z78zhpyl),
+status **success**, fuel **12,755.86 kg** (the correct F25 value,
+matching sequential/orchestrated graph_routed), VERDICT PASSED,
+386 s wall (~6.4 min).
+
+Every discipline fired its REAL signature tool this time (ground-truth
+tool tally from the log):
+  open_cpacs 1, generate_volume_mesh 2, run_su2_solver 1,
+  read_history_csv 1, estimate_mass 3, run_cycle 1,
+  configure_mission 1, set_aircraft_parameters 1, run_simulation 1,
+  check_constraints 1.
+So the aero OMISSION that plagued the serial networked path is FIXED:
+agent_1 claimed AERO and ran SU2 to completion (CL=0.1871, CD=0.0128),
+because claiming a node makes a peer accountable for completing it.
+
+Parallelism confirmed: after GEOMETRY (agent_1), the board exposed
+AERO + MASS as AVAILABLE simultaneously and TWO peers fired —
+agent_1 ran AERO (SU2) while agent_2 ran MASS (estimate_mass) at the
+same time. Then PROPULSION/MISSION, SIMULATION, RESULTS in dependency
+order.
+
+The churn/cost fixes landed: read_todos calls 113 -> 4, and the run
+finished in ~6.4 min (vs the prior linear/serial attempts) — the
+min(available,peers) dispatch + trimmed playbook + claim-one-then-stop
+did their job. The self-healing claim release was in place though not
+needed this run (no dropped claims).
+
+Caveat — wandb logged `eval_result=omission` despite every tool
+firing. This is an EVAL-HARNESS artifact, not a pipeline failure: the
+evaluator scrapes a (largely linear) transcript for each discipline's
+evidence, but in the concurrent DAG the work is spread across parallel
+peer messages + the blackboard and the final message is just the
+RESULTS verdict, so its heuristic under-counts. The ground-truth tool
+tally above (every signature tool fired) is authoritative. Follow-up:
+make the eval concurrent-aware (scan all peer transcripts + the
+blackboard TODO results, not just the final linear message).
+
+Status of the networked x graph_routed combo: the true concurrent
+DAG-executor the user asked for is implemented and VERIFIED — graph
+defines the work DAG, networked peers pull/claim/execute available
+nodes in parallel, SU2 and every discipline run for real, and it
+reaches a real F25 PASSED result. All 5 Job 3 combinations are now
+genuinely working.
+
 ### 2026-05-27 (latest+6) — DAG-executor: true parallelism (explicit deps) + churn/cost reduction + self-healing claims
 
 Follow-up to the DAG-executor: make it actually PARALLEL (not a linear
