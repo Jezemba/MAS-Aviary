@@ -1,5 +1,7 @@
 llm:
-  model_id: "anthropic/claude-sonnet-4-20250514"
+  # 2026-06-24: bumped from claude-sonnet-4-20250514 (retired) to
+  # claude-sonnet-4-6 — same tier, same pricing, currently available.
+  model_id: "anthropic/claude-sonnet-4-6"
   backend: "litellm"
   max_new_tokens: 4096
   # 2026-05-26: switched back to Claude from openai/gpt-4o after
