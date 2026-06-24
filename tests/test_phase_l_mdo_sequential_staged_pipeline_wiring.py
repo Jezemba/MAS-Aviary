@@ -14,8 +14,11 @@ What this test covers:
   1. The combo `mdo_f25_sequential_staged_pipeline` is registered in
      `ALL_COMBINATIONS` with `org_structure="sequential"` +
      `handler="staged_pipeline"`.
-  2. `_MDO_F25_STAGED_HANDLER_CONFIG` resolves to the new
-     `config/mdo_f25_staged_pipeline.yaml` pipeline file.
+  2. `_MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL` resolves to the
+     `config/mdo_f25_staged_pipeline_sequential.yaml` pipeline file
+     (the short-prompt flavor; the long-prompt
+     `config/mdo_f25_staged_pipeline.yaml` is used by the
+     orchestrated_staged_pipeline combo instead).
   3. The pipeline YAML parses cleanly: 7 stages with valid
      completion_criteria types, brief stage_prompts, names matching
      the 7-agent template in `config/mdo_f25_sequential_agents.yaml`.
@@ -113,7 +116,7 @@ class TestPipelineYamlShape:
     def test_pipeline_yaml_parses_with_seven_stages(self):
         from src.coordination.stage_definition import load_pipeline_from_yaml
 
-        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline.yaml")
+        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline_sequential.yaml")
         names = [s.name for s in pipeline.stages]
         assert names == _EXPECTED_STAGE_NAMES, (
             f"Pipeline stage names must match the 7-agent template in "
@@ -126,7 +129,7 @@ class TestPipelineYamlShape:
             load_pipeline_from_yaml,
         )
 
-        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline.yaml")
+        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline_sequential.yaml")
         for stage in pipeline.stages:
             ctype = stage.completion_criteria.type
             assert ctype in VALID_CRITERIA_TYPES, (
@@ -137,7 +140,7 @@ class TestPipelineYamlShape:
     def test_every_stage_has_nonempty_stage_prompt(self):
         from src.coordination.stage_definition import load_pipeline_from_yaml
 
-        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline.yaml")
+        pipeline = load_pipeline_from_yaml("config/mdo_f25_staged_pipeline_sequential.yaml")
         empty = [s.name for s in pipeline.stages if not s.stage_prompt.strip()]
         assert not empty, (
             f"All stages must carry a brief stage_prompt (the handler "
@@ -146,12 +149,12 @@ class TestPipelineYamlShape:
 
     def test_staged_handler_config_registered(self):
         from src.runners.batch_runner import (
-            _MDO_F25_STAGED_HANDLER_CONFIG,
+            _MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL,
             ALL_COMBINATIONS,
         )
 
-        assert _MDO_F25_STAGED_HANDLER_CONFIG["pipeline_path"] == (
-            "config/mdo_f25_staged_pipeline.yaml"
+        assert _MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL["pipeline_path"] == (
+            "config/mdo_f25_staged_pipeline_sequential.yaml"
         )
         names = [c.name for c in ALL_COMBINATIONS]
         assert "mdo_f25_sequential_staged_pipeline" in names
@@ -163,7 +166,7 @@ class TestPipelineYamlShape:
         assert combo.org_structure == "sequential"
         assert combo.handler == "staged_pipeline"
         assert combo.handler_config["pipeline_path"] == (
-            "config/mdo_f25_staged_pipeline.yaml"
+            "config/mdo_f25_staged_pipeline_sequential.yaml"
         )
         assert combo.strategy_config["pipeline_template"] == "mdo_f25"
 
@@ -182,7 +185,7 @@ def _build_staged_coordinator():
     from src.coordination.coordinator import Coordinator
     from src.logging.logger import InstrumentationLogger
     from src.runners.batch_runner import (
-        _MDO_F25_STAGED_HANDLER_CONFIG,
+        _MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL,
         _MDO_F25_STRATEGY_CONFIGS,
         _build_handler,
     )
@@ -201,7 +204,7 @@ def _build_staged_coordinator():
     # Override the handler to staged_pipeline (the coord YAML defaults
     # to iterative_feedback — same swap batch_runner.py does at
     # _execute_combination).
-    handler = _build_handler("staged_pipeline", _MDO_F25_STAGED_HANDLER_CONFIG)
+    handler = _build_handler("staged_pipeline", _MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL)
     assert handler is not None
     coordinator.execution_handler = handler
     coordinator.config["execution_handler"] = "staged_pipeline"

@@ -90,21 +90,46 @@ _AVIARY_STAGED_HANDLER_CONFIG: dict = {
 # shape as the aviary version but points at the F25 stage definitions
 # and adds the F25-specific completion-signal keywords (geometry, aero,
 # structures, propulsion stages each emit their own marker).
+#
+# Two flavors of the pipeline YAML exist because the staged_pipeline
+# handler APPENDS stage_prompt to the agent's existing system prompt:
+#  * Sequential agents already have detailed roles from
+#    config/mdo_f25_sequential_agents.yaml, so short stage_prompts work.
+#  * Orchestrated workers are spawned ad-hoc by the orchestrator without
+#    those detailed roles — they need long stage_prompts that carry the
+#    discipline knowledge and pinned tool configs (e.g. SU2 Euler cruise).
+# Mixing them broke sequential_staged on the merged branch (the long
+# prompts overflow the sequential agent's context and cause it to stop
+# before run_simulation). Each flavor now has its own handler config.
+_MDO_F25_STAGED_VERDICT_PATTERNS = [
+    "VERDICT",
+    "TASK_COMPLETE",
+    "GEOMETRY_SET",
+    "SOLVER_CONVERGED",
+    "OEM_KG",
+    "SFC_CRUISE",
+    "CONVERGED",
+    "COMPLETE",
+    "CONTINUE",
+    "RETRY",
+]
+
+# Long-prompt flavor: used by orchestrated_staged_pipeline. Each
+# stage_prompt is self-contained (workers don't inherit roles).
 _MDO_F25_STAGED_HANDLER_CONFIG: dict = {
     "pipeline_path": "config/mdo_f25_staged_pipeline.yaml",
     "context_mode": "all_stages",
-    "verdict_patterns": [
-        "VERDICT",
-        "TASK_COMPLETE",
-        "GEOMETRY_SET",
-        "SOLVER_CONVERGED",
-        "OEM_KG",
-        "SFC_CRUISE",
-        "CONVERGED",
-        "COMPLETE",
-        "CONTINUE",
-        "RETRY",
-    ],
+    "verdict_patterns": _MDO_F25_STAGED_VERDICT_PATTERNS,
+}
+
+# Short-prompt flavor: used by sequential_staged_pipeline. Stage prompts
+# are reminders; the role detail lives in mdo_f25_sequential_agents.yaml
+# and is inherited by each sequential agent. This is the verified-working
+# Line B configuration restored after the Line A merge regressed it.
+_MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL: dict = {
+    "pipeline_path": "config/mdo_f25_staged_pipeline_sequential.yaml",
+    "context_mode": "all_stages",
+    "verdict_patterns": _MDO_F25_STAGED_VERDICT_PATTERNS,
 }
 
 ALL_COMBINATIONS: list[CombinationConfig] = [
@@ -185,9 +210,11 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # staged_pipeline handler advances through the same 7 stages
         # without the iterative_feedback per-stage retry-on-warnings
         # loop — each stage runs once, observational completion check,
-        # then advance regardless.
+        # then advance regardless. Uses the SHORT-PROMPT staged YAML
+        # because sequential agents inherit their role definitions
+        # from mdo_f25_sequential_agents.yaml.
         strategy_config={"pipeline_template": "mdo_f25"},
-        handler_config=_MDO_F25_STAGED_HANDLER_CONFIG,
+        handler_config=_MDO_F25_STAGED_HANDLER_CONFIG_SEQUENTIAL,
     ),
     CombinationConfig(
         "mdo_f25_orchestrated_staged_pipeline",
