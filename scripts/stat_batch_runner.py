@@ -461,11 +461,14 @@ def run_stat_batch(
     print(f"Output: {out_path}/")
     print()
 
-    # Initialize wandb + weave
+    # Initialize wandb + weave. Project name comes from $WANDB_PROJECT so a
+    # batch can be directed into a separate project without source edits;
+    # falls back to the long-standing default for existing workflows.
+    wb_project = os.environ.get("WANDB_PROJECT", "mas-aviary-stat")
     wb_run = None
     if HAS_WANDB:
         wb_run = wandb.init(
-            project="mas-aviary-stat",
+            project=wb_project,
             name=f"stat_{n_repeats}x{len(combos)}_{int(time.time())}",
             config={
                 "n_repeats": n_repeats,
@@ -478,7 +481,7 @@ def run_stat_batch(
         )
     # Weave auto-traces all smolagents agent.run() calls
     if HAS_WEAVE:
-        weave.init(project_name="mas-aviary-stat")
+        weave.init(project_name=wb_project)
 
     # Load MCP tools once for programmatic pre-hook calls
     print("Loading MCP tools for session setup...")
