@@ -24,11 +24,14 @@ from event_parser import Event, parse_lines
 from narration import TOOL_DESCRIPTIONS
 
 
-# Default cached run — Run #6 from 2026-05-11, the first successful one.
-DEFAULT_REPLAY_LOG = Path(
-    "/tmp/claude-1000/-home-aipexws3-Jessica/c51a1a43-21f4-42a2-a966-"
-    "36744abee873/tasks/bgzuxc13v.output"
-)
+# Default cached run - Run #6, the canonical replay the design references. Saved
+# in-repo under logs/ so replay works without any temp files (the old /tmp
+# task-output path was ephemeral and has since been cleaned up). Its saved log
+# is truncated just before the terminating DONE line, so replay produces a clean
+# seven-stage flow but no final `result` - Live doesn't need one, and real live
+# runs emit DONE. For a complete run with a terminal result, point this at
+# logs/mdo_f25_claude_run_003.log instead.
+DEFAULT_REPLAY_LOG = Path(__file__).resolve().parent.parent / "logs" / "mdo_f25_claude_run_006.log"
 
 
 # Baseline pacing in seconds per event kind (before /speed scaling).
@@ -87,7 +90,7 @@ async def replay(
                 yield Event(
                     kind="narration",
                     agent=ev.agent,
-                    text="  ⏳ *working on it — this is a longer step…*",
+                    text="  ⏳ *working on it - this is a longer step…*",
                 )
                 await asyncio.sleep(2.5 / speed)
             else:

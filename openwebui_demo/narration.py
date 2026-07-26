@@ -1,13 +1,13 @@
 """Plain-language narration of the MAS-Aviary pipeline events.
 
-The runner's stdout speaks fluent "engineer with a debugger" — tool
+The runner's stdout speaks fluent "engineer with a debugger" - tool
 names, JSON args, raw observation dicts. The narrator translates each
 of those into a sentence a non-expert can follow:
 
   raw   :  Calling tool: 'generate_volume_mesh' with arguments: {...}
   raw   :  Observations: {"format": "su2", "mesh_size_bytes": 21240076, ...}
   narrated:
-            🛠️  Building a 3-D CFD mesh — TiGL exports the wing as STL,
+            🛠️  Building a 3-D CFD mesh - TiGL exports the wing as STL,
                 gmsh wraps it in a far-field box and tetrahedralizes the
                 volume. Typically takes 30-90 s.
             ✅ Mesh built: 351,391 cells (~20 MB)
@@ -44,7 +44,7 @@ AGENT_INTROS: dict[str, str] = {
         "left on disk, run a FLOPS-based mass estimation, and report the "
         "operating empty mass and the wing/fuselage component masses. "
         "OpenAeroStruct is the higher-fidelity option but it tends to "
-        "NaN on the D150 baseline — I fall back to FLOPS-only."
+        "NaN on the D150 baseline - I fall back to FLOPS-only."
     ),
     "propulsion_analyst": (
         "I'm the **Propulsion Analyst**. I build a high-bypass turbofan "
@@ -62,7 +62,7 @@ AGENT_INTROS: dict[str, str] = {
     ),
     "simulation_executor": (
         "I'm the **Simulation Executor**. I trigger Aviary's SLSQP "
-        "trajectory optimizer — it varies throttle / altitude / speed "
+        "trajectory optimizer - it varies throttle / altitude / speed "
         "to minimize fuel burn over the mission, subject to range and "
         "climb constraints. Typical run ≈ 40 s, max 200 iterations."
     ),
@@ -95,33 +95,33 @@ AGENT_HANDOFFS: dict[str, str] = {
 TOOL_DESCRIPTIONS: dict[str, tuple[str, str]] = {
     # tigl-mcp
     "open_cpacs":               ("📂 Loading the aircraft definition from CPACS (the XML schema that describes wings, fuselage, engines parametrically).", ""),
-    "get_configuration_summary":("🔍 Inspecting the top-level structure — how many wings, fuselages, engines does this aircraft have?", ""),
+    "get_configuration_summary":("🔍 Inspecting the top-level structure - how many wings, fuselages, engines does this aircraft have?", ""),
     "list_geometric_components":("🔍 Listing every geometric component (wings, fuselages, rotors, engines)…", ""),
-    "get_wing_summary":         ("📏 Reading the wing geometry — span, sweep, area, aspect ratio, MAC.", ""),
-    "get_fuselage_summary":     ("📏 Reading the fuselage geometry — length, cross-section, volume.", ""),
+    "get_wing_summary":         ("📏 Reading the wing geometry - span, sweep, area, aspect ratio, MAC.", ""),
+    "get_fuselage_summary":     ("📏 Reading the fuselage geometry - length, cross-section, volume.", ""),
     "get_high_level_parameters":("📋 Asking TiGL for the current high-level design parameters of this component…", ""),
-    "set_high_level_parameters":("✏️  Recording the design intent (wing span, sweep, etc.). TiGL stores these as session annotations — the underlying geometry doesn't morph; the mesh below reflects the baseline.", ""),
+    "set_high_level_parameters":("✏️  Recording the design intent (wing span, sweep, etc.). TiGL stores these as session annotations - the underlying geometry doesn't morph; the mesh below reflects the baseline.", ""),
     "get_component_metadata":   ("📋 Looking up component metadata (type, symmetry plane, indices)…", ""),
     "intersect_components":     ("✂️  Computing the intersection curve between two geometric components…", ""),
     "intersect_with_plane":     ("✂️  Cutting the component with a plane and sampling the resulting curve…", ""),
     "sample_component_surface": ("🎯 Sampling 3-D points on the component's surface…", ""),
-    "export_component_mesh":    ("📤 Exporting a surface-only mesh (STL) for visualization — note: surface meshes are NOT directly solvable by SU2.", ""),
+    "export_component_mesh":    ("📤 Exporting a surface-only mesh (STL) for visualization - note: surface meshes are NOT directly solvable by SU2.", ""),
     "export_configuration_cad": ("📤 Exporting the full aircraft as STEP (CAD)…", ""),
-    "generate_volume_mesh":     ("🛠️  Building a 3-D CFD mesh — TiGL exports the wing as STL, gmsh wraps it in a far-field box and tetrahedralizes the volume. Usually 30-90 s.", "slow"),
+    "generate_volume_mesh":     ("🛠️  Building a 3-D CFD mesh - TiGL exports the wing as STL, gmsh wraps it in a far-field box and tetrahedralizes the volume. Usually 30-90 s.", "slow"),
     "close_cpacs":              ("💾 Closing the CPACS session and flushing the file to disk so mass-mcp can read it.", ""),
 
     # su2-mcp
     "create_su2_session":       ("🆕 Initializing the SU2 CFD workspace (config file, scratch dir).", ""),
     "set_mesh":                 ("📥 Loading the volume mesh into the SU2 session.", ""),
-    "analyze_mesh":             ("🔍 Running mesh diagnostics — element counts, marker names, quality checks.", ""),
+    "analyze_mesh":             ("🔍 Running mesh diagnostics - element counts, marker names, quality checks.", ""),
     "generate_mesh_from_step":  ("🛠️  Alternative mesh path: meshing directly from a CAD STEP file.", ""),
     "generate_deformed_mesh":   ("🛠️  Running SU2_DEF to produce a deformed mesh (FFD / control-point updates).", ""),
-    "update_config_entries":    ("⚙️  Configuring SU2 — Mach, angle of attack, Reynolds, solver type, freestream P/T, boundary markers.", ""),
+    "update_config_entries":    ("⚙️  Configuring SU2 - Mach, angle of attack, Reynolds, solver type, freestream P/T, boundary markers.", ""),
     "parse_config":             ("📋 Reading back the parsed SU2 configuration…", ""),
     "get_config_text":          ("📋 Reading the raw config text…", ""),
     "get_valid_config_options": ("📋 Looking up SU2 v8.3 valid configuration options…", ""),
     "get_su2_status":           ("🩺 Checking SU2 binary availability on the host.", ""),
-    "run_su2_solver":           ("🌬️  Running SU2_CFD — Euler equations on the volume mesh, 200 iterations. Typically 1-3 minutes.", "slow"),
+    "run_su2_solver":           ("🌬️  Running SU2_CFD - Euler equations on the volume mesh, 200 iterations. Typically 1-3 minutes.", "slow"),
     "list_result_files":        ("📑 Listing convergence history and surface-solution files produced by the solver…", ""),
     "read_history_csv":         ("📈 Reading the residual convergence trace from the history CSV…", ""),
     "sample_surface_solution":  ("🎯 Sampling pressure and skin-friction on the wing surface…", ""),
@@ -130,14 +130,14 @@ TOOL_DESCRIPTIONS: dict[str, tuple[str, str]] = {
 
     # mass-mcp
     "validate_cpacs_inputs":    ("🩺 Checking the CPACS file has all the parameters mass estimation will need (required + optional).", ""),
-    "estimate_mass":            ("⚖️  Computing aircraft mass — OEM, wing mass, fuselage mass. Uses FLOPS (NASA empirical correlations) by default; OAS hybrid mode is the higher-fidelity option.", "slow"),
+    "estimate_mass":            ("⚖️  Computing aircraft mass - OEM, wing mass, fuselage mass. Uses FLOPS (NASA empirical correlations) by default; OAS hybrid mode is the higher-fidelity option.", "slow"),
     "get_cpacs_mass_breakdown": ("📋 Reading any mass results already written into the CPACS file from a prior run…", ""),
 
     # pycycle-mcp
     "create_cycle_model":       ("🆕 Building a high-bypass turbofan thermodynamic cycle (gas-path components: fan, LPC, HPC, burner, HPT, LPT, nozzles).", ""),
     "list_variables":           ("📋 Discovering the cycle's inputs and outputs (BPR, OPR, T4, etc.)…", ""),
-    "set_inputs":               ("⚙️  Setting the engine design point — bypass ratio, overall pressure ratio, fan PR, turbine inlet temperature, and the flight condition (altitude, Mach).", ""),
-    "run_cycle":                ("🔥 Solving the cycle thermodynamics — Newton iteration on the gas-path equations. Returns SFC, net thrust, fuel flow.", "slow"),
+    "set_inputs":               ("⚙️  Setting the engine design point - bypass ratio, overall pressure ratio, fan PR, turbine inlet temperature, and the flight condition (altitude, Mach).", ""),
+    "run_cycle":                ("🔥 Solving the cycle thermodynamics - Newton iteration on the gas-path equations. Returns SFC, net thrust, fuel flow.", "slow"),
     "get_outputs":              ("📈 Reading the cycle outputs (SFC at cruise, net thrust per engine, engine mass)…", ""),
     "get_cycle_summary":        ("📋 Getting a concise summary of the cycle model state…", ""),
     "sweep_inputs":             ("🔁 Running a parametric sweep over selected cycle inputs…", ""),
@@ -145,17 +145,17 @@ TOOL_DESCRIPTIONS: dict[str, tuple[str, str]] = {
     "close_cycle_model":        ("👋 Closing the pyCycle session.", ""),
 
     # aviary-mcp
-    "get_design_space":         ("📋 Asking Aviary which aircraft and mission parameters it accepts — names, units, bounds, and which ones are derived vs settable.", ""),
+    "get_design_space":         ("📋 Asking Aviary which aircraft and mission parameters it accepts - names, units, bounds, and which ones are derived vs settable.", ""),
     "create_session":           ("🆕 Spinning up a fresh Aviary session, loading the default 737/A320-class aircraft as the baseline.", ""),
-    "configure_mission":        ("🛣️  Setting the mission profile — range, passengers, cruise Mach, cruise altitude, optimizer iteration budget.", ""),
+    "configure_mission":        ("🛣️  Setting the mission profile - range, passengers, cruise Mach, cruise altitude, optimizer iteration budget.", ""),
     "set_aircraft_parameters":  ("✏️  Overriding the baseline aircraft with values informed by the upstream stages (wing area, AR, sweep, engine scale factor, fuselage dimensions).", ""),
-    "validate_parameters":      ("🩺 Quick feasibility check — runs a single Newton evaluation on the climb-phase aero/propulsion system to catch infinite or NaN residuals before the full optimization. Catches over-AR wings, underpowered engines, etc.", ""),
+    "validate_parameters":      ("🩺 Quick feasibility check - runs a single Newton evaluation on the climb-phase aero/propulsion system to catch infinite or NaN residuals before the full optimization. Catches over-AR wings, underpowered engines, etc.", ""),
     "run_simulation":           ("🚀 Running Aviary's coupled aircraft-trajectory optimization (SLSQP). Throttle, altitude, and speed are varied along the mission to minimize fuel burn subject to constraints. Typically ~40 s, 200 iters max.", "slow"),
-    "get_results":              ("📈 Reading the optimized outputs — fuel burned, gross mass, wing mass, reserve fuel, exit code, converged flag.", ""),
+    "get_results":              ("📈 Reading the optimized outputs - fuel burned, gross mass, wing mass, reserve fuel, exit code, converged flag.", ""),
     "get_trajectory":           ("📈 Reading the time-series trajectory profile (altitude, Mach, throttle, mass, drag over time)…", ""),
-    "check_constraints":        ("✅ Checking every F25 constraint — range achieved, climb gradient, take-off field length, approach speed.", ""),
+    "check_constraints":        ("✅ Checking every F25 constraint - range achieved, climb gradient, take-off field length, approach speed.", ""),
     "ping":                     ("🩺 Health-checking the MCP server…", ""),
-    "final_answer":             ("📝 Wrapping up — writing the DESIGN_STATE block for the next stage.", ""),
+    "final_answer":             ("📝 Wrapping up - writing the DESIGN_STATE block for the next stage.", ""),
 }
 
 
@@ -163,7 +163,7 @@ def describe_tool(tool_name: str) -> tuple[str, str]:
     """Return (human description, duration_hint).
 
     Falls back to "Calling <tool_name>…" when unknown. duration_hint is
-    one of "", "slow" — the pacer uses this to insert a "this may take
+    one of "", "slow" - the pacer uses this to insert a "this may take
     a moment" beat.
     """
     if tool_name in TOOL_DESCRIPTIONS:
@@ -171,12 +171,12 @@ def describe_tool(tool_name: str) -> tuple[str, str]:
     return (f"⚙️  Calling `{tool_name}`…", "")
 
 
-SLOW_TOOL_NOTE = "*(this step takes a while — usually 30 s to a couple of minutes)*"
+SLOW_TOOL_NOTE = "*(this step takes a while - usually 30 s to a couple of minutes)*"
 
 
 # ── Observation summarizers ──────────────────────────────────────────────────
 # Each takes the parsed observation dict (or empty if the parser couldn't
-# decode JSON) and returns a single short bullet — or None to fall back to
+# decode JSON) and returns a single short bullet - or None to fall back to
 # a generic acknowledgement. Keep the bullets factual and easy to scan.
 
 
@@ -206,7 +206,7 @@ def _summary_open_cpacs(obs: dict) -> Optional[str]:
     if isinstance(nr, int) and nr > 0: parts.append(f"{nr} rotor{'s' if nr != 1 else ''}")
     where = f", session `{sid}…`" if sid else ""
     if parts:
-        return f"✅ Loaded — found {', '.join(parts)}{where}."
+        return f"✅ Loaded - found {', '.join(parts)}{where}."
     return f"✅ Loaded{where}."
 
 
@@ -223,7 +223,7 @@ def _summary_get_configuration_summary(obs: dict) -> Optional[str]:
         x = bbox.get("xmax", 0) - bbox.get("xmin", 0)
         y = bbox.get("ymax", 0) - bbox.get("ymin", 0)
         z = bbox.get("zmax", 0) - bbox.get("zmin", 0)
-        bb = f" — bounding box ≈ {x:.1f} × {y:.1f} × {z:.1f} m"
+        bb = f" - bounding box ≈ {x:.1f} × {y:.1f} × {z:.1f} m"
     nw, nf = len(wings), len(fuselages)
     return (
         f"✅ Components: {nw} wing{'s' if nw != 1 else ''}, "
@@ -272,7 +272,7 @@ def _summary_generate_volume_mesh(obs: dict) -> Optional[str]:
     if nodes: parts.append(f"{_fmt_int(nodes)} nodes")
     if size: parts.append(f"~{int(size)//(1024*1024)} MB")
     if parts:
-        return f"✅ Mesh built — {', '.join(parts)}."
+        return f"✅ Mesh built - {', '.join(parts)}."
     return "✅ Mesh built."
 
 
@@ -281,7 +281,7 @@ def _summary_get_su2_status(obs: dict) -> Optional[str]:
     if installed is True:
         return "✅ SU2 binaries available."
     if installed is False:
-        return "⚠️ SU2 binaries NOT available — will use F25 reference fallback values."
+        return "⚠️ SU2 binaries NOT available - will use F25 reference fallback values."
     return None
 
 
@@ -290,7 +290,7 @@ def _summary_run_su2_solver(obs: dict) -> Optional[str]:
     rt = obs.get("runtime_seconds")
     if ec == 0:
         return f"✅ SU2 solver finished cleanly in {_fmt_float(rt, 1)} s." if rt else "✅ SU2 solver finished cleanly."
-    return f"⚠️ SU2 solver exited with code {ec} after {_fmt_float(rt, 1) if rt else '?'} s — checking residuals to decide whether to trust the result."
+    return f"⚠️ SU2 solver exited with code {ec} after {_fmt_float(rt, 1) if rt else '?'} s - checking residuals to decide whether to trust the result."
 
 
 def _summary_read_history_csv(obs: dict) -> Optional[str]:
@@ -320,7 +320,7 @@ def _summary_create_cycle_model(obs: dict) -> Optional[str]:
 def _summary_run_cycle(obs: dict) -> Optional[str]:
     if obs.get("success"):
         return "✅ Cycle solved at design point."
-    return "⚠️ Cycle did not converge — will fall back to F25 reference."
+    return "⚠️ Cycle did not converge - will fall back to F25 reference."
 
 
 def _summary_get_outputs(obs: dict) -> Optional[str]:
@@ -338,7 +338,7 @@ def _summary_get_outputs(obs: dict) -> Optional[str]:
 def _summary_create_session(obs: dict) -> Optional[str]:
     sid = (obs.get("session_id") or "")[:8]
     ac = obs.get("aircraft") or ""
-    return f"✅ Aviary session `{sid}…` ({ac.split('—')[0].strip() if ac else 'default aircraft'})."
+    return f"✅ Aviary session `{sid}…` ({ac.split('-')[0].strip() if ac else 'default aircraft'})."
 
 
 def _summary_configure_mission(obs: dict) -> Optional[str]:
@@ -360,30 +360,30 @@ def _summary_set_aircraft_parameters(obs: dict) -> Optional[str]:
     warns = obs.get("warnings") or []
     if isinstance(applied, list):
         changes = sum(1 for a in applied if isinstance(a, dict) and not a.get("derived"))
-        warn_note = f" — {len(warns)} bound warning{'s' if len(warns) != 1 else ''}" if warns else ""
+        warn_note = f" - {len(warns)} bound warning{'s' if len(warns) != 1 else ''}" if warns else ""
         return f"✅ Applied {changes} parameter override{'s' if changes != 1 else ''}{warn_note}."
     return None
 
 
 def _summary_validate_parameters(obs: dict) -> Optional[str]:
     if obs.get("valid"):
-        return "✅ Aircraft is feasible — model evaluation produced finite outputs."
+        return "✅ Aircraft is feasible - model evaluation produced finite outputs."
     summary = obs.get("summary") or ""
     violations = obs.get("violations") or []
     if violations:
         first = violations[0] if isinstance(violations[0], dict) else {}
         msg = first.get("message", "")[:120]
-        return f"❌ Invalid — {msg}"
+        return f"❌ Invalid - {msg}"
     return f"❌ {summary[:120]}"
 
 
 def _summary_run_simulation(obs: dict) -> Optional[str]:
     if obs.get("converged") or obs.get("success"):
-        return "🎯 Trajectory optimizer converged — Aviary found a feasible mission."
+        return "🎯 Trajectory optimizer converged - Aviary found a feasible mission."
     err = obs.get("error", "")
     if "AVIARY_SETUP_ERROR" in (obs.get("error_code") or ""):
-        return "❌ Setup error — Aviary's Newton solver got inf/NaN before iteration 0 (the parameter set is infeasible for the default aircraft model)."
-    return f"⚠️ Optimizer did not converge — {err[:120]}"
+        return "❌ Setup error - Aviary's Newton solver got inf/NaN before iteration 0 (the parameter set is infeasible for the default aircraft model)."
+    return f"⚠️ Optimizer did not converge - {err[:120]}"
 
 
 def _summary_get_results(obs: dict) -> Optional[str]:
@@ -448,7 +448,7 @@ def summarize_observation(tool_name: str, obs_parsed: dict) -> Optional[str]:
         return None
     try:
         return fn(obs_parsed)
-    except Exception:  # noqa: BLE001 — narrator robustness > completeness
+    except Exception:  # noqa: BLE001 - narrator robustness > completeness
         return None
 
 

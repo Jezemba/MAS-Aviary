@@ -20,16 +20,34 @@ from event_parser import Event, parse_lines
 REPO_ROOT = Path(__file__).resolve().parent.parent  # MAS-Aviary
 RUN_BATCH_SH = REPO_ROOT / "run_batch.sh"
 
-DEFAULT_ARGS = [
-    "--config", "config/mdo_f25_run_claude.yaml",
-    "--combinations", "mdo_f25_sequential_iterative_feedback",
-    "--repeats", "1",
-    "--timeout", "60",
-]
+DEFAULT_COMBO = "mdo_f25_sequential_iterative_feedback"
+CONFIG_PATH = "config/mdo_f25_run_claude.yaml"
 
 
-async def live() -> AsyncIterator[Event]:
-    """Spawn the runner and stream Events from its stdout.
+def _build_args(
+    combo: str, repeats: int, timeout_min: float, base_seed: int, max_retries: int
+) -> list[str]:
+    """CLI args for stat_batch_runner (see its argparse). The GUI drives
+    combo / repeats / timeout / seed; model + initial design point are set in
+    the config YAML and are not CLI-parametrized."""
+    return [
+        "--config", CONFIG_PATH,
+        "--combinations", combo,
+        "--repeats", str(repeats),
+        "--timeout", str(timeout_min),
+        "--base-seed", str(base_seed),
+        "--max-retries", str(max_retries),
+    ]
+
+
+async def live(
+    combo: str = DEFAULT_COMBO,
+    repeats: int = 1,
+    timeout_min: float = 60,
+    base_seed: int = 42,
+    max_retries: int = 1,
+) -> AsyncIterator[Event]:
+    """Spawn the runner for ``combo`` and stream Events from its stdout.
 
     Yields Events as the subprocess produces output. If the subprocess
     exits or the consumer is cancelled, the child process group is
@@ -38,16 +56,15 @@ async def live() -> AsyncIterator[Event]:
     if not RUN_BATCH_SH.exists():
         raise FileNotFoundError(f"run_batch.sh not found at {RUN_BATCH_SH}")
 
-    # Tee the output to a tempfile too so the parser can re-handle
-    # the recursive "reprocess this line" path safely. Actually the
-    # parser already supports streaming a single line at a time — the
-    # only quirk is its internal recursion when a buffered observation
-    # is flushed mid-line; that recursion takes an iter([raw]) and is
-    # fine here.
+    args = _build_args(combo, repeats, timeout_min, base_seed, max_retries)
+
+    # The parser supports streaming a single line at a time; the only quirk is
+    # its internal recursion when a buffered observation is flushed mid-line
+    # (it takes an iter([raw]) and is fine here).
     proc = await asyncio.create_subprocess_exec(
         "/bin/bash",
         str(RUN_BATCH_SH),
-        *DEFAULT_ARGS,
+        *args,
         cwd=str(REPO_ROOT),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

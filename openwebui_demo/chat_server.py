@@ -4,18 +4,18 @@ pipeline events as a single assistant message.
 Open WebUI talks to this server as if it were an OpenAI endpoint. Two
 "models" are exposed:
 
-    mas-aviary-live    — spawn ./run_batch.sh and stream the real run
-    mas-aviary-replay  — replay the cached run #6 transcript
+    mas-aviary-live    - spawn ./run_batch.sh and stream the real run
+    mas-aviary-replay  - replay the cached run #6 transcript
 
 Selection happens via the ``model`` field of the chat-completions
 request (Open WebUI surfaces it as a model picker). The user-supplied
-prompt is acknowledged but does NOT change the task — per design, the
+prompt is acknowledged but does NOT change the task - per design, the
 F25 spec is baked in.
 
 Endpoints:
-    GET  /v1/models                    — model catalogue
-    POST /v1/chat/completions          — streaming or non-streaming
-    GET  /healthz                      — liveness
+    GET  /v1/models                    - model catalogue
+    POST /v1/chat/completions          - streaming or non-streaming
+    GET  /healthz                      - liveness
 
 Run:
     /home/aipexws3/Jessica/Avion/.venv/bin/python chat_server.py
@@ -39,6 +39,7 @@ from event_parser import Event
 from formatter import FormatterState, format_event
 from live_runner import live
 from replay_runner import replay
+from run_reducer import RunReducer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -149,7 +150,7 @@ async def _stream_events(model_id: str, completion_id: str) -> AsyncIterator[byt
 
 
 async def _full_completion(model_id: str, completion_id: str) -> dict:
-    """Non-streaming response — collect everything then return as one
+    """Non-streaming response - collect everything then return as one
     chat.completion. Used when the client requests stream=False."""
     state = FormatterState()
     chunks: list[str] = []
@@ -190,6 +191,98 @@ async def healthz() -> dict:
 @app.get("/v1/models")
 async def list_models() -> dict:
     return {"object": "list", "data": list(MODELS.values())}
+
+
+# ── Structured Run stream (consumed by the React GUI) ─────────────────────────
+#
+# Same event source as the Open WebUI markdown demo (replay / live over
+# event_parser) and the same narration copy, but folded into the GUI's ``Run``
+# shape via RunReducer. The GUI subscribes to this and re-renders on each
+# snapshot; live and replay share one code path (only the source iterator and
+# pacing differ), exactly as the design brief requires.
+
+
+# The 8 valid MDO-F25 coordination combinations (3 structures x 3 handlers minus
+# networked_staged_pipeline, which was never wired for MDO-F25). A live run's
+# combo must be one of these; whether the checked-out branch's runner actually
+# implements it is a separate matter surfaced by run_batch.sh at launch.
+VALID_COMBOS = frozenset(
+    f"mdo_f25_{s}_{h}"
+    for s in ("sequential", "orchestrated", "networked")
+    for h in ("iterative_feedback", "staged_pipeline", "graph_routed")
+) - {"mdo_f25_networked_staged_pipeline"}
+
+
+def _run_source(mode: str, speed: float, live_kwargs: dict) -> AsyncIterator[Event]:
+    if mode == "live":
+        return live(**live_kwargs)
+    return replay(speed=speed)
+
+
+async def _run_snapshot_stream(
+    mode: str, speed: float, combo: str, structure: str, handler: str, live_kwargs: dict
+) -> AsyncIterator[bytes]:
+    reducer = RunReducer(combo=combo, structure=structure, handler=handler)
+    # Emit an initial (all-pending) snapshot so the GUI paints immediately.
+    yield _sse(reducer.snapshot())
+    try:
+        async for ev in _run_source(mode, speed, live_kwargs):
+            changed = reducer.push(ev)
+            if changed:
+                yield _sse(reducer.snapshot())
+    except asyncio.CancelledError:
+        logger.info("Run-stream client disconnected; cancelling source.")
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Run-stream error")
+        yield _sse({"error": f"{type(e).__name__}: {e}"})
+    finally:
+        # Final snapshot + terminator.
+        yield _sse(reducer.snapshot())
+        yield b"data: [DONE]\n\n"
+
+
+def _int_param(q, name: str, default: int) -> int:
+    try:
+        return int(q.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+@app.get("/v1/runs/stream")
+async def runs_stream(request: Request):
+    q = request.query_params
+    mode = (q.get("mode") or "replay").lower()
+    if mode not in ("replay", "live"):
+        return JSONResponse(status_code=400, content={"error": f"bad mode '{mode}'"})
+    try:
+        speed = float(q.get("speed", "2.0"))
+    except ValueError:
+        speed = 2.0
+    structure = q.get("structure") or "sequential"
+    handler = q.get("handler") or "iterative_feedback"
+    combo = q.get("combo") or f"mdo_f25_{structure}_{handler}"
+
+    if mode == "live" and combo not in VALID_COMBOS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"'{combo}' is not a valid MDO-F25 combination. "
+                              f"Valid: {sorted(VALID_COMBOS)}"},
+        )
+
+    # Setup fields that map to real runner CLI flags (see stat_batch_runner).
+    live_kwargs = {
+        "combo": combo,
+        "repeats": _int_param(q, "repeats", 1),
+        "timeout_min": float(q.get("timeout", 60) or 60),
+        "base_seed": _int_param(q, "seed", 42),
+        "max_retries": _int_param(q, "max_retries", 1),
+    }
+    return StreamingResponse(
+        _run_snapshot_stream(mode, speed, combo, structure, handler, live_kwargs),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/v1/chat/completions")

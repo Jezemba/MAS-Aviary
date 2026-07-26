@@ -8,10 +8,10 @@ color-coded cards.
 ## What you see
 
 ```
-🛩️  MAS-Aviary multi-MCP MDO — DLR-F25
+🛩️  MAS-Aviary multi-MCP MDO - DLR-F25
 Design task: 2500 nmi / 200 pax / Mach 0.78 / FL330
 
-📐 Geometry Engineer (tigl-mcp) — running…
+📐 Geometry Engineer (tigl-mcp) - running…
   Step 1
     🔧 open_cpacs(...)
        ↩ session da272edf…
@@ -21,9 +21,9 @@ Design task: 2500 nmi / 200 pax / Mach 0.78 / FL330
     ...
   Final answer:
     DESIGN_STATE: ...
-  Done in 60 s — 9 steps, 9 tool calls.
+  Done in 60 s - 9 steps, 9 tool calls.
 
-💨 Aerodynamics Analyst (su2-mcp) — running…
+💨 Aerodynamics Analyst (su2-mcp) - running…
     ...
 
 ⚖️ Structures Analyst (mass-mcp) ...
@@ -32,11 +32,23 @@ Design task: 2500 nmi / 200 pax / Mach 0.78 / FL330
 📊 Simulation Executor (aviary-mcp) ...
 🧮 MDO Integrator ...
 
-🎉 Run complete — 1 completed, 0 failed.
+🎉 Run complete - 1 completed, 0 failed.
 ```
 
-Each `<details>` block is collapsible — clicking the header toggles
+Each `<details>` block is collapsible - clicking the header toggles
 the tool-call detail. The header itself stays color-coded by agent.
+
+## Two frontends, one backend
+
+This directory serves two frontends off the same event source:
+
+1. **Open WebUI chat demo** (the markdown cards above) - `/v1/chat/completions`.
+2. **The React workflow GUI** in [`gui/`](gui/) - a five-view dashboard (Setup,
+   Topology, Live, Results, Replay) built from the design package. It consumes a
+   structured `Run`-snapshot SSE stream at **`GET /v1/runs/stream?mode=live|replay`**,
+   folded from the same `event_parser` events by `run_reducer.py` (reusing
+   `narration.py` for all copy). Both frontends share one live/replay code path.
+   See [`gui/README.md`](gui/README.md) to run it.
 
 ## Two modes
 
@@ -64,7 +76,7 @@ From this directory:
 ```
 ./start_demo.sh
 ```
-Opens nothing automatically — visit `http://localhost:3000` in your
+Opens nothing automatically - visit `http://localhost:3000` in your
 browser. Pick `mas-aviary-replay` from the model dropdown, type any
 prompt, hit send. Watch the cards stream in.
 
@@ -114,12 +126,12 @@ To tear down:
 
 ## Customization
 
-* **Different cached run** — set `DEFAULT_REPLAY_LOG` in `replay_runner.py` to
+* **Different cached run** - set `DEFAULT_REPLAY_LOG` in `replay_runner.py` to
   point at any saved `run_batch.sh` output log.
-* **Slower/faster replay** — change the `speed=10.0` default in
+* **Slower/faster replay** - change the `speed=10.0` default in
   `chat_server.py::_event_stream_from_model`.
-* **Different colors / emoji** — edit `AGENT_STYLE` in `formatter.py`.
-* **Custom F25 task** — currently the user prompt is ignored and the F25
+* **Different colors / emoji** - edit `AGENT_STYLE` in `formatter.py`.
+* **Custom F25 task** - currently the user prompt is ignored and the F25
   spec is fixed (per design). To accept the prompt, change
   `_event_stream_from_model` to parse `body['messages'][-1]['content']`
   and pass it to the runner via `--task` (would require a

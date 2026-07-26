@@ -1,0 +1,142 @@
+/* Topology view styles - ported verbatim from the design package
+   (Multi-Agent Workflow.html <style> block, topology section). */
+
+@keyframes topoPulse {
+  0%, 100% { transform: scale(1); opacity: .4; }
+  50%      { transform: scale(1.15); opacity: 0; }
+}
+
+/* Spawn helper - JS toggles `.is-shown` to fade/translate in. At-rest state is
+   hidden; .is-shown state is visible. Friendly to screenshot tools and to
+   prefers-reduced-motion (add the class immediately). */
+.topo-card,
+.topo-seq-slot,
+.topo-seq-arrow-wrap,
+.topo-orch-head,
+.topo-orch-cell,
+.topo-net-bb,
+.topo-net-node,
+.topo-graph-node {
+  opacity: 0; transform: translateY(8px) scale(.96);
+  transition: opacity .5s cubic-bezier(.2,.7,.3,1),
+              transform .5s cubic-bezier(.2,.7,.3,1);
+}
+.topo-card.is-shown,
+.topo-seq-slot.is-shown,
+.topo-seq-arrow-wrap.is-shown,
+.topo-orch-head.is-shown,
+.topo-orch-cell.is-shown,
+.topo-net-bb.is-shown,
+.topo-net-node.is-shown,
+.topo-graph-node.is-shown {
+  opacity: 1; transform: none;
+}
+/* Networked nodes use absolute positioning + translate(-50%,-50%) to center. */
+.topo-net-bb,
+.topo-net-node {
+  transform: translate(-50%,-50%) scale(.96);
+}
+.topo-net-bb.is-shown,
+.topo-net-node.is-shown { transform: translate(-50%,-50%) scale(1); }
+
+.topo-tabs { display: flex; gap: 6px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 6px; margin-bottom: 14px; }
+.topo-tab { flex: 1; appearance: none; border: 1px solid transparent; background: transparent;
+  padding: 10px 14px; border-radius: 7px; cursor: pointer; text-align: left;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font: 500 13px/1.2 var(--font-ui); color: var(--ink-2); transition: all .12s; }
+.topo-tab:hover { background: var(--surface-2); }
+.topo-tab.is-active { background: var(--ink); color: #fff; }
+.topo-tab.is-active .topo-tab-flag { background: rgba(255,255,255,.18); color: rgba(255,255,255,.85);
+  border-color: rgba(255,255,255,.2); }
+.topo-tab-label { font-weight: 500; letter-spacing: -.005em; }
+.topo-tab-flag { font-size: 10px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px; background: var(--bg); color: var(--ink-3);
+  border: 1px solid var(--line); }
+.topo-tab-flag.is-selected { background: var(--ok-2); color: oklch(0.42 0.13 155);
+  border-color: color-mix(in oklab, var(--ok) 25%, var(--line)); }
+
+.topo-meta { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 24px; padding: 16px 20px; background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 14px; }
+.topo-meta .kv { grid-template-columns: auto auto; column-gap: 8px; }
+.topo-meta-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--ink-3); margin-bottom: 6px; }
+.topo-meta-desc { font-size: 14px; color: var(--ink); line-height: 1.45; margin: 0; }
+
+.topo-stage { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 24px; min-height: 520px; box-shadow: var(--shadow-1); position: relative; overflow: visible; }
+
+.topo-caption { margin-top: 24px; padding-top: 18px; border-top: 1px dashed var(--line);
+  font-size: 12.5px; color: var(--ink-3); line-height: 1.55; max-width: 680px; }
+.topo-caption b { color: var(--ink); font-weight: 600; }
+
+/* Agent card (shared) */
+.topo-card { background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
+  padding: 12px 13px; width: 200px; box-shadow: var(--shadow-1); }
+.topo-card.accent { border-color: var(--accent); }
+.topo-card-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.topo-card-name { font-size: 12.5px; font-weight: 600; letter-spacing: -.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-card-mcp { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4); margin-top: 1px; }
+.topo-card-role { margin: 0 0 10px; font-size: 11.5px; color: var(--ink-3); line-height: 1.45; }
+.topo-tools { display: flex; flex-wrap: wrap; gap: 3px; }
+.topo-tool { font-family: var(--font-mono); font-size: 10px; line-height: 1.3; padding: 2px 6px;
+  border-radius: 4px; background: var(--bg); color: var(--ink-2); border: 1px solid var(--line-2);
+  cursor: default; }
+.topo-tools-empty { font-size: 10.5px; font-style: italic; color: var(--ink-3); padding: 3px 0; }
+
+/* Sequential */
+.topo-seq { display: flex; flex-direction: column; align-items: stretch; }
+.topo-seq-track { display: flex; align-items: stretch; overflow-x: auto;
+  padding: 8px 0 14px; gap: 0; min-height: 280px; }
+.topo-seq-slot { position: relative; flex-shrink: 0; padding-top: 8px; padding-left: 8px; }
+.topo-seq-num { position: absolute; top: 0; left: 0; width: 22px; height: 22px;
+  border-radius: 50%; background: var(--ink); color: #fff; font: 600 11px/22px var(--font-mono);
+  text-align: center; z-index: 2; border: 2px solid var(--surface); }
+.topo-seq-arrow-wrap { flex-shrink: 0; display: flex; align-items: flex-start; padding-top: 44px; }
+.topo-seq-arrow { color: var(--ink-3); }
+
+/* Orchestrated */
+.topo-orch { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.topo-orch-head { display: flex; flex-direction: column; align-items: center; gap: 8px;
+  margin-bottom: 0; position: relative; z-index: 2; }
+.topo-coord-badge { font-size: 10px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+  background: var(--accent); color: #fff; }
+.topo-orch-lines { width: 100%; max-width: 1100px; height: 80px; color: var(--line); }
+.topo-orch-row { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 10px;
+  width: 100%; max-width: 1100px; margin-top: -4px; }
+.topo-orch-cell { display: flex; justify-content: center; }
+.topo-orch-cell .topo-card { width: 100%; min-width: 0; }
+.topo-orch-cell .topo-tools { gap: 3px; }
+.topo-orch-cell .topo-tool { font-size: 9.5px; padding: 1px 5px; }
+
+/* Networked */
+.topo-net { display: flex; flex-direction: column; gap: 0; }
+.topo-net-canvas { position: relative; width: 100%; height: 580px; margin: 0 auto; max-width: 780px; }
+.topo-net-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.topo-net-bb { position: absolute; width: 140px; height: 140px;
+  display: grid; place-items: center; z-index: 3; }
+.topo-bb-inner { position: relative; width: 140px; height: 140px; background: var(--ink);
+  color: #fff; border-radius: 50%; display: grid; place-items: center; text-align: center;
+  box-shadow: 0 8px 32px -8px color-mix(in oklab, var(--ink) 40%, transparent); }
+.topo-bb-title { font-size: 14px; font-weight: 600; letter-spacing: -.005em; }
+.topo-bb-sub { font-family: var(--font-mono); font-size: 10.5px; color: rgba(255,255,255,.6); margin-top: 2px; }
+.topo-bb-pulse { position: absolute; inset: -12px; border-radius: 50%;
+  border: 2px solid var(--accent); animation: topoPulse 2.5s ease-in-out infinite; }
+.topo-net-node { position: absolute; width: 200px; z-index: 2; }
+.topo-net-node .topo-card { width: 200px; }
+
+/* Graph */
+.topo-graph { display: flex; flex-direction: column; gap: 0; }
+.topo-graph-canvas { position: relative; width: 100%; height: 420px; max-width: 1000px; margin: 0 auto; }
+.topo-graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.topo-graph-node { position: absolute; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px; box-shadow: var(--shadow-1); z-index: 2; }
+.topo-graph-node-inner { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.topo-graph-node-name { font-size: 12.5px; font-weight: 600; letter-spacing: -.005em; }
+.topo-graph-node-mcp { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4); margin-top: 1px; }
+.topo-edge-label { font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; }
+
+.topo-actions { display: flex; align-items: center; gap: 8px; }
