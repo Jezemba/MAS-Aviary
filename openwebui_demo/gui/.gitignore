@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# The repo-root .gitignore has a "lib/" rule that would otherwise hide our
+# source directory src/lib/ (format.ts, useTicker.ts). Re-include it here.
+!src/lib/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
