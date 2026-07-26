@@ -1,0 +1,45 @@
+/* Design tokens - ported verbatim from the design package
+   (design_handoff_mas_aviary_gui/Multi-Agent Workflow.html :root block).
+   Colors use oklch so every semantic family shares the same chroma; hex
+   fallbacks for the neutrals are literal. Do not "round" these values. */
+:root {
+  /* Neutrals - cool off-white surface */
+  --bg:        #F7F7F5;
+  --surface:   #FFFFFF;
+  --surface-2: #FBFBF9;
+  --line:      #E7E6E1;
+  --line-2:    #EFEEEA;
+  --ink:       #1B1D22;
+  --ink-2:     #3A3D45;
+  --ink-3:     #6B6F78;
+  --ink-4:     #9CA0A8;
+
+  /* Accent (oklch engineering blue), and semantic colors at the same chroma */
+  --accent:    oklch(0.55 0.14 250);
+  --accent-2:  oklch(0.95 0.04 250);
+  --accent-3:  oklch(0.45 0.14 250);
+
+  --ok:        oklch(0.62 0.13 155);
+  --ok-2:      oklch(0.95 0.05 155);
+  --warn:      oklch(0.72 0.15 70);
+  --warn-2:    oklch(0.95 0.07 70);
+  --err:       oklch(0.58 0.18 25);
+  --err-2:     oklch(0.95 0.07 25);
+
+  /* Darker text-on-tint variants (AA contrast on the tinted badge bgs) */
+  --ok-ink:    oklch(0.42 0.13 155);
+  --warn-ink:  oklch(0.48 0.15 70);
+
+  /* Density */
+  --pad: 16px;
+  --pad-lg: 24px;
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  --shadow-1: 0 1px 2px rgba(20,22,28,.04), 0 1px 0 rgba(20,22,28,.02);
+  --shadow-2: 0 6px 24px -8px rgba(20,22,28,.10), 0 2px 4px rgba(20,22,28,.04);
+
+  --font-ui:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:  "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}

@@ -1,0 +1,62 @@
+# Build the MAS-Aviary workflow GUI (openwebui_demo/gui) and deploy it to
+# GitHub Pages. Pages is static-only: the deployed site is the frontend. Live
+# runs and real streaming require the Python backend (chat_server.py) reachable
+# at VITE_RUN_STREAM_BASE — run it locally and expose it via a tunnel
+# (see openwebui_demo/gui/README.md → Hosting). Without that variable the site
+# falls back to the bundled mock data.
+name: Deploy GUI to Pages
+
+on:
+  push:
+    branches: [feat/mas-gui-full]
+    paths:
+      - "openwebui_demo/gui/**"
+      - ".github/workflows/deploy-gui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; newer pushes supersede in-flight runs.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openwebui_demo/gui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: openwebui_demo/gui/package-lock.json
+      - run: npm ci
+      - name: Build
+        env:
+          # Project Pages serve at /<repo>/, so the app must be built with that base.
+          VITE_BASE: /${{ github.event.repository.name }}/
+          # Repo → Settings → Secrets and variables → Actions → Variables.
+          # Set to your tunneled backend URL (e.g. https://xxx.trycloudflare.com).
+          # Unset → the site falls back to the bundled mock data.
+          VITE_RUN_STREAM_BASE: ${{ vars.VITE_RUN_STREAM_BASE }}
+        run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: openwebui_demo/gui/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
