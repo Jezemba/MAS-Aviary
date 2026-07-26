@@ -21,11 +21,13 @@ function NumField({
   unit,
   value,
   onChange,
+  readOnly = false,
 }: {
   label: string;
   unit: string;
   value: number;
-  onChange: (v: number) => void;
+  onChange?: (v: number) => void;
+  readOnly?: boolean;
 }) {
   return (
     <div className="field">
@@ -36,7 +38,10 @@ function NumField({
       <input
         className="input mono"
         value={value}
+        readOnly={readOnly}
+        style={readOnly ? { color: "var(--ink-3)", background: "var(--bg)" } : undefined}
         onChange={(e) => {
+          if (readOnly || !onChange) return;
           const v = parseFloat(e.target.value);
           if (!Number.isNaN(v)) onChange(v);
         }}
@@ -185,16 +190,18 @@ export function SetupView({
 
           <div className="field-label" style={{ marginBottom: 10 }}>
             <span>Initial design point</span>
-            <span className="field-hint">
-              seeded by <span className="mono">{setup.seed}</span>
-            </span>
+            <span className="field-hint">the seed samples this on live runs</span>
           </div>
           <div className="field-row" style={{ gridTemplateColumns: "repeat(3, 1fr) 80px" }}>
-            <NumField label="AREA" unit="m²" value={setup.initialParams.AREA} onChange={(v) => set({ initialParams: { ...setup.initialParams, AREA: v } })} />
-            <NumField label="ASPECT_RATIO" unit="" value={setup.initialParams.ASPECT_RATIO} onChange={(v) => set({ initialParams: { ...setup.initialParams, ASPECT_RATIO: v } })} />
-            <NumField label="SCALE_FACTOR" unit="" value={setup.initialParams.SCALE_FACTOR} onChange={(v) => set({ initialParams: { ...setup.initialParams, SCALE_FACTOR: v } })} />
-            <NumField label="Seed" unit="" value={setup.seed} onChange={(v) => set({ seed: v })} />
+            <NumField label="AREA" unit="m² · seeded" value={setup.initialParams.AREA} readOnly />
+            <NumField label="ASPECT_RATIO" unit="seeded" value={setup.initialParams.ASPECT_RATIO} readOnly />
+            <NumField label="SCALE_FACTOR" unit="seeded" value={setup.initialParams.SCALE_FACTOR} readOnly />
+            <NumField label="Seed" unit="drives ↑" value={setup.seed} onChange={(v) => set({ seed: v })} />
           </div>
+          <p className="field-desc" style={{ marginTop: 8 }}>
+            On a live run the design point is sampled from the seed (not typed here) — change
+            the <span className="mono">Seed</span> to get a different geometry/mass/fuel outcome.
+          </p>
         </div>
       </div>
 
@@ -203,16 +210,16 @@ export function SetupView({
         <div className="card-head">
           <div>
             <h3 className="card-title">Runtime</h3>
-            <p className="card-sub">Model, repetitions, timeout. Per-repeat cost ≈ $0.30 · 10-15 min.</p>
+            <p className="card-sub">Repeats and timeout drive live runs; model is set in the config YAML. Per-repeat cost ≈ $0.30 · 10-15 min.</p>
           </div>
         </div>
         <div className="card-body">
           <div className="field-row" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
             <div className="field">
               <label className="field-label">
-                Model <span className="field-hint">via LiteLLM</span>
+                Model <span className="field-hint">from config YAML</span>
               </label>
-              <select className="select" value={setup.model} onChange={(e) => set({ model: e.target.value })}>
+              <select className="select" value={setup.model} disabled title="Live runs use the model in config/mdo_f25_run_claude.yaml; not settable from the GUI yet.">
                 <option value="anthropic/claude-sonnet-4-20250514">anthropic / claude-sonnet-4-20250514</option>
                 <option value="anthropic/claude-opus-4-20250514">anthropic / claude-opus-4-20250514</option>
                 <option value="openai/gpt-4.1-2025-04-14">openai / gpt-4.1-2025-04-14</option>
