@@ -22,6 +22,8 @@ export interface StreamOpts {
   repeats?: number;
   timeoutMin?: number;
   seed?: number;
+  // Sent as the X-Live-Token header for mode=live (never placed in the URL).
+  liveToken?: string;
   enabled?: boolean;
   // Bump to restart the stream (e.g. Replay "Restart").
   epoch?: number;
@@ -46,7 +48,7 @@ function buildUrl(o: StreamOpts): string {
 }
 
 export function useRunStream(opts: StreamOpts): StreamState {
-  const { mode, speed, combo, structure, handler, repeats, timeoutMin, seed, enabled = true, epoch = 0 } = opts;
+  const { mode, speed, combo, structure, handler, repeats, timeoutMin, seed, liveToken, enabled = true, epoch = 0 } = opts;
   const [run, setRun] = useState<Run | null>(null);
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -61,9 +63,11 @@ export function useRunStream(opts: StreamOpts): StreamState {
 
     (async () => {
       try {
+        const headers: Record<string, string> = { Accept: "text/event-stream" };
+        if (mode === "live" && liveToken) headers["X-Live-Token"] = liveToken;
         const res = await fetch(
           buildUrl({ mode, speed, combo, structure, handler, repeats, timeoutMin, seed }),
-          { signal: ac.signal, headers: { Accept: "text/event-stream" } },
+          { signal: ac.signal, headers },
         );
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         const reader = res.body.getReader();
@@ -110,7 +114,7 @@ export function useRunStream(opts: StreamOpts): StreamState {
 
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, speed, combo, structure, handler, repeats, timeoutMin, seed, enabled, epoch]);
+  }, [mode, speed, combo, structure, handler, repeats, timeoutMin, seed, liveToken, enabled, epoch]);
 
   return { run, phase, error };
 }

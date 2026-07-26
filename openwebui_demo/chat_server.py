@@ -27,9 +27,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from typing import AsyncIterator, Optional
+
+# Secure-by-default gate for LIVE runs (which spend real API money). Live is
+# DISABLED unless the operator sets MAS_LIVE_TOKEN in the server's environment;
+# then each live request must supply that token via the X-Live-Token header (the
+# GUI prompts for it at runtime, so it is never baked into the static site).
+# Replay is free (no LLM) and always allowed.
+LIVE_TOKEN = os.environ.get("MAS_LIVE_TOKEN") or None
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -262,6 +270,22 @@ async def runs_stream(request: Request):
     structure = q.get("structure") or "sequential"
     handler = q.get("handler") or "iterative_feedback"
     combo = q.get("combo") or f"mdo_f25_{structure}_{handler}"
+
+    if mode == "live":
+        # Gate paid live runs so an exposed/tunneled backend can't be made to
+        # spend money by a random visitor.
+        if LIVE_TOKEN is None:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Live runs are disabled on this server. "
+                                  "Set MAS_LIVE_TOKEN in the server environment to enable them."},
+            )
+        supplied = request.headers.get("x-live-token") or q.get("token")
+        if supplied != LIVE_TOKEN:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Live runs require a valid token (X-Live-Token)."},
+            )
 
     if mode == "live" and combo not in VALID_COMBOS:
         return JSONResponse(

@@ -59,6 +59,7 @@ export function App() {
   // pipeline, so it's gated behind an explicit user toggle.
   const [phase, setPhase] = useState<RunPhase>("idle");
   const [connectLive, setConnectLive] = useState(false);
+  const [liveToken, setLiveToken] = useState<string>("");
   const liveStream = useRunStream({
     mode: "live",
     enabled: connectLive,
@@ -68,7 +69,25 @@ export function App() {
     repeats: setup.repeats,
     timeoutMin: setup.timeoutMin,
     seed: setup.seed,
+    liveToken,
   });
+
+  // Live runs spend real money and are token-gated on the server. Prompt for
+  // the token at runtime (it is never baked into the static build).
+  function handleConnectLive(on: boolean) {
+    if (!on) {
+      setConnectLive(false);
+      return;
+    }
+    const t = window.prompt(
+      "Live run token (MAS_LIVE_TOKEN on the server).\n" +
+        "This spawns the real, paid 5-MCP pipeline.",
+    );
+    if (t) {
+      setLiveToken(t);
+      setConnectLive(true);
+    }
+  }
 
   const liveRun = connectLive && liveStream.run ? liveStream.run : MOCK_RUN;
   const livePhase = connectLive ? liveStream.phase : phase;
@@ -123,7 +142,7 @@ export function App() {
             phase={livePhase}
             onPhase={setPhase}
             connectLive={connectLive}
-            onConnectLive={setConnectLive}
+            onConnectLive={handleConnectLive}
             liveError={liveStream.error}
           />
         )}

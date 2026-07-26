@@ -90,6 +90,14 @@ the config YAML and are not CLI-parametrized, so they don't affect a live run.
 Requirements: the 5 MCP servers up and `ANTHROPIC_API_KEY` with credit; a run
 costs ~$0.30-1.50 and takes 6-20 min.
 
+**Live runs are token-gated (secure by default).** The server refuses every
+live request unless `MAS_LIVE_TOKEN` is set in its environment; then each request
+must send that token (the GUI prompts for it and sends it as the `X-Live-Token`
+header — it is never baked into the static build). So an exposed/tunneled backend
+without the env var **cannot** be made to spend money, and with it, only someone
+who knows the token can. Replay is free (no LLM) and always open. Enable live
+locally with `MAS_LIVE_TOKEN=... .venv/bin/python chat_server.py`.
+
 ## Hosting (GitHub Pages + tunneled backend)
 
 Pages is static-only, so the deployed site is the frontend; live runs and real
