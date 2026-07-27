@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### 2026-07-27 — 1x8 exploratory sweep + pivot to experimental design (paper)
+
+Ran all 8 combos once (seed 42, model claude-sonnet-4-6) to confirm the CFL fix holds
+end-to-end. **7/8 succeeded, 1 failed** (`sequential_iterative_feedback`: aviary produced
+zero fuel — a stochastic flake; the SAME combo succeeded in run6). Cost **~$30** for the 8
+runs = **~$3.75/run on Sonnet** (correct all budgeting to this; the earlier "$1-2/run" was
+wrong). This was EXPLORATORY, not a paper result — single sample, and the issues below make
+the numbers non-comparable. See `.llm/STAGE_SUMMARY_experiment_design.md` for the full table
+and plan.
+
+Findings that make this experimental-design work, not just a run: (1) stochastic flakiness is
+real (need repeats + per-combo success rate); (2) 3 SU2 `exit_code:1` errors appeared
+(agents retried; not yet confirmed every solve was real vs recovered); (3) two `graph_routed`
+combos are byte-identical (likely legit — same predefined graph); (4) fuel spread 4650-8813 kg
+despite identical starting params → agents may re-morph mid-run, which breaks combo
+comparability. Open decisions before the paper run: SOTA model (Opus 5 ~$18/run, over budget
+for a full sweep) vs Sonnet (in-budget with repeats); enforce a fixed design input; number of
+repeats; metrics; ground-truth reference. Work continues on branch `feat/paper-experiment-design`.
+
 ### 2026-07-27 — aero<->geometry loop CLOSED (geometry morph now drives SU2)
 
 The geometry stage now actually deforms the wing/fuselage (via tigl-mcp
