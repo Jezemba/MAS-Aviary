@@ -1,5 +1,48 @@
 ## [Unreleased]
 
+### 2026-07-27 — aero<->geometry loop CLOSED (geometry morph now drives SU2)
+
+The geometry stage now actually deforms the wing/fuselage (via tigl-mcp
+`set_high_level_parameters`, which morphs + rebuilds instead of the old no-op),
+so SU2 solves the ACTUAL design instead of the fixed D150 baseline. Proven at the
+physics level with tool-level SU2 solves on the meshed geometry, using the CORRECTED
+config below: baseline **CL 0.0931** vs morphed (bigger/higher-AR) **CL 0.1817** —
+lift responds to geometry, both fully converged (rms -6, "Exit Success").
+
+**The one real bug: `CFL_NUMBER = 1e3` (200x too high).** Verified against the SU2
+repo (su2code/SU2): SU2's own 3-D inviscid wing test case
+`TestCases/euler/oneram6/inv_ONERAM6.cfg` uses **JST + 3-level W_CYCLE multigrid at
+`CFL=5`** — the SAME scheme our preset uses, but our preset carried `CFL=1e3` (copied
+from the 2-D `QuickStart/inv_NACA0012.cfg`). At 1e3 the multigrid solve on this 3-D
+unstructured mesh is compute-bound (100% CPU, 24 GB, ~0 useful iterations in 4+ min)
+and NEVER converges within the 300 s cap, so `run_su2_solver` **silently fell back to
+reference CL/CD** — that fallback is where the old "CL=0.1871" came from; it was never
+a converged solve. Tool-level fix verified:
+- **660k mesh, CFL=20 + multigrid → rms -6 in ~100 iters / 211 s, CL=0.0931.**
+- **morphed 673k mesh, CFL=20 → rms -6 in ~70 iters / 139 s, CL=0.1817.**
+Both under the 300 s cap, both real converged solves.
+
+Corrected SU2 config, applied to ALL FIVE combo configs (`sequential_agents`, `graph`,
+`staged_pipeline`, `orchestrated_agents`, `networked_agents`):
+- **`CFL_NUMBER = 20`, `CFL_ADAPT = YES`** (`CFL_ADAPT_PARAM=(0.5, 1.5, 5.0, 100.0)`).
+  20 (vs SU2's ONERA M6 baseline of 5) converges fast enough to fit the 300 s budget on
+  the fine mesh; CFL_ADAPT self-stabilizes on any morphed geometry.
+- **Keep JST + `MGLEVEL=3` + W_CYCLE multigrid** — this is SU2's standard for 3-D
+  inviscid wings and was never the problem.
+- **`CONV_FIELD = RMS_DENSITY`, `CONV_RESIDUAL_MINVAL = -6`, `ITER = 500`** (loose
+  residual is ample for engineering CL/CD; at CFL=20 the lift is steady by ~rms -4).
+- **Mesh kept as-is (~660k), NOT coarsened.** Coarsening to ~300k fits the budget too
+  but under-resolves lift by ~20% (CL 0.093 → 0.074); unnecessary once CFL is fixed.
+
+WRONG TURNS (now reverted, recorded so they aren't repeated): an earlier pass this same
+day switched convergence to **Cauchy-on-LIFT** and set **CFL=10**, on the theory that
+RMS wouldn't be geometry-robust. That was treating a symptom. The Cauchy criterion never
+tripped precisely BECAUSE CFL was still too high (10 also failed — Run #5 still capped at
+300 s). RMS_DENSITY at CFL=20 is the actual fix. Relative mesh sizing (tigl-mcp
+`generate_volume_mesh`, committed dc5f3f1) is kept — it keeps the wing mesh ~constant as
+the geometry morphs — but its output (~660k) is fine for CFL=20; it did not need
+recalibration.
+
 ### 2026-05-27 (latest+7) — networked_graph_routed VERIFIED LIVE end-to-end (parallel DAG, SU2 completes)
 
 The parallel DAG-executor passed end-to-end. wandb run

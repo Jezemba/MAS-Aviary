@@ -132,8 +132,7 @@ templates:
              IS available; report missing fields in COUPLING_NOTES.
              Do NOT halt on null — proceed to mesh.
 
-          6. Always call generate_volume_mesh(session_id, component_uid="Wing",
-             surface_mesh_size=1.0, mesh_size_min=0.3, mesh_size_max=8.0,
+          6. Always call generate_volume_mesh(session_id, component_uid="Wing1",
              boundary_layer_enabled=false) to produce a 3D volume mesh
              for SU2 CFD. This tool internally exports the wing as STL,
              embeds it in a far-field box with gmsh, and writes a complete
@@ -143,12 +142,13 @@ templates:
              DistributeColoring with 0 volume elements. Capture the
              base64 mesh from the response.
 
-             FIDELITY NOTE: the coarse mesh parameters above target an
-             Euler CFD solve that completes in <5 minutes (~50-200k
-             cells). For a refined design pass, lower surface_mesh_size
-             to 0.5 and enable boundary_layer_enabled=true, but be aware
-             this will produce a 1M+ cell mesh that takes 15-30 min to
-             solve.
+             MESH SIZING: do NOT pass mesh_size_min/max — leave them unset so
+             the tool auto-scales the mesh RELATIVE to the (possibly morphed)
+             geometry's characteristic length. This keeps the cell count roughly
+             constant (~350k, an Euler solve that converges in a few minutes)
+             whether the wing was enlarged or shrunk. Passing absolute sizes
+             risks a multi-million-cell mesh that times out SU2 when the wing
+             grows.
 
           7. Call close_cpacs(session_id) so the updated CPACS file is
              flushed to disk. The downstream mass-mcp stage reads the
@@ -219,17 +219,18 @@ templates:
                              Sweep multiple AoA values to build a drag polar.
           REYNOLDS_NUMBER    Based on MAC and altitude. Cruise at 33 kft: ~30e6
           KIND_TURB_MODEL    "SA" (Spalart-Allmaras, faster) or "SST" (Menter k-ω, better for separation)
-          ITER               Solver iterations. Default: 200 | Range: 100–10000
-                             With CONV_RESIDUAL_MINVAL=-8 the solver
-                             terminates early once it hits 1e-8 RMS;
-                             empirically ~120 iters on a 350k-cell mesh.
-          CFL_NUMBER         Courant number. Default: 1e3 | Range: 1–1e4
-                             SU2's reference inv_NACA0012.cfg uses 1e3
-                             combined with W-cycle multigrid + ILU
-                             preconditioning. CFL=10 with no multigrid
-                             plateaus around rms[Rho]=-2.6 (verified
-                             empirically). CFL_ADAPT=YES is the safety
-                             net for ill-conditioned 3-D meshes.
+          ITER               Solver iterations (backstop only). Default: 500.
+                             Convergence is on RMS_DENSITY to -6; at CFL=20 the
+                             solve reaches it in ~100 iters (660k) / ~70 iters
+                             (morphed 673k), well under the 300 s budget. ITER
+                             is just a safety cap.
+          CFL_NUMBER         Courant number. Default: 20 | Range: 1–1e4
+                             Use 20, NOT 1e3. SU2's own 3-D inviscid wing case
+                             (inv_ONERAM6.cfg) uses JST+multigrid at CFL=5; the
+                             old 1e3 (from the 2-D NACA case) is compute-bound on
+                             this 3-D mesh and never converges in 300 s → silent
+                             fallback (the old "CL=0.1871"). CFL=20 + CFL_ADAPT
+                             converges cleanly. Do NOT raise toward 1e3.
 
           ── AERODYNAMIC OUTPUTS ───────────────────────────────────────────
 
@@ -309,14 +310,21 @@ templates:
                  "NUM_METHOD_GRAD":       "WEIGHTED_LEAST_SQUARES",
                  "TIME_DISCRE_FLOW":      "EULER_IMPLICIT",
                  # ── Pseudo-time stepping ─────────────────────────────
-                 # CFL=1e3 is what SU2's reference inv_NACA0012.cfg
-                 # uses — combined with multigrid + ILU it converges
-                 # to 1e-8 RMS in ~120 iterations. The old CFL=10 with
-                 # no multigrid plateaued at ~1e-2.6 after 200 iters
-                 # (verified empirically against the reference mesh).
-                 "CFL_NUMBER": 1e3,
+                 # CFL=20 (NOT 1e3). SU2's OWN 3-D inviscid wing test case
+                 # (TestCases/euler/oneram6/inv_ONERAM6.cfg) uses JST + 3-level
+                 # multigrid with CFL=5. The old preset carried CFL=1e3 (200x
+                 # too high) copied from the 2-D inv_NACA0012 case — at 1e3 the
+                 # multigrid solve on this 3-D unstructured mesh is compute-bound
+                 # and NEVER converges within the 300 s cap, so the step silently
+                 # fell back to reference CL/CD (that fallback is where the old
+                 # "CL=0.1871" came from — it was never a real solve; Run #4/#5
+                 # diagnosis 2026-07-27). CFL=20 with CFL_ADAPT converges the
+                 # SAME 660k mesh cleanly to rms -6 in ~100 iters / ~210 s
+                 # (morphed 673k wing: ~70 iters / ~140 s), verified tool-level.
+                 # Do NOT raise CFL back toward 1e3.
+                 "CFL_NUMBER": 20,
                  "CFL_ADAPT":  "YES",
-                 "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+                 "CFL_ADAPT_PARAM": "( 0.5, 1.5, 5.0, 100.0 )",
                  # ── Multigrid ────────────────────────────────────────
                  "MGCYCLE":     "W_CYCLE",
                  "MGLEVEL":     3,
@@ -325,10 +333,17 @@ templates:
                  "LINEAR_SOLVER_PREC":  "ILU",
                  "LINEAR_SOLVER_ITER":  10,
                  "LINEAR_SOLVER_ERROR": 1E-10,
-                 # ── Convergence ──────────────────────────────────────
-                 "ITER":                  200,
+                 # ── Convergence (density residual, loose -6) ─────────
+                 # Converge on RMS_DENSITY to -6 (SU2 ONERA M6 uses -12 for a
+                 # fully-converged reference; -6 is ample for engineering CL/CD
+                 # and faster). At CFL=20 the lift coefficient is dead-steady
+                 # by ~rms -4, and the solve reaches -6 in ~100 iters (660k) /
+                 # ~70 iters (morphed 673k). ITER=500 is only a backstop.
+                 # (Do NOT use a Cauchy/force convergence here — it was an
+                 # earlier wrong turn; the real fix was CFL, not the criterion.)
+                 "ITER":                  500,
                  "CONV_FIELD":            "RMS_DENSITY",
-                 "CONV_RESIDUAL_MINVAL":  -8,
+                 "CONV_RESIDUAL_MINVAL":  -6,
                  "CONV_STARTITER":        10,
                  # ── Output (request CL/CD in history.csv) ────────────
                  # SU2's default HISTORY_OUTPUT writes only the residuals.
@@ -356,22 +371,24 @@ templates:
                  "MARKER_MONITORING": "( aircraft )",
                }
 
-             Why these numerics matter (vs. the agent's naive instinct
-             of CFL=10 + GREEN_GAUSS + default linear solver):
-               • CFL=10 with no multigrid plateaus around rms[Rho] = -2.6
-                 in 200 iterations — under-converged, SOLVER_CONVERGED
-                 falls back to F25 reference values.
-               • CFL=1e3 + W_CYCLE multigrid + FGMRES/ILU + WLS gradient
-                 (this preset) converges to rms[Rho] = -8 in ~120 iters.
-               • CFL_ADAPT=YES is a safety net — if CFL=1e3 destabilizes
-                 on a particular mesh, the solver auto-throttles down to
-                 CFL=10 and works its way back up. So we keep the
-                 aggressive setting without risking blow-up on rougher
-                 meshes.
+             Why these numerics matter (this is SU2's ONERA M6 recipe):
+               • JST + W_CYCLE multigrid + FGMRES + WLS gradient is exactly
+                 what SU2's own 3-D inviscid wing test (inv_ONERAM6.cfg) uses.
+                 Multigrid is CORRECT here — keep it.
+               • The ONLY thing that was wrong was CFL=1e3 (200x SU2's CFL=5).
+                 At 1e3 the multigrid solve is compute-bound and never converges
+                 in 300 s → silent fallback to reference CL/CD. CFL=20 converges
+                 the same 660k mesh to rms -6 in ~100 iters / ~210 s; a morphed
+                 673k wing in ~70 iters / ~140 s. Both under the cap, both REAL
+                 converged solves (baseline CL=0.093, morphed CL=0.182 — lift
+                 tracks the geometry). Verified tool-level 2026-07-27.
+               • Do NOT raise CFL back toward 1e3, and do NOT switch to a
+                 Cauchy/force convergence (an earlier wrong turn) — RMS_DENSITY
+                 to -6 at CFL=20 is fast and robust across the design range.
 
-             Use ITER=200 by default — convergence terminates early
-             once CONV_RESIDUAL_MINVAL is hit. Total solve time on a
-             ~350k cell mesh stays under ~3 minutes.
+             Leave ITER=500 (backstop). Convergence is on the density residual
+             (RMS_DENSITY to -6); at CFL=20 the lift is steady well before that,
+             so CL/CD are fully converged in ~100-140 s for any wing size.
 
              IF the server response includes "missing_required" with one
              or more SU2 option names: include those names in a SECOND
@@ -410,10 +427,10 @@ templates:
              FIRST, check the simpler signal: the run_su2_solver response
              you got back in step 5 has a `log_tail` field. Read the
              LAST FEW LINES of that log_tail. SU2 always prints one of:
-               • "Convergence Field ... Converged: Yes" → solver hit the
-                 CONV_RESIDUAL_MINVAL=-8 target. Trust the result.
-               • "Maximum number of iterations reached" → did not hit
-                 -8, but probably got close (residual drop reported in
+               • "Cauchy[CL] ... Converged: Yes" → the lift coefficient
+                 stabilised (force-based convergence). Trust the result.
+               • "Maximum number of iterations reached" → CL not yet
+                 steady (rare with ITER=400); use what was reported (drop in
                  the same block).
              If "Converged: Yes" is in log_tail, SET SOLVER_CONVERGED=true
              and read CL/CD from the LAST ROW of history.csv. Do NOT

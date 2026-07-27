@@ -72,7 +72,12 @@ agents:
       2. SU2 MCP (Aerodynamics CFD — port 8200, 17 tools):
          Session: create_su2_session(base_name, initial_config, initial_mesh) → session_id
          Config: update_config_entries(session_id, updates={"MACH_NUMBER": 0.78, "AOA": 2.0,
-                 "REYNOLDS_NUMBER": 30e6, "KIND_TURB_MODEL": "SA", "ITER": 1000, "CFL_NUMBER": 10})
+                 "REYNOLDS_NUMBER": 30e6, "KIND_TURB_MODEL": "SA", "ITER": 500, "CFL_NUMBER": 20,
+                 "CFL_ADAPT": "YES", "CFL_ADAPT_PARAM": "( 0.5, 1.5, 5.0, 100.0 )",
+                 "CONV_FIELD": "RMS_DENSITY", "CONV_RESIDUAL_MINVAL": -6})
+         # CFL=20 (NOT 1e3): SU2's ONERA M6 3-D inviscid wing case uses
+         # JST+multigrid at CFL=5; the old 1e3 never converged in 300 s and the
+         # step silently fell back to reference CL/CD. CFL=20 converges cleanly.
          Mesh: set_mesh(session_id, mesh_base64), generate_mesh_from_step(session_id, step_base64),
                analyze_mesh(session_id)
          Solve: run_su2_solver(session_id, solver="SU2_CFD", max_runtime_seconds=600)

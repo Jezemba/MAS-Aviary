@@ -66,10 +66,10 @@ mdo_f25_graph:
            fixture (pinned by tests/test_mesh_generation_live.py
            and verified live in v18 wandb 7ngitswj):
              component_uid="Wing1",
-             surface_mesh_size=1.0,
-             mesh_size_min=0.3,
-             mesh_size_max=8.0,
              far_field_distance=10.0,
+             (do NOT pass mesh_size_min/max — the tool auto-scales the mesh to
+              the geometry's characteristic length, keeping ~0.65M cells for any
+              wing size; passing absolute sizes can blow up to millions of cells)
              boundary_layer_enabled=False,
              output_format="su2"
            Setting far_field_distance >= 50 (the "physically natural"
@@ -140,15 +140,20 @@ mdo_f25_graph:
                "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
                "NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES",
                "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
-               "CFL_NUMBER": 1000, "CFL_ADAPT": "YES",
-               "CFL_ADAPT_PARAM": "( 0.1, 2.0, 10.0, 1e10 )",
+               # CFL=20 (NOT 1e3): SU2's own 3-D inviscid wing case
+               # (inv_ONERAM6.cfg) uses JST+multigrid at CFL=5. The old 1e3 was
+               # compute-bound on this 3-D mesh and never converged in 300 s ->
+               # silent fallback (the old "CL=0.1871"). CFL=20 + CFL_ADAPT
+               # converges the 660k mesh to rms -6 in ~210 s (morphed ~140 s).
+               "CFL_NUMBER": 20, "CFL_ADAPT": "YES",
+               "CFL_ADAPT_PARAM": "( 0.5, 1.5, 5.0, 100.0 )",
                "MGCYCLE": "W_CYCLE", "MGLEVEL": 3,
                "LINEAR_SOLVER": "FGMRES",
                "LINEAR_SOLVER_PREC": "ILU",
                "LINEAR_SOLVER_ITER": 10,
                "LINEAR_SOLVER_ERROR": 1e-10,
-               "ITER": 200, "CONV_FIELD": "RMS_DENSITY",
-               "CONV_RESIDUAL_MINVAL": -8, "CONV_STARTITER": 10,
+               "ITER": 500, "CONV_FIELD": "RMS_DENSITY",
+               "CONV_RESIDUAL_MINVAL": -6, "CONV_STARTITER": 10,
                "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
                "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
                "OUTPUT_FILES": "( RESTART, PARAVIEW, SURFACE_CSV )",
