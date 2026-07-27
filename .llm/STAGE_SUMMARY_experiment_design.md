@@ -54,13 +54,27 @@ estimate was wrong; correct all future budgeting to ~$3.75/run on Sonnet).
 
 ## 3. Experimental-design requirements BEFORE a paper run
 
-### 3.1 Fixed / controlled starting conditions
-- Top-level `param_sets.json` IS already fixed (seed 42, one design: AR 12.42, AREA 126.33,
-  SWEEP 36.46, TAPER 0.36, fuselage L 30.07 …). BUT the wide output spread suggests **agents
-  may re-morph the design mid-run** rather than solving the *given* design. For a clean
-  experiment (measuring which coordination structure *verifies/solves correctly*), the design
-  input must be held constant and the agents must evaluate THAT design, not choose their own.
-  **ACTION: audit whether the agents honor the fixed design input or re-sample it; pin it.**
+### 3.1 Fixed / controlled starting conditions — ALL parameters, ALL disciplines
+The independent variable is the **coordination structure ONLY**. Therefore EVERY starting
+parameter in EVERY discipline must be byte-identical across all 8 combos — not just the wing
+design. That includes:
+- **Geometry:** design inputs (AR, AREA, SWEEP, TAPER, fuselage dims). Top-level
+  `param_sets.json` is fixed (seed 42) BUT agents appear to re-morph mid-run (fuel spread
+  4650-8813 kg on the same input) — must pin so agents evaluate the GIVEN design, not their own.
+- **SU2 (aero):** full numerics preset (scheme, CFL, multigrid, linear solver, convergence,
+  markers, REF_*). AUDIT FINDING 2026-07-27: these are NOT identical today — the SU2 param
+  block hashes differ across the 5 configs (sequential=e6118eb0, graph/staged=7e8ba74d,
+  orchestrated=beba7193, networked=1c51cae3). CFL=20 is uniform now but other fields diverge.
+- **Aviary (mission):** the baseline **linear solver** (and nonlinear solver, atol/rtol,
+  maxiter, initial guesses). AUDIT FINDING: the aviary_mdo_f25_* configs pin NO explicit
+  solver — they fall through to defaults that may differ by how each combo invokes aviary.
+  These MUST be set explicitly and identically.
+- **Mass (structures) & Propulsion (pycycle):** all model settings / initial conditions.
+
+**ACTION (this is the core experimental-design task):** define ONE canonical baseline
+parameter set for every discipline, factor it into a single shared source, and make all 8
+combo configs reference EXACTLY it — so the ONLY thing that differs between combos is the
+orchestration structure. Then audit that agents don't override any of it at runtime.
 
 ### 3.2 Model choice (SOTA for the paper)
 - **Currently `anthropic/claude-sonnet-4-6`** (`config/mdo_f25_run_claude.yaml:4`).
