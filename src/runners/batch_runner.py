@@ -1322,8 +1322,8 @@ def _inject_stage_allowed_tools(ot_config: dict) -> None:
     agents_path = Path("config/sequential_agents.yaml")
     templates_config = None
     if agents_path.exists():
-        with open(agents_path) as f:
-            agents_cfg = yaml.safe_load(f) or {}
+        from src.config.loader import load_yaml
+        agents_cfg = load_yaml(agents_path)  # applies canonical <<...>> substitution
         templates_config = agents_cfg.get("templates")
 
     custom_stages = seq_cfg.get("custom_stages") or None

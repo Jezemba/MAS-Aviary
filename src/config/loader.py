@@ -163,7 +163,13 @@ def load_config(path: str | Path) -> AppConfig:
 
 
 def load_yaml(path: str | Path) -> dict[str, Any]:
-    """Load a raw YAML file and return its contents as a dict."""
+    """Load a raw YAML file and return its contents as a dict.
+
+    Canonical-baseline placeholders (``<<NAME>>``) in any string value are
+    substituted from ``config/mdo_f25_canonical_baseline.yaml`` so all combos
+    share one source of truth for discipline params. No-op for files without
+    placeholders.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"YAML file not found: {path}")
@@ -171,4 +177,9 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     with open(path, "r") as f:
         data = yaml.safe_load(f)
 
-    return data if data is not None else {}
+    if data is None:
+        return {}
+    # Lazy import to avoid any import-order coupling.
+    from src.config.canonical import substitute_obj
+
+    return substitute_obj(data)
