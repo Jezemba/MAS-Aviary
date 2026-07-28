@@ -76,12 +76,20 @@ def load_model(config: LLMConfig) -> Model:
                     pass
                 return msg
 
-        return CostTrackingLiteLLMModel(
-            model_id=config.model_id,
-            api_key=config.api_key or _pick_litellm_api_key(config.model_id),
-            max_tokens=config.max_new_tokens,
-            temperature=config.temperature,
-        )
+        # Opus 5 / 4.8 / 4.7, Fable 5, Sonnet 5 REMOVED sampling params — sending
+        # temperature returns 400 ("deprecated for this model"), and litellm's
+        # drop_params can't help because it doesn't yet know these new model IDs.
+        # So omit temperature entirely for those; keep it for models that accept it.
+        _NO_SAMPLING = ("opus-5", "opus-4-8", "opus-4-7", "fable-5", "mythos-5", "sonnet-5")
+        mid = (config.model_id or "").lower()
+        kwargs = {
+            "model_id": config.model_id,
+            "api_key": config.api_key or _pick_litellm_api_key(config.model_id),
+            "max_tokens": config.max_new_tokens,
+        }
+        if not any(s in mid for s in _NO_SAMPLING):
+            kwargs["temperature"] = config.temperature
+        return CostTrackingLiteLLMModel(**kwargs)
 
     if config.backend == "vllm":
         from smolagents import OpenAIServerModel
