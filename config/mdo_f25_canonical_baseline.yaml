@@ -1,0 +1,93 @@
+# ============================================================================
+# CANONICAL BASELINE — single source of truth for ALL discipline parameters.
+#
+# Experimental-design invariant: the ONLY thing that may differ between the 8
+# combos is the COORDINATION STRUCTURE. Every discipline's tool/solver inputs
+# come from THIS file (injected into the combo prompts via {{PLACEHOLDER}}
+# substitution in the config loader). If it affects a physics result, it lives
+# here, not in a per-combo prompt.
+#
+# DECISIONS still needed from the domain expert are marked  # >>> DECISION.
+# Created 2026-07-27 on branch feat/paper-experiment-design.
+# ============================================================================
+
+# ---- GEOMETRY (tigl-mcp, port 8500) ----------------------------------------
+geometry:
+  wing_component_uid: "Wing1"          # was "Wing" in orch/net (caused NotFound retries)
+  fuselage_component_uid: "Fuselage1"
+  far_field_distance: 10.0             # was 10.0 vs 50 across combos
+  # Mesh sizing: leave UNSET so generate_volume_mesh auto-scales relative to the
+  # geometry characteristic length (~660k cells). Do NOT pass absolute mesh_size_*.
+  mesh_size_min: null
+  mesh_size_max: null
+
+# ---- AERODYNAMICS (su2-mcp, port 8200) -------------------------------------
+# Full SU2 numerics, verified end-to-end in run6 (real 155 s converged solve).
+# REF_* are NOT hardcoded — they are DERIVED from the actual (fixed) geometry via
+# get_wing_summary so coefficients are correct; the derivation rule is identical
+# for all combos (do not hardcode the D150 baseline 61.39 as graph/staged did).
+su2_config:
+  SOLVER: "EULER"
+  MATH_PROBLEM: "DIRECT"
+  MACH_NUMBER: 0.78
+  AOA: 2.0
+  REYNOLDS_NUMBER: 30000000
+  KIND_TURB_MODEL: "SA"
+  FREESTREAM_PRESSURE: 26500.0
+  FREESTREAM_TEMPERATURE: 233.0
+  REF_DIMENSIONALIZATION: "DIMENSIONAL"
+  CONV_NUM_METHOD_FLOW: "JST"
+  JST_SENSOR_COEFF: "( 0.5, 0.02 )"
+  NUM_METHOD_GRAD: "WEIGHTED_LEAST_SQUARES"
+  TIME_DISCRE_FLOW: "EULER_IMPLICIT"
+  CFL_NUMBER: 20
+  CFL_ADAPT: "YES"
+  CFL_ADAPT_PARAM: "( 0.5, 1.5, 5.0, 100.0 )"
+  MGCYCLE: "W_CYCLE"
+  MGLEVEL: 3
+  LINEAR_SOLVER: "FGMRES"
+  LINEAR_SOLVER_PREC: "ILU"
+  LINEAR_SOLVER_ITER: 10
+  LINEAR_SOLVER_ERROR: 1E-10
+  ITER: 500
+  CONV_FIELD: "RMS_DENSITY"
+  CONV_RESIDUAL_MINVAL: -6
+  CONV_STARTITER: 10
+  HISTORY_OUTPUT: "( ITER, RMS_RES, AERO_COEFF )"
+  SCREEN_OUTPUT: "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )"
+  OUTPUT_FILES: "( RESTART, PARAVIEW, SURFACE_CSV )"
+  RESTART_SOL: "NO"
+  MARKER_EULER: "( aircraft )"
+  MARKER_FAR: "( farfield )"
+  MARKER_PLOTTING: "( aircraft )"
+  MARKER_MONITORING: "( aircraft )"
+  # REF_AREA / REF_LENGTH / REF_ORIGIN_MOMENT_{X,Y,Z}: derive from get_wing_summary
+  # of the current geometry (upstream DESIGN_STATE), identical rule for all combos.
+  ref_from_upstream: true
+
+# ---- MASS / STRUCTURES (mass-mcp, port 8700) -------------------------------
+mass:
+  material: "aluminum"                 # VERIFIED runs in OAS (mWing 11,420 kg, no error, 2026-07-27)
+  design_load_factor: 2.5
+  wing_mass_method: "both"             # >>> DECISION: was "both" (seq) vs "flops" (orch/net).
+                                       # "both" runs flops+oas (material matters); "flops" ignores
+                                       # material. Pick one for all combos. Default "both" so the
+                                       # aluminum choice is actually exercised.
+
+# ---- PROPULSION (pycycle-mcp, port 8400) -----------------------------------
+propulsion:
+  design_mach: 0.78                    # MN at design point
+  design_altitude_ft: 33000
+  OPR: 40.0                            # overall pressure ratio (uniform where set)
+  T4_degR: 1700.0                      # >>> DECISION: turbine inlet temp — 1700 (seq) vs 1600 (orch).
+                                       # 100 K delta changes SFC/thrust. Confirm the canonical value + units.
+  design_thrust: null                  # >>> DECISION: reconcile Fn=28 (graph) vs thrust=124.5 (orch) —
+                                       # different targets/units. Pin ONE net thrust @ design point.
+  fan_pressure_ratio: null             # >>> DECISION: not specified in any combo — set explicitly or accept HBTF default.
+
+# ---- MISSION (aviary-mcp, port 8600) — already uniform, keep ---------------
+mission:
+  cruise_mach: 0.78
+  cruise_altitude_ft: 33000
+  range_nmi: 2500                      # NOTE: reference benchmark uses 1500 nmi @ M0.785/35000ft — reconcile with ground truth
+  optimizer_max_iter: 200              # SLSQP iteration budget
