@@ -514,9 +514,16 @@ def run_stat_batch(
     wb_project = os.environ.get("WANDB_PROJECT", "mas-aviary-stat")
     wb_run = None
     if HAS_WANDB:
+        # One chain per combo => name the trace after the combo so the 8 paper
+        # chains are cleanly labeled. Multi-combo invocations keep the generic name.
+        if len(combos) == 1:
+            _tag = combos[0].name.replace("mdo_f25_", "")
+            _wb_name = f"chain{n_repeats}_{_tag}_{int(time.time())}"
+        else:
+            _wb_name = f"stat_{n_repeats}x{len(combos)}_{int(time.time())}"
         wb_run = wandb.init(
             project=wb_project,
-            name=f"stat_{n_repeats}x{len(combos)}_{int(time.time())}",
+            name=_wb_name,
             config={
                 "n_repeats": n_repeats,
                 "n_combos": len(combos),
