@@ -122,46 +122,12 @@ mdo_f25_graph:
              mesh_base64=<MESH_BASE64 ref from GEOMETRY_SETUP>,
              mesh_file_name="mesh.su2", update_config=True).
         3. Call update_config_entries(session_id=<SU2_SESSION_ID>,
-             create_if_missing=True, updates=<the EXACT dict below>):
-             {
-               "SOLVER": "EULER", "MATH_PROBLEM": "DIRECT",
-               "KIND_TURB_MODEL": "SA", "RESTART_SOL": "NO",
-               "MACH_NUMBER": 0.78, "AOA": 2.0,
-               "REYNOLDS_NUMBER": 30000000,
-               "FREESTREAM_PRESSURE": 26500.0,
-               "FREESTREAM_TEMPERATURE": 233.0,
-               "REF_DIMENSIONALIZATION": "DIMENSIONAL",
-               "REF_AREA": 61.39076274891849,
-               "REF_LENGTH": 4.192320937872386,
-               "REF_ORIGIN_MOMENT_X": 15.280145964476011,
-               "REF_ORIGIN_MOMENT_Y": 6.54558738384396,
-               "REF_ORIGIN_MOMENT_Z": -0.7921210525374252,
-               "CONV_NUM_METHOD_FLOW": "JST",
-               "JST_SENSOR_COEFF": "( 0.5, 0.02 )",
-               "NUM_METHOD_GRAD": "WEIGHTED_LEAST_SQUARES",
-               "TIME_DISCRE_FLOW": "EULER_IMPLICIT",
-               # CFL=20 (NOT 1e3): SU2's own 3-D inviscid wing case
-               # (inv_ONERAM6.cfg) uses JST+multigrid at CFL=5. The old 1e3 was
-               # compute-bound on this 3-D mesh and never converged in 300 s ->
-               # silent fallback (the old "CL=0.1871"). CFL=20 + CFL_ADAPT
-               # converges the 660k mesh to rms -6 in ~210 s (morphed ~140 s).
-               "CFL_NUMBER": 20, "CFL_ADAPT": "YES",
-               "CFL_ADAPT_PARAM": "( 0.5, 1.5, 5.0, 100.0 )",
-               "MGCYCLE": "W_CYCLE", "MGLEVEL": 3,
-               "LINEAR_SOLVER": "FGMRES",
-               "LINEAR_SOLVER_PREC": "ILU",
-               "LINEAR_SOLVER_ITER": 10,
-               "LINEAR_SOLVER_ERROR": 1e-10,
-               "ITER": 500, "CONV_FIELD": "RMS_DENSITY",
-               "CONV_RESIDUAL_MINVAL": -6, "CONV_STARTITER": 10,
-               "HISTORY_OUTPUT": "( ITER, RMS_RES, AERO_COEFF )",
-               "SCREEN_OUTPUT": "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
-               "OUTPUT_FILES": "( RESTART, PARAVIEW, SURFACE_CSV )",
-               "MARKER_EULER": "( aircraft )",
-               "MARKER_FAR": "( farfield )",
-               "MARKER_PLOTTING": "( aircraft )",
-               "MARKER_MONITORING": "( aircraft )"
-             }
+             create_if_missing=True, updates=<<SU2_CONFIG>>):
+             # SU2 numerics come from the canonical baseline (identical for ALL combos).
+             # Then set REF from the ACTUAL geometry via get_wing_summary (do NOT hardcode
+             # the D150 baseline 61.39) in a SECOND update_config_entries call:
+             # {"REF_AREA": <WING_REF_AREA_M2>, "REF_LENGTH": <WING_MAC_LENGTH_M>,
+             #  "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}.
            Markers `aircraft` / `farfield` match gmsh's tags on this
            mesh; the data-plane middleware also auto-corrects common
            guesses (`wall`, `wing`, etc.).

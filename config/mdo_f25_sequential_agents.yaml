@@ -279,97 +279,11 @@ templates:
              config requires ALL of these together; piecemeal calls
              return "missing_required" warnings and burn a step:
 
-               updates = {
-                 # ── Mission state ────────────────────────────────────
-                 "MACH_NUMBER": 0.78,
-                 "AOA": 2.0,
-                 "REYNOLDS_NUMBER": 30000000,
-                 "FREESTREAM_PRESSURE": 26500.0,   # Pa at 33 kft
-                 "FREESTREAM_TEMPERATURE": 233.0,  # K at 33 kft
-                 "MATH_PROBLEM": "DIRECT",
-                 "RESTART_SOL": "NO",
-                 "REF_DIMENSIONALIZATION": "DIMENSIONAL",
-                 # ── Reference geometry ───────────────────────────────
-                 # Plug these in from the geometry stage's DESIGN_STATE
-                 # block (fields WING_REF_AREA_M2, WING_MAC_LENGTH_M,
-                 # WING_MAC_QC_X/Y/Z). Without them SU2 defaults A_ref
-                 # to 1.0 m² and CL/CD come out ~60× too large in
-                 # magnitude (Phase G.3 finding from Run #11 —
-                 # CL=11.49 → real ≈ 0.19 after rescaling). The signs
-                 # are correct; only the scaling is wrong.
-                 "REF_AREA":             <WING_REF_AREA_M2 from upstream DESIGN_STATE>,
-                 "REF_LENGTH":           <WING_MAC_LENGTH_M from upstream DESIGN_STATE>,
-                 "REF_ORIGIN_MOMENT_X":  <WING_MAC_QC_X from upstream DESIGN_STATE>,
-                 "REF_ORIGIN_MOMENT_Y":  <WING_MAC_QC_Y from upstream DESIGN_STATE>,
-                 "REF_ORIGIN_MOMENT_Z":  <WING_MAC_QC_Z from upstream DESIGN_STATE>,
-                 # ── Solver core (Euler) ──────────────────────────────
-                 "SOLVER": "EULER",
-                 "KIND_TURB_MODEL": "SA",
-                 "CONV_NUM_METHOD_FLOW":  "JST",
-                 "JST_SENSOR_COEFF":      "( 0.5, 0.02 )",
-                 "NUM_METHOD_GRAD":       "WEIGHTED_LEAST_SQUARES",
-                 "TIME_DISCRE_FLOW":      "EULER_IMPLICIT",
-                 # ── Pseudo-time stepping ─────────────────────────────
-                 # CFL=20 (NOT 1e3). SU2's OWN 3-D inviscid wing test case
-                 # (TestCases/euler/oneram6/inv_ONERAM6.cfg) uses JST + 3-level
-                 # multigrid with CFL=5. The old preset carried CFL=1e3 (200x
-                 # too high) copied from the 2-D inv_NACA0012 case — at 1e3 the
-                 # multigrid solve on this 3-D unstructured mesh is compute-bound
-                 # and NEVER converges within the 300 s cap, so the step silently
-                 # fell back to reference CL/CD (that fallback is where the old
-                 # "CL=0.1871" came from — it was never a real solve; Run #4/#5
-                 # diagnosis 2026-07-27). CFL=20 with CFL_ADAPT converges the
-                 # SAME 660k mesh cleanly to rms -6 in ~100 iters / ~210 s
-                 # (morphed 673k wing: ~70 iters / ~140 s), verified tool-level.
-                 # Do NOT raise CFL back toward 1e3.
-                 "CFL_NUMBER": 20,
-                 "CFL_ADAPT":  "YES",
-                 "CFL_ADAPT_PARAM": "( 0.5, 1.5, 5.0, 100.0 )",
-                 # ── Multigrid ────────────────────────────────────────
-                 "MGCYCLE":     "W_CYCLE",
-                 "MGLEVEL":     3,
-                 # ── Linear solver ────────────────────────────────────
-                 "LINEAR_SOLVER":       "FGMRES",
-                 "LINEAR_SOLVER_PREC":  "ILU",
-                 "LINEAR_SOLVER_ITER":  10,
-                 "LINEAR_SOLVER_ERROR": 1E-10,
-                 # ── Convergence (density residual, loose -6) ─────────
-                 # Converge on RMS_DENSITY to -6 (SU2 ONERA M6 uses -12 for a
-                 # fully-converged reference; -6 is ample for engineering CL/CD
-                 # and faster). At CFL=20 the lift coefficient is dead-steady
-                 # by ~rms -4, and the solve reaches -6 in ~100 iters (660k) /
-                 # ~70 iters (morphed 673k). ITER=500 is only a backstop.
-                 # (Do NOT use a Cauchy/force convergence here — it was an
-                 # earlier wrong turn; the real fix was CFL, not the criterion.)
-                 "ITER":                  500,
-                 "CONV_FIELD":            "RMS_DENSITY",
-                 "CONV_RESIDUAL_MINVAL":  -6,
-                 "CONV_STARTITER":        10,
-                 # ── Output (request CL/CD in history.csv) ────────────
-                 # SU2's default HISTORY_OUTPUT writes only the residuals.
-                 # Adding AERO_COEFF puts CL, CD, and the moment
-                 # coefficients into history.csv so the agent can read
-                 # them in step 7. Without this the last row only has
-                 # rms[Rho], and the agent has no choice but to fall back
-                 # to F25 reference values (Run #7 2026-05-16 finding).
-                 "HISTORY_OUTPUT":  "( ITER, RMS_RES, AERO_COEFF )",
-                 "SCREEN_OUTPUT":   "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )",
-                 # SU2's default OUTPUT_FILES skips the surface CSV, so
-                 # sample_surface_solution errors with a UTF-8 decode
-                 # failure when it tries to open the binary surface.vtu.
-                 # Add SURFACE_CSV so we get surface_flow.csv too
-                 # (Run #11 finding, 2026-05-18).
-                 "OUTPUT_FILES":    "( RESTART, PARAVIEW, SURFACE_CSV )",
-                 # ── Boundary markers ─────────────────────────────────
-                 # These MUST match the names baked into the volume mesh
-                 # produced by tigl.generate_volume_mesh:
-                 #   wall     = "aircraft"
-                 #   farfield = "farfield"
-                 "MARKER_EULER":      "( aircraft )",
-                 "MARKER_FAR":        "( farfield )",
-                 "MARKER_PLOTTING":   "( aircraft )",
-                 "MARKER_MONITORING": "( aircraft )",
-               }
+               updates=<<SU2_CONFIG>>
+                 # SU2 numerics from the canonical baseline (identical for ALL combos).
+                 # REF is design-dependent: set it in a SECOND update_config_entries call
+                 # from upstream geometry (get_wing_summary): {"REF_AREA": <WING_REF_AREA_M2>,
+                 # "REF_LENGTH": <WING_MAC_LENGTH_M>, "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}
 
              Why these numerics matter (this is SU2's ONERA M6 recipe):
                • JST + W_CYCLE multigrid + FGMRES + WLS gradient is exactly
