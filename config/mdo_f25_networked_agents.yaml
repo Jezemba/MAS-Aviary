@@ -40,11 +40,12 @@ peer_template:
 
     3. mass-mcp (Structures — port 8700, 3 tools):
        validate_cpacs_inputs(cpacs_file_path) → parameter report
-       estimate_mass(cpacs_file_path, wing_mass_method="<<WING_MASS_METHOD>>"|"oas"|"both",
-                     material="<<MATERIAL>>"|"composite", design_load_factor=<<DESIGN_LOAD_FACTOR>>)
+       estimate_mass(cpacs_file_path, wing_mass_method="<<WING_MASS_METHOD>>",
+                     material="<<MATERIAL>>", design_load_factor=<<DESIGN_LOAD_FACTOR>>)
                      → oem_kg, wing_mass_kg, component_breakdown
        get_cpacs_mass_breakdown(cpacs_file_path)
-       F25: OEM 46300 kg. Use "oas" for high-AR configs (FLOPS valid only for AR 7-12).
+       F25: OEM 46300 kg. wing_mass_method and material are FIXED controls — pass them
+       EXACTLY as shown; do NOT substitute "oas", "both", or "composite".
 
     4. pyCycle (Propulsion — port 8400, 10 tools):
        create_cycle_model(cycle_type="turbofan", mode="design") → session_id

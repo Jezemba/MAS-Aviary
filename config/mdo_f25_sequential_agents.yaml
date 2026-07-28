@@ -442,21 +442,19 @@ templates:
           cpacs_file_path       Path to the CPACS XML file modified by geometry stage.
                                 REQUIRED.
 
-          wing_mass_method      "flops" | "gasp" | "oas" | "both"
-                                Default: "flops"
-                                "flops"/"gasp": Empirical regression (~10-15% accuracy).
-                                  Valid for AR 7–12, sweep 15–40 deg, t/c 0.08–0.15.
-                                  NOTE: F25 AR=15.6 exceeds FLOPS validity range.
-                                "oas": OpenAeroStruct VLM+FEM (~5% accuracy, slower).
-                                  Captures high-AR effects better.
-                                "both": Runs FLOPS and OAS, returns both for comparison.
+          wing_mass_method      FIXED for this study: "<<WING_MASS_METHOD>>".
+                                Call estimate_mass with EXACTLY this value — do NOT
+                                pass "oas", "gasp", or "both". The mass fidelity is
+                                held constant across every coordination structure so
+                                the ONLY thing that varies is the org design; changing
+                                the method would confound the comparison.
+                                (FLOPS = empirical regression; runs in seconds.)
 
-          aviary_mass_method    "FLOPS" | "GASP". Default: "FLOPS"
-                                Selects regression set for non-wing components.
+          aviary_mass_method    FIXED: "FLOPS". Regression set for non-wing components.
 
-          material              "aluminum" | "composite". Default: "aluminum"
-                                Composite reduces wing mass by ~15–25%.
-                                F25 targets 2035 technology with composite wings.
+          material              FIXED for this study: "<<MATERIAL>>".
+                                Call estimate_mass with EXACTLY this value — do NOT
+                                pass "composite". Held constant across all combos.
 
           oas_wing_weight_ratio  Calibration factor for OAS wing mass. Default: 1.25
                                 Range: 1.0–2.0. Accounts for secondary structure.
@@ -475,17 +473,16 @@ templates:
 
           ── STRUCTURAL CONSTRAINTS ────────────────────────────────────────
 
-          C7: Rear spar height >= 0.15 m (check via OAS structural model)
-          C9: Buckling margin >= 1.0 (check via OAS FEM, if using "oas" method)
+          C7: Rear spar height >= 0.15 m (structural check, scored by the harness)
+          C9: Buckling margin >= 1.0 (structural check, scored by the harness)
 
           ── COUPLING EFFECTS ──────────────────────────────────────────────
 
           - Higher AR or span from geometry → heavier wing structure
           - The "snowball effect": heavier OEM → higher MTOM → more fuel →
             even heavier. Must converge through MDO iteration.
-          - Composite material can offset AR-driven mass increase by 15–25%
-          - Wing mass accuracy drops for AR > 12 with empirical methods;
-            use "oas" or "both" for high-AR configurations like F25
+          - To reduce wing mass, change the DESIGN (lower AR, less span, more
+            taper) — NOT the mass method or material, which are fixed controls.
 
           ── YOUR TASK ─────────────────────────────────────────────────────
 
@@ -501,8 +498,8 @@ templates:
                material="<<MATERIAL>>",
                design_load_factor=<<DESIGN_LOAD_FACTOR>>
              )
-             Use "both" to get FLOPS and OAS estimates for comparison.
-             Use "composite" for F25 (2035 technology target).
+             These three settings are FIXED — pass them exactly as written.
+             Do NOT substitute "both", "oas", or "composite".
 
           4. If OEM exceeds 50,000 kg, note this as a structural concern —
              the design may be too heavy for the mission constraints.
@@ -516,8 +513,8 @@ templates:
             OEM_KG: <value>
             WING_MASS_KG: <value>
             FUSELAGE_MASS_KG: <value>
-            MASS_METHOD_USED: <flops/oas/both>
-            MATERIAL: <aluminum/composite>
+            MASS_METHOD_USED: <<WING_MASS_METHOD>>
+            MATERIAL: <<MATERIAL>>
             OEM_VS_BASELINE: <delta from 46300 kg, as percentage>
             STRUCTURAL_WARNINGS: <any out-of-range or high-mass notes>
             CPACS_VALIDATION: <summary of validate_cpacs_inputs result>

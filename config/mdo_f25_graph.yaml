@@ -176,11 +176,11 @@ mdo_f25_graph:
         1. Call validate_cpacs_inputs(cpacs_file_path=<paste the
            absolute path string verbatim>) to check ranges.
         2. Call estimate_mass(cpacs_file_path=<same path>,
-             wing_mass_method="FLOPS")
-           v18 verified that OAS-converged FLOPS produces OEM≈33,783 kg
-           and Wing≈9,547 kg on this fixture (wandb 7ngitswj).
-           Prefer FLOPS for reliability — passing "both" or "OAS" can
-           hit OAS NaN failures on some geometries.
+             wing_mass_method="<<WING_MASS_METHOD>>",
+             material="<<MATERIAL>>",
+             design_load_factor=<<DESIGN_LOAD_FACTOR>>)
+           These three settings are FIXED experimental controls — pass them
+           EXACTLY as written; do NOT substitute "both", "oas", or "composite".
         3. (optional) Call get_cpacs_mass_breakdown(cpacs_file_path=
            <same path>) for the per-component view.
 

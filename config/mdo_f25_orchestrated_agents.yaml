@@ -86,12 +86,13 @@ agents:
 
       3. mass-mcp (Structures — port 8700, 3 tools):
          validate_cpacs_inputs(cpacs_file_path) → parameter presence/range report
-         estimate_mass(cpacs_file_path, wing_mass_method="<<WING_MASS_METHOD>>"|"gasp"|"oas"|"both",
-                       material="<<MATERIAL>>"|"composite", design_load_factor=<<DESIGN_LOAD_FACTOR>>,
+         estimate_mass(cpacs_file_path, wing_mass_method="<<WING_MASS_METHOD>>",
+                       material="<<MATERIAL>>", design_load_factor=<<DESIGN_LOAD_FACTOR>>,
                        oas_wing_weight_ratio=1.25)
                        → oem_kg, wing_mass_kg, fuselage_mass_kg, component_breakdown
          get_cpacs_mass_breakdown(cpacs_file_path) → stored mass data
-         F25 targets: OEM 46300 kg. FLOPS valid for AR 7-12 (F25 AR=15.6 outside range — use "oas").
+         F25 targets: OEM 46300 kg. wing_mass_method and material are FIXED controls —
+         pass them EXACTLY as shown; do NOT substitute "oas", "gasp", "both", or "composite".
 
       4. pyCycle MCP (Propulsion — port 8400, 10 tools):
          create_cycle_model(cycle_type="turbofan", mode="design") → session_id

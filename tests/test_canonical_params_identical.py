@@ -100,6 +100,30 @@ def test_granular_placeholders_render_to_canonical():
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)
+def test_mass_call_pins_flops_aluminum(cfg):
+    """Regression for the 2026-07-28 deviation: an agent called estimate_mass with
+    wing_mass_method='both'/material='composite' because the prompt offered them as
+    a menu (<<...>>"|"both") and prose recommended composite/oas for F25. After
+    rendering, EVERY estimate_mass arg must resolve to the pinned canonical value,
+    with no option-menu, no uppercase "FLOPS" (fails the mass-mcp Literal), and no
+    off-canonical value passed as a CALL argument."""
+    rendered = substitute_text(_text(cfg))
+    # No option-menu on the pinned controls (placeholder immediately followed by |"alt").
+    assert not re.search(r'wing_mass_method="[a-z]+"\|', rendered), \
+        f'{cfg} still offers a wing_mass_method menu'
+    assert not re.search(r'material="[a-z]+"\|', rendered), \
+        f'{cfg} still offers a material menu'
+    # Uppercase "FLOPS" is NOT a valid wing_mass_method (Literal is lowercase-only).
+    assert 'wing_mass_method="FLOPS"' not in rendered, \
+        f'{cfg} passes uppercase FLOPS (fails mass-mcp Pydantic Literal)'
+    # Every value actually PASSED as a call arg must be the canonical one.
+    methods = set(re.findall(r'wing_mass_method="([a-zA-Z]+)"', rendered))
+    materials = set(re.findall(r'material="([a-zA-Z]+)"', rendered))
+    assert methods == {"flops"}, f"{cfg} passes non-canonical wing_mass_method values: {methods}"
+    assert materials == {"aluminum"}, f"{cfg} passes non-canonical material values: {materials}"
+
+
+@pytest.mark.parametrize("cfg", COMBO_CONFIGS)
 def test_no_unresolved_placeholders_after_load(cfg):
     """load_yaml must resolve every <<...>>; none may survive into the runtime config."""
     loaded = load_yaml(cfg)

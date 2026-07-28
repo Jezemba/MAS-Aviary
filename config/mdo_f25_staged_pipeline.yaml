@@ -153,7 +153,11 @@ mdo_f25_pipeline:
           1. validate_cpacs_inputs(cpacs_file_path="<paste the full
              absolute path string>")
           2. estimate_mass(cpacs_file_path="<paste the same path>",
-             wing_mass_method="FLOPS")
+             wing_mass_method="<<WING_MASS_METHOD>>",
+             material="<<MATERIAL>>",
+             design_load_factor=<<DESIGN_LOAD_FACTOR>>)
+             These are FIXED controls — pass exactly as written; do NOT
+             substitute "both", "oas", or "composite".
           3. (optional) get_cpacs_mass_breakdown for the per-component view
 
         Output (in DESIGN_STATE):

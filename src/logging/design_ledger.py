@@ -35,6 +35,16 @@ _OUTPUT_KEYS = [
     ("sfc", r'\bSFC"?[:=\s]+([0-9.]+)'),
     ("net_thrust_lbf", r'Fn"?[:=\s]+([0-9.]+)'),
 ]
+# PINNED discipline controls the agent is told to hold constant. We record what it
+# ACTUALLY passed so post-sweep we can verify every run held them fixed (and flag
+# any deviation) WITHOUT re-running — the final 5-repeat sweep can't be redone.
+_CONTROL_TOOLS = {"estimate_mass"}
+_CONTROL_KEYS = [
+    ("wing_mass_method", r'wing_mass_method"?\s*[:=]\s*"?([a-zA-Z]+)"?'),
+    ("material", r'\bmaterial"?\s*[:=]\s*"?([a-zA-Z]+)"?'),
+]
+# What each pinned control MUST equal (from the canonical baseline).
+_CONTROL_EXPECTED = {"wing_mass_method": "flops", "material": "aluminum"}
 
 
 def _last_float(pattern: str, text: str) -> float | None:
@@ -60,6 +70,32 @@ def _applied_design(traces: dict[str, Any]) -> dict[str, float]:
                     if v is not None:
                         out[key] = v
     return out
+
+
+def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
+    """What pinned discipline controls the agent actually passed to estimate_mass,
+    plus a per-control deviation flag vs the canonical baseline. Last-write-wins."""
+    applied: dict[str, str] = {}
+    for body in (traces or {}).values():
+        if not isinstance(body, dict):
+            continue
+        for st in body.get("steps", []) or []:
+            for tc in st.get("tool_calls") or []:
+                name = tc.get("name") or (tc.get("function") or {}).get("name")
+                if name not in _CONTROL_TOOLS:
+                    continue
+                args = tc.get("arguments") or (tc.get("function") or {}).get("arguments")
+                s = args if isinstance(args, str) else json.dumps(args)
+                for key, pat in _CONTROL_KEYS:
+                    m = re.findall(pat, s)
+                    if m:
+                        applied[key] = m[-1].lower()
+    deviations = {
+        k: {"got": applied[k], "expected": exp}
+        for k, exp in _CONTROL_EXPECTED.items()
+        if k in applied and applied[k] != exp
+    }
+    return {"applied": applied, "held_constant": not deviations, "deviations": deviations}
 
 
 def _discipline_outputs(traces: dict[str, Any]) -> dict[str, float]:
@@ -94,6 +130,8 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
         "model_id": tb.get("model_id"),
         # design the agents actually applied (from tool-call args)
         "design_applied": _applied_design(traces),
+        # pinned discipline controls the agent passed + deviation flag (must be constant)
+        "controls_applied": _controls_applied(traces),
         # discipline outputs across the MCPs
         "discipline_outputs": _discipline_outputs(traces),
         # final mission outcomes (authoritative, from the eval)
