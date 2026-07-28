@@ -101,6 +101,45 @@ orchestration structure. Then audit that agents don't override any of it at runt
 - **Trade-off to decide:** SOTA model (Opus 5, few/no repeats, over budget) vs statistical
   power (Sonnet 4.6, 3 repeats, in budget) vs a hybrid (Opus 5 on a subset of combos).
 
+## 3.5 CROSS-DISCIPLINE parameter divergence audit (2026-07-27) — it is NOT just SU2
+
+Audited the initial params passed to ALL 5 MCPs across the 5 combo configs. Divergences
+everywhere except the mission optimizer:
+
+| MCP | Parameter | Divergence |
+|---|---|---|
+| Geometry (tigl) | `far_field_distance` | 10.0 vs 50 (graph has both) |
+| Geometry | `component_uid` | "Wing" (orch/net) vs "Wing1" (others) — the retry bug |
+| Geometry | mesh sizing | specified in some, absent in others |
+| SU2 (aero) | full numerics | orch/net specify ~10 keys, others ~30; REF hardcoded 61.39 in graph/staged |
+| Mass | `material` | **"aluminum" vs "composite"** — different wing mass |
+| Mass | `load_factor`, `wing_mass_method` | present in some, absent/other in others |
+| Propulsion (pycycle) | design point (MN, OPR, T4, thrust, fan_pr) | pinned in some configs only |
+| Mission (aviary/SLSQP) | mach/alt/range/max_iter | UNIFORM (0.78 / 33000 / 2500 / 200) — the only clean one |
+
+Every one of these changes the output independent of the coordination structure => confound.
+
+## 3.6 Shared-source refactor — architecture (chosen approach)
+
+Constraint: the config loader (`src/config/loader.py`) is plain `yaml.safe_load` + env
+overrides. Discipline params live as literal TEXT inside agent `role: |` prose blocks
+(`stage_defaults` + `templates`). YAML anchors cannot interpolate into a `|` block scalar, so
+a true single source needs a small TEMPLATING LAYER:
+
+1. **`config/mdo_f25_canonical_baseline.yaml`** — one file holding the canonical baseline for
+   EVERY discipline (geometry design inputs + mesh + component_uid; full SU2 numerics + REF
+   derivation rule; mass material/load_factor/method; pycycle design point; mission already
+   uniform). Single source of truth.
+2. **Placeholder substitution in the loader/runner** — role prompts reference placeholders
+   (e.g. `{{SU2_CONFIG}}`, `{{MESH_PARAMS}}`, `{{MASS_PARAMS}}`, `{{PROP_DESIGN_POINT}}`); the
+   loader substitutes the canonical values at load time. Prose that differs = COORDINATION
+   instructions only; physics inputs come from the shared file.
+3. **A test** (`tests/test_canonical_params_identical.py`) asserting all 8 combos resolve to
+   byte-identical discipline params — so drift can never silently return.
+
+Effort: moderate (new file + ~loader change + refactor all 5 combo configs to placeholders +
+test). This is the core experimental-design deliverable; do it before any paid paper run.
+
 ## 4. Open decisions (settle before launching the paper run)
 
 1. **Model:** Opus 5 (SOTA, expensive) vs Sonnet 4.6 (cheaper, more repeats)? Or Opus 5
