@@ -262,13 +262,10 @@ mdo_f25_graph:
         FEEDBACK FROM PREVIOUS REVIEW PASS:
           {recommended_changes}
 
-        1. Call configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=200,
+        1. Call configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=<<NUM_PASSENGERS>>,
              cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
              optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>).
-           The F25 spec says 239 passengers, but aviary-mcp validates
-           num_passengers <= 200 — use 200 here (v18 worker recovered
-           from this cap on its own; doing it pre-emptively saves a
-           round-trip).
+           These are FIXED DLR-F25 mission values — pass them exactly as written.
         2. Call set_aircraft_parameters with the BASELINE below, then
            apply any nudges from the FEEDBACK above (see step 3):
              "Aircraft.Wing.ASPECT_RATIO": 11.0,

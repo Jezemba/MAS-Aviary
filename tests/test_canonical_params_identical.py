@@ -100,6 +100,28 @@ def test_granular_placeholders_render_to_canonical():
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)
+def test_mission_call_pins_canonical_dlr_f25(cfg):
+    """Regression for the 2026-07-28 num_passengers divergence: sequential + graph
+    hardcoded num_passengers=200 (to dodge the old MAX_PASSENGERS=200 guard) while
+    the others rendered 239. Since num_passengers drives payload mass and the
+    reference optimum is at 239, every configure_mission call must resolve to the
+    identical canonical DLR-F25 values with NO A320 leftovers as call args."""
+    rendered = substitute_text(_text(cfg))
+    pax = set(re.findall(r"num_passengers=([0-9]+)", rendered))
+    rng = set(re.findall(r"range_nmi=([0-9]+)", rendered))
+    mach = set(re.findall(r"cruise_mach=([0-9.]+)", rendered))
+    alt = set(re.findall(r"cruise_altitude_ft=([0-9]+)", rendered))
+    assert pax == {"239"}, f"{cfg} passes non-canonical num_passengers: {pax}"
+    assert rng == {"2500"}, f"{cfg} passes non-canonical range_nmi: {rng}"
+    assert mach == {"0.78"}, f"{cfg} passes non-canonical cruise_mach: {mach}"
+    assert alt == {"33000"}, f"{cfg} passes non-canonical cruise_altitude_ft: {alt}"
+    # No A320-class leftovers passed as call arguments.
+    for leftover in ("num_passengers=200", "num_passengers=162", "range_nmi=1500",
+                     "cruise_mach=0.785", "cruise_altitude_ft=35000"):
+        assert leftover not in rendered, f"{cfg} still passes A320 leftover: {leftover}"
+
+
+@pytest.mark.parametrize("cfg", COMBO_CONFIGS)
 def test_mass_call_pins_flops_aluminum(cfg):
     """Regression for the 2026-07-28 deviation: an agent called estimate_mass with
     wing_mass_method='both'/material='composite' because the prompt offered them as

@@ -240,8 +240,18 @@ def setup_session_with_params(
         num_passengers=_m.get("num_passengers", 239),
         cruise_mach=_m.get("cruise_mach", 0.78),
         cruise_altitude_ft=_m.get("cruise_altitude_ft", 33000),
+        optimizer_max_iter=_m.get("optimizer_max_iter", 200),
     )
     results["configure_mission"] = resp
+
+    # FAIL LOUD: a rejected configure_mission would otherwise leave the session on
+    # (partly) default A320 mission values, silently corrupting every run. The
+    # experiment REQUIRES the identical canonical DLR-F25 mission at each run's start.
+    if isinstance(resp, dict) and resp.get("error"):
+        raise RuntimeError(
+            f"configure_mission REJECTED the canonical mission — refusing to run on a "
+            f"corrupted mission. Response: {resp}"
+        )
 
     return results
 

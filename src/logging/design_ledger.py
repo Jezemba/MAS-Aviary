@@ -38,13 +38,21 @@ _OUTPUT_KEYS = [
 # PINNED discipline controls the agent is told to hold constant. We record what it
 # ACTUALLY passed so post-sweep we can verify every run held them fixed (and flag
 # any deviation) WITHOUT re-running — the final 5-repeat sweep can't be redone.
-_CONTROL_TOOLS = {"estimate_mass"}
+_CONTROL_TOOLS = {"estimate_mass", "configure_mission"}
 _CONTROL_KEYS = [
     ("wing_mass_method", r'wing_mass_method"?\s*[:=]\s*"?([a-zA-Z]+)"?'),
     ("material", r'\bmaterial"?\s*[:=]\s*"?([a-zA-Z]+)"?'),
+    ("num_passengers", r'num_passengers"?\s*[:=]\s*"?([0-9]+)"?'),
+    ("range_nmi", r'range_nmi"?\s*[:=]\s*"?([0-9]+)"?'),
+    ("cruise_mach", r'cruise_mach"?\s*[:=]\s*"?([0-9.]+)"?'),
+    ("cruise_altitude_ft", r'cruise_altitude_ft"?\s*[:=]\s*"?([0-9]+)"?'),
 ]
 # What each pinned control MUST equal (from the canonical baseline).
-_CONTROL_EXPECTED = {"wing_mass_method": "flops", "material": "aluminum"}
+_CONTROL_EXPECTED = {
+    "wing_mass_method": "flops", "material": "aluminum",
+    "num_passengers": "239", "range_nmi": "2500",
+    "cruise_mach": "0.78", "cruise_altitude_ft": "33000",
+}
 
 
 def _last_float(pattern: str, text: str) -> float | None:

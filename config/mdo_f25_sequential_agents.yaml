@@ -752,14 +752,13 @@ templates:
 
           3. Call configure_mission(session_id,
                range_nmi=<<RANGE_NMI>>,
-               num_passengers=200,         # aviary-mcp caps at 200
+               num_passengers=<<NUM_PASSENGERS>>,
                cruise_mach=<<CRUISE_MACH>>,
                cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
                optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>
              )
-             (Pass 200 directly — do not retry with 239 first. The
-             server enforces num_passengers <= 200 and we already
-             know it.)
+             These are FIXED DLR-F25 mission values — pass them exactly
+             as written.
 
           ── PHASE H — HANDLED BY THE FRAMEWORK ───────────────────────────
           The data-plane middleware automatically injects two keys
