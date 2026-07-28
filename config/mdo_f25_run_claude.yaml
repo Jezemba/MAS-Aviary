@@ -1,9 +1,11 @@
 llm:
-  # 2026-06-24: bumped from claude-sonnet-4-20250514 (retired) to
-  # claude-sonnet-4-6 — same tier, same pricing, currently available.
-  model_id: "anthropic/claude-sonnet-4-6"
+  # 2026-07-28: switched to Opus 5 (SOTA) for the paper run. Opus 5 is
+  # $5/$25 per 1M (~1.67x Sonnet), thinks by DEFAULT, and REJECTS temperature
+  # (dropped via litellm.drop_params in model_loader). max_new_tokens bumped
+  # 4096->8192 so thinking + the tool-call output don't share too tight a cap.
+  model_id: "anthropic/claude-opus-5"
   backend: "litellm"
-  max_new_tokens: 4096
+  max_new_tokens: 8192
   # 2026-05-26: switched back to Claude from openai/gpt-4o after
   # per_stage runs (v11-v14) showed gpt-4o workers consistently
   # making sloppy errors (eliding file paths with "...", skipping

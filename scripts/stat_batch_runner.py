@@ -631,6 +631,11 @@ def run_stat_batch(
                         with open(run_dir / "trace.json", "w") as f:
                             json.dump(result.traces, f, indent=2, default=str)
 
+                    # Design ledger: one cross-run row {design applied -> MCP
+                    # outcomes -> objective -> cost}. Passive; never affects a run.
+                    from src.logging.design_ledger import append_record
+                    append_record(result_dict, result.traces or {})
+
                     # Print summary
                     ec = result.eval_classification or {}
                     fuel = ec.get("fuel_burned_kg", "?")

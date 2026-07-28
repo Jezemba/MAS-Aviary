@@ -48,6 +48,12 @@ def load_model(config: LLMConfig) -> Model:
     if config.backend == "litellm":
         from smolagents import LiteLLMModel
 
+        # Opus 5 / 4.8 / 4.7 (and Sonnet 5) REJECT temperature/top_p/top_k with a
+        # 400. drop_params makes litellm silently strip params a model doesn't
+        # accept, so the same request works across Sonnet and Opus.
+        import litellm
+        litellm.drop_params = True
+
         from src.llm.cost_meter import METER, extract_usage
 
         class CostTrackingLiteLLMModel(LiteLLMModel):
