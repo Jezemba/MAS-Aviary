@@ -47,10 +47,12 @@ def test_billed_cost_no_cache_reduces():
     assert billed_cost_usd(m.snapshot(), "claude-sonnet-4-6") == round((10000 * 3 + 500 * 15) / 1e6, 4)
 
 
-def test_opus_pricing_is_5x_sonnet_input():
+def test_opus_pricing_is_167pct_sonnet():
+    """Current-gen Opus is $5/$25 — ~1.67x Sonnet's $3/$15, not the retired $15/$75."""
     m = CostMeter()
     m.record(10000, 500)
-    assert billed_cost_usd(m.snapshot(), "claude-opus-5") == round((10000 * 15 + 500 * 75) / 1e6, 4)
+    assert billed_cost_usd(m.snapshot(), "claude-opus-5") == round((10000 * 5 + 500 * 25) / 1e6, 4)
+    assert billed_cost_usd(m.snapshot(), "claude-opus-4-6") == round((10000 * 5 + 500 * 25) / 1e6, 4)
 
 
 def test_meter_is_threadsafe():
