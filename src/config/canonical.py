@@ -94,9 +94,10 @@ def render_snippets(path: str | None = None) -> dict[str, str]:
         "FN_DES_LBF": str(prop.get("Fn_DES_lbf", 5900.0)),
         "BPR": str(prop.get("BPR", 5.105)),
         # mission (granular)
-        "CRUISE_MACH": str(mission.get("cruise_mach", 0.785)),
-        "CRUISE_ALTITUDE_FT": str(mission.get("cruise_altitude_ft", 35000)),
-        "RANGE_NMI": str(mission.get("range_nmi", 1500)),
+        "CRUISE_MACH": str(mission.get("cruise_mach", 0.78)),
+        "CRUISE_ALTITUDE_FT": str(mission.get("cruise_altitude_ft", 33000)),
+        "RANGE_NMI": str(mission.get("range_nmi", 2500)),
+        "NUM_PASSENGERS": str(mission.get("num_passengers", 239)),
         "OPTIMIZER_MAX_ITER": str(mission.get("optimizer_max_iter", 200)),
         "MASS_PARAMS": _render_kwargs(
             mass, ["wing_mass_method", "design_load_factor", "material"]

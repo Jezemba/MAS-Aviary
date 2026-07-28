@@ -205,7 +205,7 @@ mdo_f25_pipeline:
         right session_id even if you omit it, so prefer simple calls.
 
         Required tool sequence:
-          1. configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=239,
+          1. configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=<<NUM_PASSENGERS>>,
              cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
              optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>)
           2. set_aircraft_parameters with parameters={

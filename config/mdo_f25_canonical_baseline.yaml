@@ -29,12 +29,12 @@ geometry:
 su2_config:
   SOLVER: "EULER"
   MATH_PROBLEM: "DIRECT"
-  MACH_NUMBER: 0.785                   # aligned to ground-truth reference (was 0.78)
+  MACH_NUMBER: 0.78                    # DLR-F25 cruise Mach
   AOA: 2.0
   REYNOLDS_NUMBER: 30000000            # ignored for inviscid EULER, kept nominal
   KIND_TURB_MODEL: "SA"                # ignored for inviscid EULER
-  FREESTREAM_PRESSURE: 23842.0         # ISA @ 35000 ft (was 26500 @ ~33000 ft)
-  FREESTREAM_TEMPERATURE: 218.8        # ISA @ 35000 ft (was 233)
+  FREESTREAM_PRESSURE: 26436.0         # ISA @ 33000 ft (DLR-F25 cruise altitude)
+  FREESTREAM_TEMPERATURE: 222.8        # ISA @ 33000 ft
   REF_DIMENSIONALIZATION: "DIMENSIONAL"
   CONV_NUM_METHOD_FLOW: "JST"
   JST_SENSOR_COEFF: "( 0.5, 0.02 )"
@@ -78,8 +78,8 @@ propulsion:
   # Canonical HBTF design point = pycycle repo reference (OpenMDAO/pycycle
   # example_cycles/high_bypass_turbofan.py). The pycycle-mcp bakes the HBTF model
   # in and defaults Fn_DES=5900 lbf; these values should NOT be overridden per-combo.
-  design_mach: 0.785                   # aligned to reference (was 0.78)
-  design_altitude_ft: 35000            # aligned to reference (was 33000)
+  design_mach: 0.78                    # DLR-F25 cruise Mach
+  design_altitude_ft: 33000            # DLR-F25 cruise altitude
   T4_MAX_degR: 2857                    # repo DESIGN.T4_MAX (was 1700/1600 in prompts — wrong/ignored)
   Fn_DES_lbf: 5900.0                   # repo DESIGN.Fn_DES (pycycle-mcp default; may be drag-coupled instead)
   fan_pressure_ratio: null             # UNSET per decision — pycycle-mcp uses the HBTF default (repo: fan.PR=1.685)
@@ -88,9 +88,11 @@ propulsion:
 
 # ---- MISSION (aviary-mcp, port 8600) — already uniform, keep ---------------
 mission:
-  # Flight point aligned to the ground-truth reference (run_reference_benchmark.py):
-  # M0.785 / 35000 ft / 1500 nmi. Same point used for aero (SU2) and propulsion above.
-  cruise_mach: 0.785                   # was 0.78 — aligned to reference
-  cruise_altitude_ft: 35000            # was 33000 — aligned to reference
-  range_nmi: 1500                      # was 2500 — aligned to reference
+  # DLR-F25 mission (2500 nmi, 239 pax, M0.78, FL330). Same point used for aero (SU2)
+  # and propulsion above. The session config + run_reference_benchmark.py were fixed to
+  # match this (they carried a leftover A320-class 1500 nmi / M0.785 / 162 pax spec).
+  cruise_mach: 0.78                    # DLR-F25
+  cruise_altitude_ft: 33000            # DLR-F25 (FL330)
+  range_nmi: 2500                      # DLR-F25
+  num_passengers: 239                  # DLR-F25
   optimizer_max_iter: 200              # SLSQP iteration budget (already uniform)

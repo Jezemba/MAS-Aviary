@@ -50,9 +50,10 @@ EXPECTED_RENDER = {
     "FUSELAGE_UID": "Fuselage1",
     "FAR_FIELD_DISTANCE": "10.0",
     "WING_MASS_METHOD": "flops",
-    "CRUISE_MACH": "0.785",
-    "CRUISE_ALTITUDE_FT": "35000",
-    "RANGE_NMI": "1500",
+    "CRUISE_MACH": "0.78",
+    "CRUISE_ALTITUDE_FT": "33000",
+    "RANGE_NMI": "2500",
+    "NUM_PASSENGERS": "239",
     "BURNER_T4_K": "1587",
 }
 

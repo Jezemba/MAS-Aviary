@@ -110,7 +110,7 @@ agents:
            → applies params AND runs validation (static checks + ~5-10s
              Aviary model eval). Response includes "valid" boolean.
              If valid is false, adjust parameters and call again until valid.
-         configure_mission(session_id, range_nmi=<<RANGE_NMI>>, num_passengers=239,
+         configure_mission(session_id, range_nmi=<<RANGE_NMI>>, num_passengers=<<NUM_PASSENGERS>>,
                           cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>, optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>)
          run_simulation(session_id, timeout_seconds=300) → ~40-60s for 200 iterations
          get_results(session_id) → fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg

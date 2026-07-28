@@ -228,14 +228,18 @@ def setup_session_with_params(
     if isinstance(resp, dict) and resp.get("warnings"):
         print(f"  MCP warnings: {resp['warnings']}")
 
-    # 2. Configure mission (standard benchmark)
+    # 2. Configure mission from the canonical baseline (single source of truth —
+    #    DLR-F25: 2500 nmi, 239 pax, M0.78, FL330). Previously hardcoded a leftover
+    #    A320-class 1500 nmi / M0.785 / 162 pax spec that overrode the task.
+    from src.config.canonical import load_canonical
+    _m = load_canonical().get("mission", {})
     configure = tool_map["configure_mission"]
     resp = configure.forward(
         session_id=session_id,
-        range_nmi=1500,
-        num_passengers=162,
-        cruise_mach=0.785,
-        cruise_altitude_ft=35000,
+        range_nmi=_m.get("range_nmi", 2500),
+        num_passengers=_m.get("num_passengers", 239),
+        cruise_mach=_m.get("cruise_mach", 0.78),
+        cruise_altitude_ft=_m.get("cruise_altitude_ft", 33000),
     )
     results["configure_mission"] = resp
 
@@ -273,7 +277,7 @@ def build_task_with_session(
     return (
         f"IMPORTANT — A session has already been created with mission configured.\n"
         f"  session_id = {session_id}\n"
-        f"  Mission: 1500 nmi, 162 pax, Mach 0.785, FL350.\n"
+        f"  Mission: 2500 nmi, 239 pax, Mach 0.78, FL330 (DLR-F25).\n"
         f"{params_text}"
         f"Use this session_id for ALL tool calls. Session setup is done.\n"
         f"WARNING: Creating a new session (calling create_session) will "
