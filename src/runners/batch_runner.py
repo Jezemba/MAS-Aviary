@@ -350,6 +350,11 @@ class CombinationResult:
     duration_seconds: float = 0.0
     total_turns: int = 0
     total_tokens: int = 0
+    # Complete, thread-safe token accounting from the model wrapper (all agents +
+    # networked peer threads): {calls, input_tokens, output_tokens,
+    # cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, model_id}.
+    token_breakdown: dict = field(default_factory=dict)
+    cost_usd: float = 0.0
     messages: list[dict] = field(default_factory=list)
     eval_classification: dict = field(default_factory=dict)
     cross_strategy_metrics: dict = field(default_factory=dict)
@@ -1030,13 +1035,25 @@ def run_combination(
         handler=combo.handler,
     )
 
+    from src.llm.cost_meter import METER, billed_cost_usd
+
+    model_id = getattr(getattr(config, "llm", None), "model_id", "") or ""
+    METER.reset()  # complete token accounting for THIS run (all agents + peer threads)
     start = time.monotonic()
     try:
         messages, traces = _execute_combination(combo, task, config, model=model, tools=tools, session_id=session_id)
         result.duration_seconds = time.monotonic() - start
         result.status = "success"
         result.total_turns = len(messages)
-        result.total_tokens = sum(m.token_count or 0 for m in messages)
+        # Token totals from the model wrapper (reliable for ALL combos incl. networked);
+        # fall back to the legacy messages-sum only if the meter saw no calls.
+        snap = METER.snapshot()
+        if snap["calls"] > 0:
+            result.cost_usd = billed_cost_usd(snap, model_id)
+            result.token_breakdown = {**snap, "cost_usd": result.cost_usd, "model_id": model_id}
+            result.total_tokens = snap["total_tokens"]
+        else:
+            result.total_tokens = sum(m.token_count or 0 for m in messages)
         result.messages = [_msg_to_dict(m) for m in messages]
         result.gpu_memory_mb = _gpu_memory_mb()
         result.traces = traces

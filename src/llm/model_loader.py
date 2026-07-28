@@ -48,7 +48,29 @@ def load_model(config: LLMConfig) -> Model:
     if config.backend == "litellm":
         from smolagents import LiteLLMModel
 
-        return LiteLLMModel(
+        from src.llm.cost_meter import METER, extract_usage
+
+        class CostTrackingLiteLLMModel(LiteLLMModel):
+            """LiteLLMModel that records real billed usage into the global METER.
+
+            Fires on every API call from every agent AND every networked peer
+            thread (the meter is thread-safe), so token/cost totals are complete
+            and comparable across all combos — unlike the messages-based sum that
+            returned 0 for the networked structure.
+            """
+
+            def generate(self, *args, **kwargs):  # type: ignore[override]
+                msg = super().generate(*args, **kwargs)
+                try:
+                    raw = getattr(msg, "raw", None)
+                    if raw is not None:
+                        prompt, completion, cread, ccreate = extract_usage(raw)
+                        METER.record(prompt, completion, cread, ccreate)
+                except Exception:  # never let accounting break a run
+                    pass
+                return msg
+
+        return CostTrackingLiteLLMModel(
             model_id=config.model_id,
             api_key=config.api_key or _pick_litellm_api_key(config.model_id),
             max_tokens=config.max_new_tokens,

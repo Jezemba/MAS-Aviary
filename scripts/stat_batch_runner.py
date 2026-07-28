@@ -789,6 +789,8 @@ def _safe_result_dict(result) -> dict:
         "duration_seconds",
         "total_turns",
         "total_tokens",
+        "token_breakdown",
+        "cost_usd",
         "gpu_memory_mb",
         "eval_classification",
         "cross_strategy_metrics",
@@ -826,6 +828,8 @@ def _save_aggregate_summary(
                 "converged": ec.get("converged"),
                 "duration_seconds": result.get("duration_seconds"),
                 "total_turns": result.get("total_turns"),
+                "total_tokens": result.get("total_tokens"),
+                "cost_usd": result.get("cost_usd"),
                 "attempt": result.get("attempt"),
                 "seed": result.get("seed"),
             }
