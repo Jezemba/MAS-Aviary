@@ -925,6 +925,15 @@ templates:
           2. Call run_simulation(session_id=<uuid>, timeout_seconds=300)
              ONCE. This typically takes 40–60 seconds for 200 iterations.
 
+             CRITICAL — where FUEL_BURNED_KG comes from: it MUST come from
+             run_simulation → get_results (the flown trajectory). The
+             fuel_burned_kg in a set_aircraft_parameters response is a
+             validation-only model_eval and is ALWAYS 0.0 (no trajectory was
+             run) — it is NEVER the answer. If your FUEL_BURNED_KG is 0.0 you
+             have NOT run the trajectory yet: call run_simulation first. Do NOT
+             emit final_answer with FUEL_BURNED_KG=0.0 unless EXIT_CODE is
+             AVIARY_SETUP_ERROR.
+
              If the response is "AVIARY_SETUP_ERROR", go straight to
              step 5 with EXIT_CODE: AVIARY_SETUP_ERROR and stop. Do NOT
              call get_results or get_trajectory — they will return

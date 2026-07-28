@@ -241,6 +241,11 @@ mdo_f25_pipeline:
           1. run_simulation — uses the session from previous stages
           2. get_results — pulls converged fuel / gtow / wing-mass
 
+        CRITICAL: fuel_burned_kg MUST come from run_simulation → get_results.
+        A 0.0 fuel from set_aircraft_parameters is a validation-only value (no
+        trajectory) and is NEVER the answer — if fuel is 0.0 you have not run the
+        trajectory; call run_simulation first.
+
         Output (in EXACTLY these field names — downstream metrics scrape them):
           fuel_burned_kg: <value>
           gtow_kg: <value>

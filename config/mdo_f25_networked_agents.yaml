@@ -67,6 +67,9 @@ peer_template:
        configure_mission(session_id, range_nmi=<<RANGE_NMI>>, num_passengers=<<NUM_PASSENGERS>>,
                         cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>, optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>)
        run_simulation(session_id, timeout_seconds=300) → ~40-60s
+       # CRITICAL: fuel_burned_kg MUST come from run_simulation → get_results.
+       # A 0.0 fuel from set_aircraft_parameters is validation-only (no trajectory)
+       # and is NEVER the answer — if fuel is 0.0, call run_simulation first.
        get_results(session_id) → fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg
        get_trajectory(session_id) → timeseries per phase
        check_constraints(session_id, constraints=[{"variable": "...", "operator": "<=", "value": N}])

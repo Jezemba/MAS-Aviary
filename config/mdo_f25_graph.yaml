@@ -337,6 +337,10 @@ mdo_f25_graph:
         1. Call run_simulation(timeout_seconds=300). Expect ~5-60 s
            wall depending on optimizer iterations (v18 converged in
            9 iters / 4.9 s on this fixture).
+           CRITICAL: fuel_burned_kg MUST come from run_simulation →
+           get_results. A 0.0 fuel from set_aircraft_parameters is a
+           validation-only value (no trajectory) and is NEVER the answer —
+           if fuel is 0.0 you have not run the trajectory; call run_simulation.
         2. Call get_results(variables=["fuel_burned",
              "gross_takeoff_weight", "wing_mass", "reserve_fuel",
              "zero_fuel_weight"]).
