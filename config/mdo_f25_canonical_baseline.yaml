@@ -74,6 +74,7 @@ mass:
                                        # (mWing 11,420 kg, no error, 2026-07-27).
 
 # ---- PROPULSION (pycycle-mcp, port 8400) -----------------------------------
+propulsion:
   # Canonical HBTF design point = pycycle repo reference (OpenMDAO/pycycle
   # example_cycles/high_bypass_turbofan.py). The pycycle-mcp bakes the HBTF model
   # in and defaults Fn_DES=5900 lbf; these values should NOT be overridden per-combo.
@@ -86,6 +87,7 @@ mass:
   # OPR is a DERIVED output in pycycle (~30.5 from fan*lpc*hpc PR), NOT an input — do not pin OPR=40.
 
 # ---- MISSION (aviary-mcp, port 8600) — already uniform, keep ---------------
+mission:
   # Flight point aligned to the ground-truth reference (run_reference_benchmark.py):
   # M0.785 / 35000 ft / 1500 nmi. Same point used for aero (SU2) and propulsion above.
   cruise_mach: 0.785                   # was 0.78 — aligned to reference
