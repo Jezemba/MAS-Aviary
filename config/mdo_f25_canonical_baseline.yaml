@@ -29,12 +29,12 @@ geometry:
 su2_config:
   SOLVER: "EULER"
   MATH_PROBLEM: "DIRECT"
-  MACH_NUMBER: 0.78
+  MACH_NUMBER: 0.785                   # aligned to ground-truth reference (was 0.78)
   AOA: 2.0
-  REYNOLDS_NUMBER: 30000000
-  KIND_TURB_MODEL: "SA"
-  FREESTREAM_PRESSURE: 26500.0
-  FREESTREAM_TEMPERATURE: 233.0
+  REYNOLDS_NUMBER: 30000000            # ignored for inviscid EULER, kept nominal
+  KIND_TURB_MODEL: "SA"                # ignored for inviscid EULER
+  FREESTREAM_PRESSURE: 23842.0         # ISA @ 35000 ft (was 26500 @ ~33000 ft)
+  FREESTREAM_TEMPERATURE: 218.8        # ISA @ 35000 ft (was 233)
   REF_DIMENSIONALIZATION: "DIMENSIONAL"
   CONV_NUM_METHOD_FLOW: "JST"
   JST_SENSOR_COEFF: "( 0.5, 0.02 )"
@@ -67,27 +67,28 @@ su2_config:
 
 # ---- MASS / STRUCTURES (mass-mcp, port 8700) -------------------------------
 mass:
-  material: "aluminum"                 # VERIFIED runs in OAS (mWing 11,420 kg, no error, 2026-07-27)
+  wing_mass_method: "flops"            # DECISION 2026-07-27: FLOPS (OAS contributes little; start with FLOPS).
   design_load_factor: 2.5
-  wing_mass_method: "both"             # >>> DECISION: was "both" (seq) vs "flops" (orch/net).
-                                       # "both" runs flops+oas (material matters); "flops" ignores
-                                       # material. Pick one for all combos. Default "both" so the
-                                       # aluminum choice is actually exercised.
+  material: "aluminum"                 # NOTE: FLOPS ignores material — this is a nominal only, used if a
+                                       # future run switches to "oas"/"both". Aluminum VERIFIED runs in OAS
+                                       # (mWing 11,420 kg, no error, 2026-07-27).
 
 # ---- PROPULSION (pycycle-mcp, port 8400) -----------------------------------
-propulsion:
-  design_mach: 0.78                    # MN at design point
-  design_altitude_ft: 33000
-  OPR: 40.0                            # overall pressure ratio (uniform where set)
-  T4_degR: 1700.0                      # >>> DECISION: turbine inlet temp — 1700 (seq) vs 1600 (orch).
-                                       # 100 K delta changes SFC/thrust. Confirm the canonical value + units.
-  design_thrust: null                  # >>> DECISION: reconcile Fn=28 (graph) vs thrust=124.5 (orch) —
-                                       # different targets/units. Pin ONE net thrust @ design point.
-  fan_pressure_ratio: null             # >>> DECISION: not specified in any combo — set explicitly or accept HBTF default.
+  # Canonical HBTF design point = pycycle repo reference (OpenMDAO/pycycle
+  # example_cycles/high_bypass_turbofan.py). The pycycle-mcp bakes the HBTF model
+  # in and defaults Fn_DES=5900 lbf; these values should NOT be overridden per-combo.
+  design_mach: 0.785                   # aligned to reference (was 0.78)
+  design_altitude_ft: 35000            # aligned to reference (was 33000)
+  T4_MAX_degR: 2857                    # repo DESIGN.T4_MAX (was 1700/1600 in prompts — wrong/ignored)
+  Fn_DES_lbf: 5900.0                   # repo DESIGN.Fn_DES (pycycle-mcp default; may be drag-coupled instead)
+  fan_pressure_ratio: null             # UNSET per decision — pycycle-mcp uses the HBTF default (repo: fan.PR=1.685)
+  BPR: 5.105                           # repo DESIGN.splitter.BPR (baked into the HBTF model)
+  # OPR is a DERIVED output in pycycle (~30.5 from fan*lpc*hpc PR), NOT an input — do not pin OPR=40.
 
 # ---- MISSION (aviary-mcp, port 8600) — already uniform, keep ---------------
-mission:
-  cruise_mach: 0.78
-  cruise_altitude_ft: 33000
-  range_nmi: 2500                      # NOTE: reference benchmark uses 1500 nmi @ M0.785/35000ft — reconcile with ground truth
-  optimizer_max_iter: 200              # SLSQP iteration budget
+  # Flight point aligned to the ground-truth reference (run_reference_benchmark.py):
+  # M0.785 / 35000 ft / 1500 nmi. Same point used for aero (SU2) and propulsion above.
+  cruise_mach: 0.785                   # was 0.78 — aligned to reference
+  cruise_altitude_ft: 35000            # was 33000 — aligned to reference
+  range_nmi: 1500                      # was 2500 — aligned to reference
+  optimizer_max_iter: 200              # SLSQP iteration budget (already uniform)
