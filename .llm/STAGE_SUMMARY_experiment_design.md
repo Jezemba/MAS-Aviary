@@ -65,10 +65,18 @@ design. That includes:
   markers, REF_*). AUDIT FINDING 2026-07-27: these are NOT identical today — the SU2 param
   block hashes differ across the 5 configs (sequential=e6118eb0, graph/staged=7e8ba74d,
   orchestrated=beba7193, networked=1c51cae3). CFL=20 is uniform now but other fields diverge.
-- **Aviary (mission):** the baseline **linear solver** (and nonlinear solver, atol/rtol,
-  maxiter, initial guesses). AUDIT FINDING: the aviary_mdo_f25_* configs pin NO explicit
-  solver — they fall through to defaults that may differ by how each combo invokes aviary.
-  These MUST be set explicitly and identically.
+- **Aviary (mission) — SLSQP gradient optimizer:** the parameters that go INTO SLSQP
+  (iteration budget, cruise Mach/altitude/range, design-var bounds, convergence tol, initial
+  guesses). AUDIT FINDING 2026-07-27 (GOOD): these are ALREADY identical across all 5 combos —
+  every combo calls the same `run_simulation` tool (aviary-mcp/aviary_runner.py) with the same
+  agent-supplied config: `optimizer_max_iter=200`, `cruise_mach=0.78`, `cruise_altitude_ft=33000`;
+  and the driver internals (`add_driver("SLSQP", max_iter=200)`, `add_design_variables()`,
+  `set_initial_guesses()`, scipy-default tol) are shared code, so identical by construction.
+  What VARIES is the aircraft design FED INTO SLSQP (wing area, SU2 CL/CD, mass) — because each
+  combo's upstream disciplines produce different values (ties back to the re-morph issue above).
+  DISCREPANCY TO RESOLVE: the reference benchmark (`aviary-mcp/run_reference_benchmark.py`) runs
+  the optimum at Mach 0.785 / 35000 ft / 1500 nmi, but the combos evaluate at 0.78 / 33000 ft —
+  align these (and confirm RANGE) so combos and the ground-truth reference use one flight point.
 - **Mass (structures) & Propulsion (pycycle):** all model settings / initial conditions.
 
 **ACTION (this is the core experimental-design task):** define ONE canonical baseline
