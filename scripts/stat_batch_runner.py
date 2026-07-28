@@ -1,9 +1,20 @@
-"""Statistical batch runner — runs all 8 Aviary combinations × N repeats.
+"""Statistical batch runner — runs Aviary combinations as CUMULATIVE CHAINS.
 
-Each repeat uses a seeded random starting point (AR, AREA, SWEEP, TAPER,
-fuselage dims, SCALE_FACTOR) within valid ranges. The same starting point
-is shared across all 8 combinations for a given repeat index so differences
-are attributable to the org structure / handler, not the initial conditions.
+Each combination is an independent chain of N successive runs ("links"):
+  - Link 0 (Run 1) of EVERY combo starts from the SAME fixed anchor design
+    (generate_random_params(base_seed) — AR, AREA, SWEEP, TAPER, fuselage dims,
+    SCALE_FACTOR) plus the identical canonical SLSQP/mission and per-call discipline
+    controls, so every combo's Run 1 is byte-identical.
+  - Link k>0 starts from link k-1's END-STATE design — the aircraft the agents left
+    (read from get_results.design_parameters.aircraft_params). The design accumulates
+    across the chain; we observe the trajectory from the shared start through N links.
+
+Only the DESIGN VARIABLES carry forward. The pinned discipline controls (mission /
+SLSQP inputs, mass method=flops, material=aluminum, SU2 numerics) are re-applied from
+the canonical baseline on every link and never carried — if an agent changes one, the
+design ledger records the deviation and the next link resets it to canonical.
+
+Run one combo per invocation (--combinations <one>) to get one wandb trace per chain.
 
 Features:
   - Checkpoint file (stat_progress.json) for crash recovery
@@ -403,6 +414,27 @@ def _is_zero_fuel(result) -> bool:
     return fuel is not None and fuel == 0.0
 
 
+def read_end_state_design(tool_map: dict, session_id: str) -> dict:
+    """Read the aircraft design the agents LEFT at the end of a run, to seed the next
+    repeat in this combo's cumulative chain.
+
+    Authoritative: pulls the session's current aircraft_params from get_results
+    (nested under design_parameters.aircraft_params), filtered to the 8 settable
+    design variables (SPAN is derived/read-only, excluded). Returns {} on any
+    failure — the caller then keeps the previous chain state so the chain never
+    silently resets to the anchor mid-run. Only the design variables carry forward;
+    the pinned discipline controls (mission/SLSQP, mass method, material, SU2) are
+    re-applied from canonical on every run and never carried."""
+    try:
+        resp = tool_map["get_results"].forward(session_id=session_id)
+        d = resp if isinstance(resp, dict) else json.loads(resp)
+        ap = (d.get("design_parameters") or {}).get("aircraft_params") or {}
+        return {k: v for k, v in ap.items() if k in PARAM_RANGES}
+    except Exception as e:
+        print(f"  [chain] end-state read failed (keeping prior design): {e}")
+        return {}
+
+
 def run_stat_batch(
     n_repeats: int,
     combo_names: list[str] | None = None,
@@ -434,32 +466,33 @@ def run_stat_batch(
         print("No matching combinations found.")
         return
 
-    # Generate all parameter sets
-    param_sets = generate_all_param_sets(n_repeats, base_seed)
+    # The chain's fixed anchor: link 0 of every combo starts here (see run loop).
+    anchor_preview = {k: v for k, v in generate_random_params(base_seed).items()
+                      if not k.startswith("_")}
 
     if output_dir is None:
         output_dir = f"logs/stat_results/{int(time.time())}"
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # Save parameter sets for reproducibility
-    params_file = out_path / "param_sets.json"
+    # Save the anchor for reproducibility. Only link 0 uses it directly; links 1..N-1
+    # start from the previous link's end-state (recorded per-run in chain_start_params).
+    params_file = out_path / "chain_anchor.json"
     with open(params_file, "w") as f:
         json.dump(
-            {"base_seed": base_seed, "n_repeats": n_repeats, "params": param_sets},
+            {"base_seed": base_seed, "n_links": n_repeats, "mode": "cumulative_chain",
+             "anchor_params": anchor_preview},
             f,
             indent=2,
         )
 
     if dry_run:
-        print(f"Generated {n_repeats} parameter sets:")
-        for i, ps in enumerate(param_sets):
-            span = ps.pop("_derived_span", 0)
-            print(f"\n  Repeat {i:03d} (seed={base_seed + i}):")
-            for k, v in ps.items():
-                print(f"    {k}: {v}")
-            print(f"    [derived SPAN: {span}]")
-        print(f"\nWould run {len(combos)} combinations × {n_repeats} repeats = {len(combos) * n_repeats} runs")
+        print(f"CUMULATIVE CHAIN mode: each combo = {n_repeats} links.")
+        print(f"Link 0 anchor (identical for every combo, seed={base_seed}):")
+        for k, v in anchor_preview.items():
+            print(f"    {k}: {v}")
+        print(f"Links 1..{n_repeats-1} start from the previous link's end-state design.")
+        print(f"\nWould run {len(combos)} combos × {n_repeats} links = {len(combos) * n_repeats} runs")
         print(f"Combinations: {[c.name for c in combos]}")
         return
 
@@ -502,19 +535,40 @@ def run_stat_batch(
     tool_map = _load_mcp_tools(config)
     print(f"  Loaded {len(tool_map)} tools: {sorted(tool_map.keys())}")
 
+    # Fixed anchor: repeat 0 of EVERY combo starts from this identical, pre-validated
+    # design. Combined with the canonical SLSQP/mission (configure_mission) and the
+    # per-call canonical discipline controls, Run 1 is byte-identical across all combos.
+    anchor_params = {k: v for k, v in generate_random_params(base_seed).items()
+                     if not k.startswith("_")}
+
     run_count = 0
     for combo in combos:
         print(f"\n{'=' * 60}")
-        print(f"COMBO: {combo.name} (0/{n_repeats} repeats)")
+        print(f"COMBO: {combo.name} — CUMULATIVE CHAIN ({n_repeats} links)")
         print(f"{'=' * 60}")
 
+        # Reset the chain to the anchor at the START of each combo. Within a combo,
+        # repeat k>0 starts from repeat k-1's END-STATE design (carry-forward below),
+        # so each combo is an independent trajectory from the shared anchor.
+        chain_params = dict(anchor_params)
+        # Resume support: if earlier links of this combo already completed, advance the
+        # chain to the last completed link's end-state so a resumed run continues.
+        for prev in range(n_repeats):
+            done = checkpoint["completed"].get(run_key(prev, combo.name))
+            if done and done.get("chain_end_params"):
+                chain_params = dict(done["chain_end_params"])
+
         for repeat_idx in range(n_repeats):
-            params = param_sets[repeat_idx]
             key = run_key(repeat_idx, combo.name)
 
             # Skip if already done
             if key in checkpoint["completed"] or key in checkpoint["failed"]:
                 continue
+
+            # Chain link: repeat 0 = anchor; repeat k>0 = prior link's end-state design.
+            # The pre-validated-pool override is intentionally NOT used — the chain
+            # supplies deterministic starting params so every combo's Run 1 is identical.
+            params = dict(chain_params)
 
             run_count += 1
             # GPU cleanup between runs
@@ -524,17 +578,8 @@ def run_stat_batch(
                 except Exception:
                     pass
 
-            print(f"[{run_count}/{total_runs - completed - failed}] repeat={repeat_idx:03d} combo={combo.name}")
-
-            # For networked combos (except graph_routed), use pre-validated
-            # params so agents don't waste steps on invalid starting points.
-            if uses_valid_params(combo.name):
-                valid_params = take_next_valid_params()
-                if valid_params is not None:
-                    params = valid_params
-                    print(f"  Using pre-validated params (seed={params.get('_seed', '?')})")
-                else:
-                    print("  WARNING: No more pre-validated params, using random")
+            print(f"[{run_count}/{total_runs - completed - failed}] repeat={repeat_idx:03d} "
+                  f"combo={combo.name} (chain link {repeat_idx + 1}/{n_repeats})")
 
             # Pre-hook: create session and set starting params via MCP
             try:
@@ -593,20 +638,10 @@ def run_stat_batch(
                                 _aggressive_gpu_cleanup()
                             except Exception:
                                 pass
-                            # Re-create session with new params
-                            if uses_valid_params(combo.name):
-                                valid_params = take_next_valid_params()
-                                if valid_params is not None:
-                                    params = valid_params
-                                    print(f"  retry with pre-validated params (seed={params.get('_seed', '?')})")
-                                else:
-                                    retry_seed = base_seed + repeat_idx + attempt * 1000
-                                    params = generate_random_params(retry_seed)
-                                    print(f"  retry with random params (seed={retry_seed})")
-                            else:
-                                retry_seed = base_seed + repeat_idx + attempt * 1000
-                                params = generate_random_params(retry_seed)
-                                print(f"  retry with new params (seed={retry_seed})")
+                            # Chain: retry from the SAME deterministic start — do NOT
+                            # regenerate params. The chain requires a fixed start per
+                            # link; the agent's own stochasticity gives the retry a
+                            # fresh trajectory from the identical starting design.
                             try:
                                 setup = setup_session_with_params(tool_map, params)
                                 session_id = setup["session_id"]
@@ -620,14 +655,27 @@ def run_stat_batch(
                     # Save result
                     result_dict = _safe_result_dict(result)
                     result_dict["repeat_index"] = repeat_idx
-                    if attempt == 1:
-                        actual_seed = base_seed + repeat_idx
-                    else:
-                        actual_seed = base_seed + repeat_idx + (attempt - 1) * 1000
-                    result_dict["seed"] = actual_seed
-                    result_dict["initial_params"] = {k: v for k, v in params.items() if not k.startswith("_")}
+                    # Anchor seed is the chain's Run-1 seed (identical for every combo).
+                    result_dict["seed"] = base_seed
+                    _start = {k: v for k, v in params.items() if not k.startswith("_")}
+                    result_dict["initial_params"] = _start
                     result_dict["session_id"] = session_id
                     result_dict["attempt"] = attempt
+
+                    # --- Cumulative chain bookkeeping ---
+                    # chain_start_params: the design this link STARTED from (anchor for
+                    #   link 0, prior link's end-state after).
+                    # chain_end_params: the design the agents LEFT — seeds the NEXT link.
+                    result_dict["chain_link"] = repeat_idx
+                    result_dict["chain_start_params"] = _start
+                    end_state = read_end_state_design(tool_map, session_id)
+                    result_dict["chain_end_params"] = end_state
+                    if end_state:
+                        chain_params = dict(end_state)
+                        moved = sum(1 for k in end_state if abs(float(end_state[k]) - float(_start.get(k, end_state[k]))) > 1e-9)
+                        print(f"  [chain] captured end-state ({moved}/{len(end_state)} vars changed) → seeds next link")
+                    else:
+                        print("  [chain] no end-state captured — next link reuses this link's start")
 
                     checkpoint["completed"][key] = result_dict
                     save_checkpoint(ckpt_path, checkpoint)
@@ -694,20 +742,8 @@ def run_stat_batch(
                             _aggressive_gpu_cleanup()
                         except Exception:
                             pass
-                        # Re-create session with new params
-                        if uses_valid_params(combo.name):
-                            valid_params = take_next_valid_params()
-                            if valid_params is not None:
-                                params = valid_params
-                                print(f"  retry with pre-validated params (seed={params.get('_seed', '?')})")
-                            else:
-                                retry_seed = base_seed + repeat_idx + attempt * 1000
-                                params = generate_random_params(retry_seed)
-                                print(f"  retry with random params (seed={retry_seed})")
-                        else:
-                            retry_seed = base_seed + repeat_idx + attempt * 1000
-                            params = generate_random_params(retry_seed)
-                            print(f"  retry with new params (seed={retry_seed})")
+                        # Chain: retry from the SAME deterministic start (do NOT
+                        # regenerate params — a chain link must keep its fixed start).
                         try:
                             setup = setup_session_with_params(tool_map, params)
                             session_id = setup["session_id"]
@@ -748,7 +784,7 @@ def run_stat_batch(
     print(f"Results: {out_path}/")
 
     # Save aggregate summary
-    _save_aggregate_summary(out_path, checkpoint, param_sets, combos, n_repeats)
+    _save_aggregate_summary(out_path, checkpoint, combos, n_repeats)
 
     # Finish wandb run
     if wb_run:
@@ -820,7 +856,6 @@ def _safe_result_dict(result) -> dict:
 def _save_aggregate_summary(
     out_path: Path,
     checkpoint: dict,
-    param_sets: list,
     combos: list,
     n_repeats: int,
 ) -> None:

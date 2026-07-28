@@ -136,6 +136,13 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
         "seed": result_dict.get("seed"),
         "status": result_dict.get("status"),
         "model_id": tb.get("model_id"),
+        # cumulative-chain trajectory: the design this link STARTED from and LEFT.
+        # link 0 starts at the shared anchor; link k>0 starts at link k-1's end-state.
+        "chain": {
+            "link": result_dict.get("chain_link"),
+            "start_params": result_dict.get("chain_start_params"),
+            "end_params": result_dict.get("chain_end_params"),
+        },
         # design the agents actually applied (from tool-call args)
         "design_applied": _applied_design(traces),
         # pinned discipline controls the agent passed + deviation flag (must be constant)
