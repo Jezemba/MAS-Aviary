@@ -59,13 +59,17 @@ def load_aviary_thresholds(
     )
 
 
+# DLR-F25 reference optimum — from aviary-mcp/run_reference_benchmark.py (SLSQP,
+# 2026-07-28): 2500 nmi / 239 pax / M0.78 / FL330. Replaces a leftover A320-class
+# reference (fuel 7000.65 / gtow 67365.86) that scored combos against the wrong aircraft.
+# ZFW = gross_mass - fuel_burned - reserve_fuel = 73705.42 - 12612.80 - 1360.78.
 DEFAULT_AVIARY_THRESHOLDS = AviaryEvalThresholds(
     reference={
-        "fuel_burned_kg": 7000.65,
-        "gtow_kg": 67365.86,
-        "wing_mass_kg": 7466.35,
+        "fuel_burned_kg": 12612.80,
+        "gtow_kg": 73705.42,
+        "wing_mass_kg": 7975.44,
         "reserve_fuel_kg": 1360.78,
-        "zero_fuel_weight_kg": 58604.23,
+        "zero_fuel_weight_kg": 59731.84,
     },
     max_deviation_pct=10.0,
     converged_required=True,
