@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### 2026-07-28 — shared-source canonical baseline (all discipline params single-sourced)
+
+Experimental-design foundation: every discipline's tool/solver inputs now come from ONE
+file (`config/mdo_f25_canonical_baseline.yaml`) so the only variable across the 8 combos is
+the coordination structure. New `src/config/canonical.py` renders `<<PLACEHOLDER>>` snippets
+and `load_yaml` substitutes them at load time. All 5 combo configs refactored to placeholders:
+- SU2: `<<SU2_CONFIG>>` (was ~10 keys in orch/net vs ~30 elsewhere; graph/staged hardcoded the
+  D150 baseline REF 61.39 — now REF is set separately from upstream geometry).
+- Geometry: `<<WING_UID>>`/`<<FUSELAGE_UID>>` (fixes the Wing-vs-Wing1 retry bug), `<<FAR_FIELD_DISTANCE>>` (10-vs-50).
+- Mass: `<<WING_MASS_METHOD>>`=flops, `<<MATERIAL>>`, `<<DESIGN_LOAD_FACTOR>>`.
+- Propulsion: `<<BURNER_T4_K>>`=1587 (unifies 1700-vs-1600), `<<DESIGN_ALTITUDE_FT>>`; design point pinned to
+  the pycycle repo HBTF reference (T4_MAX=2857 degR, Fn_DES=5900 lbf, fan.PR 1.685, BPR 5.105).
+- Mission: `<<CRUISE_MACH>>`/`<<CRUISE_ALTITUDE_FT>>`/`<<RANGE_NMI>>`/`<<OPTIMIZER_MAX_ITER>>` — flight point
+  aligned to the ground-truth reference (M0.785 / 35000 ft / 1500 nmi), propagated to SU2 freestream.
+Verified: aluminum runs in mass-mcp OAS (mWing 11,420 kg). `tests/test_canonical_params_identical.py`
+(17 pass) fails on any hardcoded divergent value, checks placeholders render to the finalized
+canonical values, and that none survive load. Commits 0b364a2..8c843c3 on feat/paper-experiment-design.
+
 ### 2026-07-27 — 1x8 exploratory sweep + pivot to experimental design (paper)
 
 Ran all 8 combos once (seed 42, model claude-sonnet-4-6) to confirm the CFL fix holds
