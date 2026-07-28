@@ -76,10 +76,28 @@ def render_snippets(path: str | None = None) -> dict[str, str]:
     prop = c.get("propulsion", {})
     mission = c.get("mission", {})
     return {
+        # geometry
         "WING_UID": str(geo.get("wing_component_uid", "Wing1")),
         "FUSELAGE_UID": str(geo.get("fuselage_component_uid", "Fuselage1")),
         "FAR_FIELD_DISTANCE": str(geo.get("far_field_distance", 10.0)),
         "SU2_CONFIG": _render_su2_config(c.get("su2_config", {})),
+        # mass (granular)
+        "WING_MASS_METHOD": str(mass.get("wing_mass_method", "flops")),
+        "MATERIAL": str(mass.get("material", "aluminum")),
+        "DESIGN_LOAD_FACTOR": str(mass.get("design_load_factor", 2.5)),
+        # propulsion (granular)
+        "DESIGN_MACH": str(prop.get("design_mach", 0.785)),
+        "DESIGN_ALTITUDE_FT": str(prop.get("design_altitude_ft", 35000)),
+        "T4_MAX_DEGR": str(prop.get("T4_MAX_degR", 2857)),
+        # Kelvin form for prompt set_inputs examples that use burner.T4 in K.
+        "BURNER_T4_K": str(round(prop.get("T4_MAX_degR", 2857) * 5.0 / 9.0)),
+        "FN_DES_LBF": str(prop.get("Fn_DES_lbf", 5900.0)),
+        "BPR": str(prop.get("BPR", 5.105)),
+        # mission (granular)
+        "CRUISE_MACH": str(mission.get("cruise_mach", 0.785)),
+        "CRUISE_ALTITUDE_FT": str(mission.get("cruise_altitude_ft", 35000)),
+        "RANGE_NMI": str(mission.get("range_nmi", 1500)),
+        "OPTIMIZER_MAX_ITER": str(mission.get("optimizer_max_iter", 200)),
         "MASS_PARAMS": _render_kwargs(
             mass, ["wing_mass_method", "design_load_factor", "material"]
         ),

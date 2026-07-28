@@ -28,6 +28,34 @@ COMBO_CONFIGS = [
 # come from the canonical baseline via placeholders.
 HARDCODED_SU2_FORBIDDEN = ['"CFL_NUMBER"', '"MGLEVEL"', '"CONV_RESIDUAL_MINVAL"', '"JST_SENSOR_COEFF"']
 
+# Divergent literal values that must be gone (replaced by placeholders) across ALL combos.
+HARDCODED_DIVERGENT_FORBIDDEN = [
+    'far_field_distance=50',
+    'far_field_distance=10.0',
+    'range_nmi=2500',
+    'cruise_mach=0.78',
+    'cruise_altitude_ft=33000',
+    'wing_mass_method="both"',
+    'wing_mass_method="flops"',
+    'material="composite"',
+    'material="aluminum"',
+    'component_uid="Wing"',
+    'component_uid="Wing1"',
+    'component_uid="Fuselage"',
+]
+
+# Granular placeholders and their expected canonical rendering.
+EXPECTED_RENDER = {
+    "WING_UID": "Wing1",
+    "FUSELAGE_UID": "Fuselage1",
+    "FAR_FIELD_DISTANCE": "10.0",
+    "WING_MASS_METHOD": "flops",
+    "CRUISE_MACH": "0.785",
+    "CRUISE_ALTITUDE_FT": "35000",
+    "RANGE_NMI": "1500",
+    "BURNER_T4_K": "1587",
+}
+
 
 def _text(path: str) -> str:
     return (_ROOT / path).read_text()
@@ -53,6 +81,21 @@ def test_su2_config_renders_identically_across_combos():
     # Substituting the same placeholder in every combo yields the same text.
     rendered = {cfg: substitute_text("<<SU2_CONFIG>>") for cfg in COMBO_CONFIGS}
     assert len(set(rendered.values())) == 1, "SU2_CONFIG rendered differently across combos"
+
+
+@pytest.mark.parametrize("cfg", COMBO_CONFIGS)
+def test_no_hardcoded_divergent_values(cfg):
+    """No combo may hardcode a discipline value that must come from the canonical file."""
+    raw = _text(cfg)
+    for token in HARDCODED_DIVERGENT_FORBIDDEN:
+        assert token not in raw, f"{cfg} still hardcodes divergent value: {token}"
+
+
+def test_granular_placeholders_render_to_canonical():
+    """Each granular placeholder renders to the finalized canonical value."""
+    s = render_snippets()
+    for name, expected in EXPECTED_RENDER.items():
+        assert s[name] == expected, f"{name} rendered {s[name]!r}, expected {expected!r}"
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)

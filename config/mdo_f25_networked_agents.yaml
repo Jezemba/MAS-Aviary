@@ -19,7 +19,7 @@ peer_template:
        Modify: set_high_level_parameters(session_id, component_uid, updates={...})
                Wing: span (45m), root_chord, tip_chord, sweep (25deg), dihedral, twist_tip
                Fuselage: length (37.79m), section_radius (~1.88m)
-       CFD mesh: generate_volume_mesh(session_id, component_uid="Wing") (REQUIRED for SU2 — produces volume mesh; export_component_mesh produces surface-only and SU2 cannot solve it)
+       CFD mesh: generate_volume_mesh(session_id, component_uid="<<WING_UID>>") (REQUIRED for SU2 — produces volume mesh; export_component_mesh produces surface-only and SU2 cannot solve it)
        Surface/CAD: export_component_mesh(session_id, component_uid, format="stl"), export_configuration_cad(session_id, format="step")
        Geometry: sample_component_surface, intersect_with_plane, intersect_components
 
@@ -40,8 +40,8 @@ peer_template:
 
     3. mass-mcp (Structures — port 8700, 3 tools):
        validate_cpacs_inputs(cpacs_file_path) → parameter report
-       estimate_mass(cpacs_file_path, wing_mass_method="flops"|"oas"|"both",
-                     material="aluminum"|"composite", design_load_factor=2.5)
+       estimate_mass(cpacs_file_path, wing_mass_method="<<WING_MASS_METHOD>>"|"oas"|"both",
+                     material="<<MATERIAL>>"|"composite", design_load_factor=<<DESIGN_LOAD_FACTOR>>)
                      → oem_kg, wing_mass_kg, component_breakdown
        get_cpacs_mass_breakdown(cpacs_file_path)
        F25: OEM 46300 kg. Use "oas" for high-AR configs (FLOPS valid only for AR 7-12).
@@ -63,8 +63,8 @@ peer_template:
                  Engine.SCALE_FACTOR (1.0). COUPLING: only set one of {AR, SPAN, AREA} per call.
          RESPONSE: includes "valid" boolean + ~5-10s Aviary model-eval result.
          If valid is false, adjust parameters and call again until valid.
-       configure_mission(session_id, range_nmi=2500, num_passengers=239,
-                        cruise_mach=0.78, cruise_altitude_ft=33000, optimizer_max_iter=200)
+       configure_mission(session_id, range_nmi=<<RANGE_NMI>>, num_passengers=239,
+                        cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>, optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>)
        run_simulation(session_id, timeout_seconds=300) → ~40-60s
        get_results(session_id) → fuel_burned_kg, gtow_kg, wing_mass_kg, reserve_fuel_kg
        get_trajectory(session_id) → timeseries per phase

@@ -6,7 +6,7 @@
 # v18-verified coupled path of mdo_f25_orchestrated_staged_pipeline
 # (wandb 7ngitswj). Each prompt now pins the SPECIFIC tool arguments
 # that converged in v18, rather than the "physically reasonable"
-# values prior versions used (which broke: far_field_distance=50 hung
+# values prior versions used (which broke: far_field_distance=<<FAR_FIELD_DISTANCE>> hung
 # gmsh for 10+ min; SOLVER=RANS errored on no-BL meshes; AR=15.6
 # tripped Aviary's Newton solver).
 #
@@ -65,8 +65,8 @@ mdo_f25_graph:
            they were measured to converge gmsh in ~12 s on this
            fixture (pinned by tests/test_mesh_generation_live.py
            and verified live in v18 wandb 7ngitswj):
-             component_uid="Wing1",
-             far_field_distance=10.0,
+             component_uid="<<WING_UID>>",
+             far_field_distance=<<FAR_FIELD_DISTANCE>>,
              (do NOT pass mesh_size_min/max — the tool auto-scales the mesh to
               the geometry's characteristic length, keeping ~0.65M cells for any
               wing size; passing absolute sizes can blow up to millions of cells)
@@ -262,9 +262,9 @@ mdo_f25_graph:
         FEEDBACK FROM PREVIOUS REVIEW PASS:
           {recommended_changes}
 
-        1. Call configure_mission(range_nmi=2500, num_passengers=200,
-             cruise_mach=0.78, cruise_altitude_ft=33000,
-             optimizer_max_iter=200).
+        1. Call configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=200,
+             cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
+             optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>).
            The F25 spec says 239 passengers, but aviary-mcp validates
            num_passengers <= 200 — use 200 here (v18 worker recovered
            from this cap on its own; doing it pre-emptively saves a

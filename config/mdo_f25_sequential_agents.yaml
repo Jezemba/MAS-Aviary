@@ -42,7 +42,7 @@ templates:
 
           ── WING GEOMETRY PARAMETERS ──────────────────────────────────────
 
-          Set via set_high_level_parameters(session_id, component_uid="Wing", updates={...})
+          Set via set_high_level_parameters(session_id, component_uid="<<WING_UID>>", updates={...})
 
           span             Wing span. F25 baseline: 45.0 m | Range: 28–48 m
                            Directly controls induced drag and root bending moment.
@@ -66,7 +66,7 @@ templates:
 
           ── FUSELAGE GEOMETRY PARAMETERS ──────────────────────────────────
 
-          Set via set_high_level_parameters(session_id, component_uid="Fuselage", updates={...})
+          Set via set_high_level_parameters(session_id, component_uid="<<FUSELAGE_UID>>", updates={...})
 
           length           Fuselage length. F25 baseline: 37.79 m | Range: 28–50 m
                            Must accommodate 239 pax — below ~34 m is infeasible.
@@ -95,7 +95,7 @@ templates:
              get_fuselage_summary(session_id, fuselage_uid="Fuselage") to
              inspect baseline values.
 
-          4. Call set_high_level_parameters(session_id, component_uid="Wing",
+          4. Call set_high_level_parameters(session_id, component_uid="<<WING_UID>>",
              updates={...}) ONCE to RECORD your design intent.
 
              IMPORTANT — DESIGN-INTENT SEMANTICS (not what you might expect):
@@ -132,7 +132,7 @@ templates:
              IS available; report missing fields in COUPLING_NOTES.
              Do NOT halt on null — proceed to mesh.
 
-          6. Always call generate_volume_mesh(session_id, component_uid="Wing1",
+          6. Always call generate_volume_mesh(session_id, component_uid="<<WING_UID>>",
              boundary_layer_enabled=false) to produce a 3D volume mesh
              for SU2 CFD. This tool internally exports the wing as STL,
              embeds it in a far-field box with gmsh, and writes a complete
@@ -497,9 +497,9 @@ templates:
 
           3. Call estimate_mass(
                cpacs_file_path=<path>,
-               wing_mass_method="both",
-               material="composite",
-               design_load_factor=2.5
+               wing_mass_method="<<WING_MASS_METHOD>>",
+               material="<<MATERIAL>>",
+               design_load_factor=<<DESIGN_LOAD_FACTOR>>
              )
              Use "both" to get FLOPS and OAS estimates for comparison.
              Use "composite" for F25 (2035 technology target).
@@ -600,7 +600,7 @@ templates:
                fan.BPR:    11.0          # F25 target
                cycle.OPR:  40.0          # high efficiency
                fan.PR:     1.45          # propulsive-efficiency-favored
-               burner.T4:  1700.0        # K, modern materials
+               burner.T4:  <<BURNER_T4_K>>.0        # K, modern materials
 
              AND, critically, set the design-point flight condition
              so that the cycle is sized for cruise, not sea-level
@@ -754,11 +754,11 @@ templates:
              defaults is more reliable than partial overrides.
 
           3. Call configure_mission(session_id,
-               range_nmi=2500,
+               range_nmi=<<RANGE_NMI>>,
                num_passengers=200,         # aviary-mcp caps at 200
-               cruise_mach=0.78,
-               cruise_altitude_ft=33000,
-               optimizer_max_iter=200
+               cruise_mach=<<CRUISE_MACH>>,
+               cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
+               optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>
              )
              (Pass 200 directly — do not retry with 239 first. The
              server enforces num_passengers <= 200 and we already

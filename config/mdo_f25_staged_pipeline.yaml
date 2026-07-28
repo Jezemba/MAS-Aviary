@@ -53,8 +53,8 @@ mdo_f25_pipeline:
           3. generate_volume_mesh — ONCE — to produce the CFD mesh.
              Use these EXACT parameters (measured: ~12 s on F25
              geometry; tests/test_mesh_generation_live.py pins this):
-               component_uid="Wing1",
-               far_field_distance=10.0,
+               component_uid="<<WING_UID>>",
+               far_field_distance=<<FAR_FIELD_DISTANCE>>,
                (do NOT pass mesh_size_min/max — the tool auto-scales the mesh to
                 the geometry so cell count stays ~constant for any wing size)
                boundary_layer_enabled=False,
@@ -205,9 +205,9 @@ mdo_f25_pipeline:
         right session_id even if you omit it, so prefer simple calls.
 
         Required tool sequence:
-          1. configure_mission(range_nmi=2500, num_passengers=239,
-             cruise_mach=0.78, cruise_altitude_ft=33000,
-             optimizer_max_iter=200)
+          1. configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=239,
+             cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
+             optimizer_max_iter=<<OPTIMIZER_MAX_ITER>>)
           2. set_aircraft_parameters with parameters={
                "Aircraft.Wing.ASPECT_RATIO": 11.0,
                "Aircraft.Wing.AREA": 130.1,
