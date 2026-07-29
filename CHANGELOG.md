@@ -1,5 +1,29 @@
 ## [Unreleased]
 
+### 2026-07-28 — typed discipline coupling + uncoupled-error enforcement (branch feat/enforce-aero-coupling)
+
+Reworked the SU2->aviary (and mass->aviary, mass->pycycle) coupling from a hidden
+regex-scrape + inline formula + prompt-hope into an explicit TYPED data-flow, then made
+missing coupling a visible error rather than a silent default. Design doc:
+`.llm/AERO_COUPLING_DESIGN.md` (architecture map + per-org/handler data flow).
+- `src/tools/coupling.py`: canonical typed-variable schema (aero.cl_cruise/cd_cruise/l_over_d,
+  mass.wing_kg/mtom_kg, prop.*) + NAMED documented transforms (aero_cd_to_aviary_drag_factor,
+  wing_mass_to_aviary_scaler, mtom_to_pycycle_fn_des) extracted verbatim from the formulas
+  formerly buried in data_plane. Behavior-preserving (unit-tested against the old values).
+- data_plane captures SU2/mass outputs into the typed registry from their STRUCTURED returns
+  and injects from the registry via the named transforms; legacy regex/data_store path demoted
+  to a flagged fallback (aero_coupling_source = typed_registry | legacy_fallback).
+- ENFORCEMENT (not a gate): `mission_coupling_error` + the type_coercion middleware return an
+  UNCOUPLED_MISSION tool error when an aviary mission call still lacks SU2 aero, so the model's
+  OWN coordination recovers (run SU2, retry). Universal (one tool-boundary check), toggleable
+  via AVION_ENFORCE_COUPLING=0. Verified against combo-1 link-0 real data (aero.cd_cruise
+  0.007611 -> drag_factor -> coupled). Confirmed on the shared-DesignState architecture that
+  this needs NO per-combo gates or orchestrated-specific contract.
+- Prompt backup: all 8 combo configs note aero-before-mission + UNCOUPLED_MISSION recovery.
+- design_ledger flags each run coupled/uncoupled + coupling_retries (a coordination signal).
+NEXT: end-to-end live verification (uncoupled -> error -> agent reruns SU2 -> couples), then
+resume the paper sweep with enforcement ON.
+
 ### 2026-07-28 — aero-coupling reliability: fuel is bimodal on SU2-CD injection (paper sweep PAUSED)
 
 Paused the paper sweep after combo 1 (`sequential_iterative_feedback`, 5/5 links, all
