@@ -717,6 +717,18 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     cl = _design_state.data_store.get("aero_cl_cruise")
     cd = _design_state.data_store.get("aero_cd_cruise")
     if cl is None or cd is None:
+        # COUPLING FAILURE (not a benign no-op): aviary is about to run WITHOUT the
+        # current design's SU2 aero, so it will silently fall back to its default drag
+        # polar (~CD 0.021) instead of the SU2-computed drag (~0.014). That produces a
+        # spuriously high, design-insensitive fuel and makes the objective bimodal. Record
+        # the status loudly so the runner can enforce a fully-coupled run (retry / reject)
+        # rather than scoring an uncoupled result. See [[avion-aero-coupling-fix]].
+        _design_state.data_store["aero_coupling_status"] = "MISSING_no_su2_aero"
+        logger.warning(
+            "AERO COUPLING MISSING: set_aircraft_parameters reached aviary with no SU2 "
+            "CL/CD captured this session — aviary will use its DEFAULT drag polar. Run the "
+            "aero stage (SU2 + read_history_csv) before the mission stage for a coupled run."
+        )
         return
 
     parameters = resolved.get("parameters")
@@ -752,6 +764,14 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     if "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in parameters:
         parameters["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] = float(scale_factor)
         injected.append("SUBSONIC_DRAG_COEFF_FACTOR")
+
+    # Record that this aviary run IS coupled to SU2 aero, with the exact CL/CD used —
+    # lets the runner confirm a fully-coupled run and (future) detect stale aero if the
+    # design changed after the SU2 solve that produced these coefficients.
+    _design_state.data_store["aero_coupling_status"] = "injected"
+    _design_state.data_store["aero_injected_cl"] = float(cl)
+    _design_state.data_store["aero_injected_cd"] = float(cd)
+    _design_state.data_store["aero_injected_drag_factor"] = float(scale_factor)
 
     if injected:
         resolved["parameters"] = parameters

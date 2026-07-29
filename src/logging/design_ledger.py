@@ -106,6 +106,33 @@ def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
     return {"applied": applied, "held_constant": not deviations, "deviations": deviations}
 
 
+# Aviary's default (uncoupled) cruise drag is ~0.0208; a SU2-coupled run is ~0.014.
+# Below this threshold => SU2 aero was injected into the mission (fully coupled).
+_AERO_COUPLED_CD_MAX = 0.018
+
+
+def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
+    """Whether SU2 aero actually reached aviary this run, from the flown cruise_cd_avg
+    (SU2-coupled ~0.014 vs aviary default ~0.0208) read out of the aviary get_results
+    observations. The DRAG_COEFF_FACTOR name appears in the prompt text so it is NOT a
+    reliable signal — cruise_cd_avg is. Lets us flag/enforce fully-coupled runs."""
+    obs = []
+    for body in (traces or {}).values():
+        if not isinstance(body, dict):
+            continue
+        for st in body.get("steps", []) or []:
+            o = st.get("observations")
+            if o:
+                obs.append(o if isinstance(o, str) else json.dumps(o))
+    blob = "\n".join(obs)
+    # match cruise_cd_avg even through CSV/JSON escaping of the quote before the colon
+    cds = re.findall(r'cruise_cd_avg\\?"?\s*[:=]\s*([0-9.]+)', blob)
+    cd = float(cds[-1]) if cds else None
+    coupled = cd is not None and cd < _AERO_COUPLED_CD_MAX
+    return {"coupled": coupled, "cruise_cd_avg": cd,
+            "status": "coupled" if coupled else ("uncoupled_default_drag" if cd is not None else "unknown")}
+
+
 def _discipline_outputs(traces: dict[str, Any]) -> dict[str, float]:
     """Best-effort CL/CD/SFC/thrust from tool-result observations."""
     obs = []
@@ -147,6 +174,8 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
         "design_applied": _applied_design(traces),
         # pinned discipline controls the agent passed + deviation flag (must be constant)
         "controls_applied": _controls_applied(traces),
+        # was SU2 aero coupled into aviary? (fully-coupled run vs default-drag fallback)
+        "aero_coupling": _aero_coupled(traces),
         # discipline outputs across the MCPs
         "discipline_outputs": _discipline_outputs(traces),
         # final mission outcomes (authoritative, from the eval)
