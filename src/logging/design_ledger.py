@@ -129,7 +129,10 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
     cds = re.findall(r'cruise_cd_avg\\?"?\s*[:=]\s*([0-9.]+)', blob)
     cd = float(cds[-1]) if cds else None
     coupled = cd is not None and cd < _AERO_COUPLED_CD_MAX
-    return {"coupled": coupled, "cruise_cd_avg": cd,
+    # How many times the model hit the UNCOUPLED_MISSION error before recovering —
+    # a coordination signal (0 = coupled aero before mission on the first try).
+    retries = blob.count("UNCOUPLED_MISSION")
+    return {"coupled": coupled, "cruise_cd_avg": cd, "coupling_retries": retries,
             "status": "coupled" if coupled else ("uncoupled_default_drag" if cd is not None else "unknown")}
 
 

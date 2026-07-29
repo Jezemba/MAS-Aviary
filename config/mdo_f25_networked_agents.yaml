@@ -56,6 +56,10 @@ peer_template:
        NOTE: May run as stub — use F25 reference SFC ≈ 0.53 lb/hr/lbf if unavailable.
 
     5. Aviary (Mission — port 8600, 9 tools):
+       # COUPLING (fully-coupled run): SU2 aero (run_su2_solver -> read_history_csv) must be
+       # done by SOME peer BEFORE any peer calls a mission tool, so SU2 CL/CD feed aviary as
+       # typed vars (aero.cl_cruise / aero.cd_cruise). If set_aircraft_parameters returns an
+       # UNCOUPLED_MISSION error, claim/await the aero task first, then retry.
        get_design_space() → 10 parameters with ranges
        create_session() → session_id (30-min timeout)
        set_aircraft_parameters(session_id, parameters={"Aircraft.Wing.ASPECT_RATIO": 15.6, ...})

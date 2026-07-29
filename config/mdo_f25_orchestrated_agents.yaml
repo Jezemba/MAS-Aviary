@@ -104,6 +104,10 @@ agents:
          NOTE: May be running as stub — if ImportError, use F25 reference values.
 
       5. Aviary MCP (Mission — port 8600, 8 tools):
+         # COUPLING (fully-coupled run): the AERO stage (SU2 -> read_history_csv) must run
+         # BEFORE any mission call so SU2 CL/CD feed aviary automatically as typed vars
+         # (aero.cl_cruise / aero.cd_cruise). If set_aircraft_parameters returns an
+         # UNCOUPLED_MISSION error, dispatch the aero worker first, then retry.
          get_design_space(category) → 10 parameters with defaults, ranges, units
          create_session(initial_parameters) → session_id (30-min timeout)
          set_aircraft_parameters(session_id, parameters={"Aircraft.Wing.ASPECT_RATIO": 15.6, ...},

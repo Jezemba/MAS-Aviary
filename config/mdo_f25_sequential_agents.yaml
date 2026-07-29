@@ -670,6 +670,12 @@ templates:
           the simulation session and configure it with results from all
           upstream disciplines (geometry, aero, structures, propulsion).
 
+          COUPLING (fully-coupled run): the AERO stage (SU2 -> read_history_csv) runs
+          before you, so SU2 CL/CD are captured as typed variables (aero.cl_cruise /
+          aero.cd_cruise) and injected into your set_aircraft_parameters automatically.
+          If set_aircraft_parameters returns an UNCOUPLED_MISSION error, the aero data
+          is missing — do not run the mission on default drag; surface it so aero reruns.
+
           ── MISSION PARAMETERS ────────────────────────────────────────────
 
           configure_mission(session_id, ...):

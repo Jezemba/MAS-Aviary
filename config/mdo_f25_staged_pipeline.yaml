@@ -208,6 +208,12 @@ mdo_f25_pipeline:
         Reuse it. The data-plane middleware will also auto-inject the
         right session_id even if you omit it, so prefer simple calls.
 
+        COUPLING (fully-coupled run): the AERO stage (SU2 -> read_history_csv) MUST run
+        before this mission so SU2 CL/CD feed aviary automatically as typed variables
+        (aero.cl_cruise / aero.cd_cruise). If set_aircraft_parameters returns an
+        UNCOUPLED_MISSION error, run the aero stage first, THEN retry — never run the
+        mission on default drag.
+
         Required tool sequence:
           1. configure_mission(range_nmi=<<RANGE_NMI>>, num_passengers=<<NUM_PASSENGERS>>,
              cruise_mach=<<CRUISE_MACH>>, cruise_altitude_ft=<<CRUISE_ALTITUDE_FT>>,
