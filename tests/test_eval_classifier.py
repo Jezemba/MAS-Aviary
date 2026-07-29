@@ -35,7 +35,7 @@ class TestLoadThresholds:
 class TestSuccess:
     def test_all_metrics_pass(self):
         result = classify_aviary_eval(
-            {"fuel_burned_kg": 7000.65, "gtow_kg": 67365.86, "wing_mass_kg": 7466.35},
+            {"fuel_burned_kg": DEFAULT_AVIARY_THRESHOLDS.reference["fuel_burned_kg"], "gtow_kg": DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"], "wing_mass_kg": DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]},
             converged=True,
         )
         assert result.result == "success"
@@ -55,7 +55,7 @@ class TestSuccess:
         # 5% deviation on fuel should still pass (threshold is 10%)
         ref = DEFAULT_AVIARY_THRESHOLDS.reference["fuel_burned_kg"]
         result = classify_aviary_eval(
-            {"fuel_burned_kg": ref * 1.05, "gtow_kg": 67365.86, "wing_mass_kg": 7466.35},
+            {"fuel_burned_kg": ref * 1.05, "gtow_kg": DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"], "wing_mass_kg": DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]},
             converged=True,
         )
         assert result.fuel_pass is True
@@ -102,7 +102,7 @@ class TestOmission:
         # 50% deviation should fail
         ref = DEFAULT_AVIARY_THRESHOLDS.reference["fuel_burned_kg"]
         result = classify_aviary_eval(
-            {"fuel_burned_kg": ref * 1.5, "gtow_kg": 67365.86, "wing_mass_kg": 7466.35},
+            {"fuel_burned_kg": ref * 1.5, "gtow_kg": DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"], "wing_mass_kg": DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]},
             converged=True,
         )
         assert result.result == "omission"
@@ -112,7 +112,7 @@ class TestOmission:
     def test_gtow_over_threshold(self):
         ref = DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"]
         result = classify_aviary_eval(
-            {"fuel_burned_kg": 7000.65, "gtow_kg": ref * 2.0, "wing_mass_kg": 7466.35},
+            {"fuel_burned_kg": DEFAULT_AVIARY_THRESHOLDS.reference["fuel_burned_kg"], "gtow_kg": ref * 2.0, "wing_mass_kg": DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]},
             converged=True,
         )
         assert result.result == "omission"
@@ -121,7 +121,7 @@ class TestOmission:
     def test_wing_mass_over_threshold(self):
         ref = DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]
         result = classify_aviary_eval(
-            {"fuel_burned_kg": 7000.65, "gtow_kg": 67365.86, "wing_mass_kg": ref * 2.0},
+            {"fuel_burned_kg": DEFAULT_AVIARY_THRESHOLDS.reference["fuel_burned_kg"], "gtow_kg": DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"], "wing_mass_kg": ref * 2.0},
             converged=True,
         )
         assert result.result == "omission"
@@ -180,7 +180,7 @@ class TestCustomThresholds:
         # 5% deviation should fail with 0.1% threshold
         ref = strict.reference["fuel_burned_kg"]
         result = classify_aviary_eval(
-            {"fuel_burned_kg": ref * 1.05, "gtow_kg": 67365.86, "wing_mass_kg": 7466.35},
+            {"fuel_burned_kg": ref * 1.05, "gtow_kg": DEFAULT_AVIARY_THRESHOLDS.reference["gtow_kg"], "wing_mass_kg": DEFAULT_AVIARY_THRESHOLDS.reference["wing_mass_kg"]},
             converged=True,
             thresholds=strict,
         )
