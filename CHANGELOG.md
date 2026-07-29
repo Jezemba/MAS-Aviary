@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### 2026-07-28 — aero-coupling reliability: fuel is bimodal on SU2-CD injection (paper sweep PAUSED)
+
+Paused the paper sweep after combo 1 (`sequential_iterative_feedback`, 5/5 links, all
+mechanics clean, $15.15) to analyze results, and a no-API deterministic probe cracked a
+metric puzzle. Aviary `fuel_burned_kg` is fully **deterministic** but **bimodal**, governed
+by whether SU2's drag got injected into aviary via the data-plane middleware:
+- SU2 CD injected (`cruise_cd_avg` ~0.014) → fuel ~9,000–10,000 kg
+- NOT injected (aviary default CD 0.0208) → fuel ~12,738 kg
+
+Combo-1 links 0/3/4 (agent morphed design + reran SU2) injected → ~9,100/9,473/10,133; links
+1/2 (design unchanged, SU2 skipped) did not → 12,738. Root cause:
+`src/tools/data_plane.py::_inject_phase_h_aero` **silently no-ops** when
+`aero_cl_cruise`/`aero_cd_cruise` are absent from the (fresh-per-run) DesignState, so aviary
+falls back to its default drag polar. An earlier "non-reproducible" reading was a false alarm
+from an aviary-only probe that skipped the injection; `full_pipeline_probe.py` confirms the
+full pipeline is reproducible (run1 == run2 byte-for-byte).
+
+**Decision (Jessica): the paper run must be fully-coupled** — a design change must rerun SU2
+and aviary must use those results, every time. Coupling fix moving to its own branch. Do NOT
+resume the 8-combo sweep until aero coupling is mandatory (no silent default fallback + stale-
+aero detection). New debugging tools: `scripts/full_pipeline_probe.py`,
+`scripts/scripted_chain_probe.py`, `scripts/mcp_call.py`, `.llm/LIVE_AGENT_SESSION_PROMPT.md`.
+
 ### 2026-07-28 — shared-source canonical baseline (all discipline params single-sourced)
 
 Experimental-design foundation: every discipline's tool/solver inputs now come from ONE
