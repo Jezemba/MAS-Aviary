@@ -173,7 +173,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
 
     Skips tools that don't have the expected attributes (e.g. mock tools).
     """
-    from src.tools.data_plane import intercept_response, resolve_request
+    from src.tools.data_plane import intercept_response, mission_coupling_error, resolve_request
 
     original_forward = getattr(tool, "forward", None)
     if original_forward is None or not getattr(tool, "inputs", None):
@@ -182,8 +182,15 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
     def middleware_forward(*args, **kwargs):
         # 1. Type coercion
         coerced = coerce_tool_arguments(tool, kwargs)
-        # 2. Resolve data store references
+        # 2. Resolve data store references (also injects typed coupling vars)
         resolved = resolve_request(tool.name, coerced)
+        # 2b. Coupling enforcement: if an aviary mission call still has no SU2 aero,
+        #     surface an UNCOUPLED error to the model instead of running on defaults.
+        #     Not a gate — the model's own coordination recovers (run SU2, retry).
+        err = mission_coupling_error(tool.name, resolved)
+        if err is not None:
+            import json as _json
+            return _json.dumps(err)
         # 3. Call the actual tool
         result = original_forward(*args, **resolved)
         # 4. Intercept large binary responses

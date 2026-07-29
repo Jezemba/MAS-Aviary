@@ -702,6 +702,48 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     )
 
 
+def mission_coupling_error(tool_name: str, resolved: dict) -> dict | None:
+    """Return an UNCOUPLED error dict if an aviary mission call is about to run WITHOUT
+    the SU2 cruise aero — else None. Called by the tool wrapper AFTER resolve_request
+    (so registry injection already had its chance). This is NOT a phase-gate: it does
+    not reorder or force anything; it just makes the missing coupling VISIBLE to the
+    model as a tool error so its own coordination can recover (run SU2, retry). The
+    typed registry stays the primary path; the prompt instruction is the backup.
+
+    Fires only for ``set_aircraft_parameters`` (the aviary mission-design call). A call
+    is considered coupled if the resolved parameters carry the drag factor — whether
+    injected from the registry or set by the agent by hand. Toggle with
+    AVION_ENFORCE_COUPLING=0.
+    """
+    import os
+    if tool_name != "set_aircraft_parameters":
+        return None
+    if os.environ.get("AVION_ENFORCE_COUPLING", "1") != "1":
+        return None
+    params = resolved.get("parameters")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(params, dict):
+        return None
+    if "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" in params:
+        return None  # coupled — aero present (injected or agent-provided)
+    return {
+        "success": False,
+        "error_code": "UNCOUPLED_MISSION",
+        "error": (
+            "UNCOUPLED: this is a fully-coupled MDO run, but no SU2 cruise aero is "
+            "available to feed the aviary mission. Run the AERO stage first — "
+            "create_su2_session -> set_mesh -> run_su2_solver -> read_history_csv — "
+            "THEN retry set_aircraft_parameters. The SU2 CL/CD are captured as typed "
+            "variables (aero.cl_cruise / aero.cd_cruise) and injected automatically; "
+            "you do not need to pass them by hand. Do NOT run the mission on default drag."
+        ),
+    }
+
+
 def _inject_phase_h_aero(resolved: dict) -> None:
     """Merge SU2 cruise CL/CD into a set_aircraft_parameters call.
 
