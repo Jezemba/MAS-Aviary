@@ -249,6 +249,8 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         return
 
     _design_state.data_store["mass_wing_kg"] = wing_f
+    from src.tools import coupling as _coupling
+    _coupling.put_var(_design_state, "mass.wing_kg", wing_f, source_tool="estimate_mass")
     _design_state.data_store["mass_wing_source"] = str(
         components.get("mWing_source", "unknown")
     )
@@ -264,6 +266,8 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
             mtom_f = float(mtom_kg)
             if 20_000.0 <= mtom_f <= 200_000.0:
                 _design_state.data_store["mass_mtom_kg"] = mtom_f
+                from src.tools import coupling as _cpl
+                _cpl.put_var(_design_state, "mass.mtom_kg", mtom_f, source_tool="estimate_mass")
                 logger.info(
                     "Captured MTOM from estimate_mass: %.1f kg", mtom_f,
                 )
@@ -315,10 +319,17 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     except (TypeError, ValueError):
         return
 
+    # Legacy keys (kept during transition / as fallback source).
     _design_state.data_store["aero_cl_cruise"] = cl_f
     _design_state.data_store["aero_cd_cruise"] = cd_f
+    # Typed registry (the coupling contract): SU2 writes its named output variables.
+    from src.tools import coupling
+    coupling.put_var(_design_state, "aero.cl_cruise", cl_f, source_tool="read_history_csv")
+    coupling.put_var(_design_state, "aero.cd_cruise", cd_f, source_tool="read_history_csv")
+    if cd_f:
+        coupling.put_var(_design_state, "aero.l_over_d", cl_f / cd_f, source_tool="read_history_csv")
     logger.info(
-        "Captured aero coefficients from read_history_csv: CL=%.4f CD=%.4f",
+        "Captured aero into typed registry: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
         cl_f, cd_f,
     )
 
@@ -632,10 +643,9 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     if "Fn_DES" in values:
         return  # respect explicit agent override
 
-    fn_des_lbf = float(mtom_kg) * _FN_DES_PER_KG_LBF
-    # Sanity envelope — anything outside [2000, 25000] lbf is a
-    # narrow-body class mismatch, not what this coupling is for.
-    fn_des_lbf = max(2000.0, min(fn_des_lbf, 25000.0))
+    # MTOM -> pycycle Fn_DES via the named, documented transform (src/tools/coupling.py).
+    from src.tools import coupling as _cpl
+    fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
 
     values["Fn_DES"] = fn_des_lbf
     resolved["values"] = values
@@ -680,8 +690,8 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     if "Aircraft.Wing.MASS_SCALER" in parameters:
         return  # respect explicit agent override
 
-    scaler_raw = float(wing_kg) / _AVIARY_BENCH_WING_MASS_KG
-    scaler = max(0.5, min(scaler_raw, 2.0))
+    from src.tools import coupling as _cpl
+    scaler = _cpl.wing_mass_to_aviary_scaler(wing_kg)
 
     parameters["Aircraft.Wing.MASS_SCALER"] = scaler
     resolved["parameters"] = parameters
@@ -714,8 +724,16 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     if _design_state is None:
         return
 
-    cl = _design_state.data_store.get("aero_cl_cruise")
-    cd = _design_state.data_store.get("aero_cd_cruise")
+    # Read from the TYPED registry first (the coupling contract); fall back to the
+    # legacy data_store keys only if the registry is empty (older capture path).
+    from src.tools import coupling
+    cl = coupling.get_var(_design_state, "aero.cl_cruise")
+    cd = coupling.get_var(_design_state, "aero.cd_cruise")
+    _aero_src = "typed_registry"
+    if cl is None or cd is None:
+        cl = _design_state.data_store.get("aero_cl_cruise")
+        cd = _design_state.data_store.get("aero_cd_cruise")
+        _aero_src = "legacy_fallback"
     if cl is None or cd is None:
         # COUPLING FAILURE (not a benign no-op): aviary is about to run WITHOUT the
         # current design's SU2 aero, so it will silently fall back to its default drag
@@ -742,20 +760,10 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     if not isinstance(parameters, dict):
         return
 
-    # CD calibration formula. Fixed constants are tuned to aviary's
-    # height_energy A320-class bench. See the Phase H section of the
-    # mission_architect prompt for the derivation — kept consistent
-    # here so the prompt and the middleware stay aligned.
+    # CD -> aviary drag-scale factor via the NAMED, documented transform (was an inline
+    # formula here; now src/tools/coupling.py, unit-tested). AR sourced from the design.
     ar = parameters.get("Aircraft.Wing.ASPECT_RATIO")
-    try:
-        ar_eff = max(float(ar) if ar is not None else 11.0, 8.0)
-    except (TypeError, ValueError):
-        ar_eff = 11.0
-
-    cd_realistic = cd + 0.0050
-    cd_aviary_default = 0.022 + (cl * cl) / (3.14159 * ar_eff * 0.85)
-    scale_factor = cd_realistic / cd_aviary_default
-    scale_factor = max(0.5, min(scale_factor, 2.0))
+    scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar)
 
     injected: list[str] = []
     if "Mission.Design.LIFT_COEFFICIENT" not in parameters:
@@ -769,9 +777,12 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     # lets the runner confirm a fully-coupled run and (future) detect stale aero if the
     # design changed after the SU2 solve that produced these coefficients.
     _design_state.data_store["aero_coupling_status"] = "injected"
+    _design_state.data_store["aero_coupling_source"] = _aero_src  # typed_registry | legacy_fallback
     _design_state.data_store["aero_injected_cl"] = float(cl)
     _design_state.data_store["aero_injected_cd"] = float(cd)
     _design_state.data_store["aero_injected_drag_factor"] = float(scale_factor)
+    if _aero_src == "legacy_fallback":
+        logger.warning("AERO COUPLING via LEGACY fallback (typed registry empty) — check SU2 capture.")
 
     if injected:
         resolved["parameters"] = parameters
