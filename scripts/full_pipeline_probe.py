@@ -41,8 +41,13 @@ def full_eval(tm, design, label, run_su2=True):
         call(tm, "update_config_entries", session_id=ssid,
              updates={"AOA": 2.0, "CFL_NUMBER": 20, "CFL_ADAPT": "YES", "MACH_NUMBER": 0.78})
         call(tm, "run_su2_solver", session_id=ssid, solver="SU2_CFD", max_runtime_seconds=300)
-        hist = call(tm, "read_history_csv", session_id=ssid, relative_path="history.csv", max_rows=5, skip_rows=54)
-        cl, cd = hist.get("CL"), hist.get("CD")
+        # read the whole history; the LAST row is the converged state (middleware
+        # _capture_aero_coefficients reads rows[-1] and cleans the quoted CSV keys).
+        hist = call(tm, "read_history_csv", session_id=ssid, relative_path="history.csv", max_rows=2000, skip_rows=0)
+        rows = hist.get("rows") or []
+        last = rows[-1] if rows else {}
+        cl = last.get("CL") or next((v for k, v in last.items() if isinstance(k, str) and k.strip().strip('"') == "CL"), None)
+        cd = last.get("CD") or next((v for k, v in last.items() if isinstance(k, str) and k.strip().strip('"') == "CD"), None)
     # mass (wing mass captured by middleware for injection)
     call(tm, "estimate_mass", cpacs_file_path="/tmp/cpacs_out.xml",
          wing_mass_method="flops", material="aluminum", aviary_mass_method="FLOPS", design_load_factor=2.5)
