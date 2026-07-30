@@ -18,14 +18,17 @@ Ignore "Cannot close a running event loop" stderr — cosmetic MCP teardown.
 import contextlib
 import io
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, ".")
 
-LOG = Path("logs/live_agent_chain.jsonl")
-STATE = Path("logs/mcp_designstate.json")
+# Per-run isolation: parallel subagents each set MCP_STATE_FILE / MCP_LOG_FILE so their
+# DesignState (typed registry, sessions, captured aero/geom) and live logs don't collide.
+LOG = Path(os.environ.get("MCP_LOG_FILE", "logs/live_agent_chain.jsonl"))
+STATE = Path(os.environ.get("MCP_STATE_FILE", "logs/mcp_designstate.json"))
 
 
 def _summ(d):
