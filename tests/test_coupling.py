@@ -13,19 +13,41 @@ class _DS:
         self.data_store = {}
 
 
-def test_aero_transform_matches_old_formula():
-    cd, cl, ar = 0.0138, 0.42, 11.0
+def test_reynolds_number_at_cruise():
+    # M0.78, 33 kft, MAC 4 m -> ~2.6e7 (a jet transport cruise Reynolds)
+    re = C.reynolds_number(0.78, 33000, 4.0)
+    assert 1.5e7 < re < 4.0e7
+
+
+def test_skin_friction_is_physical():
+    # Schlichting Cf ~0.0026 at Re 2.6e7; CD0 with Swet/Sref~6 -> ~0.018-0.022 (real parasite drag)
+    cd0 = C.skin_friction_cd(2.6e7, 6.0)
+    assert 0.015 < cd0 < 0.024
+    # more wetted area (or lower Re) => more friction drag
+    assert C.skin_friction_cd(2.6e7, 7.0) > C.skin_friction_cd(2.6e7, 6.0)
+
+
+def test_aero_transform_physics_buildup():
+    # CD_total = SU2 pressure CD + real skin friction; NOT the old +0.005 fudge.
+    re = C.reynolds_number(0.78, 33000, 4.0)
+    friction = C.skin_friction_cd(re, 6.0)
+    cd_inviscid, cl, ar = 0.001, 0.42, 11.0
+    cd_total = cd_inviscid + friction
     ar_eff = max(ar, 8.0)
-    expected = (cd + 0.0050) / (0.022 + cl * cl / (3.14159 * ar_eff * 0.85))
-    expected = max(0.5, min(expected, 2.0))
-    assert C.aero_cd_to_aviary_drag_factor(cd, cl, ar) == expected
+    expected = max(0.5, min(cd_total / (0.022 + cl * cl / (3.14159 * ar_eff * 0.85)), 2.0))
+    assert abs(C.aero_cd_to_aviary_drag_factor(cd_inviscid, cl, ar, reynolds=re, swet_sref=6.0) - expected) < 1e-9
 
 
-def test_aero_transform_clamps():
+def test_aero_transform_no_longer_clamps_near_zero_cd():
+    # The morphed near-zero SU2 CD used to clamp to the 0.5 floor (fake). With the friction
+    # build-up it now lands in-band (physically sensible), so the drag SIGNAL survives.
+    re = C.reynolds_number(0.78, 33000, 4.0)
+    f = C.aero_cd_to_aviary_drag_factor(-6.87e-05, 0.193, 12.4, reynolds=re, swet_sref=6.0)
+    assert 0.6 < f < 1.2
+
+
+def test_aero_transform_still_clamps_extremes():
     assert C.aero_cd_to_aviary_drag_factor(1.0, 0.4, 11.0) == 2.0   # huge CD clamps high
-    assert C.aero_cd_to_aviary_drag_factor(0.0001, 0.9, 11.0) == 0.5  # tiny CD clamps low
-    # low AR is floored at 8.0 (same as old ar_eff = max(ar, 8.0))
-    assert C.aero_cd_to_aviary_drag_factor(0.0138, 0.42, 5.0) == C.aero_cd_to_aviary_drag_factor(0.0138, 0.42, 8.0)
 
 
 def test_wing_mass_scaler_matches():

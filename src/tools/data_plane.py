@@ -184,6 +184,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_mesh_markers(tool_name, data)
                 _capture_aero_coefficients(tool_name, data)
                 _capture_wing_mass_from_mass_estimate(tool_name, data)
+                _capture_geometry_ref(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -200,6 +201,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_mesh_markers(tool_name, response)
         _capture_aero_coefficients(tool_name, response)
         _capture_wing_mass_from_mass_estimate(tool_name, response)
+        _capture_geometry_ref(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
@@ -332,6 +334,22 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         "Captured aero into typed registry: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
         cl_f, cd_f,
     )
+
+
+def _capture_geometry_ref(tool_name: str, data: dict) -> None:
+    """Capture geometry reference data (MAC, wetted/reference area) into the typed
+    registry so the physics-based drag build-up (Reynolds + Swet/Sref) responds to the
+    morphed geometry. get_wing_summary -> mac/wing-wetted/reference; get_fuselage_summary
+    -> fuselage-wetted."""
+    if _design_state is None or not isinstance(data, dict):
+        return
+    from src.tools import coupling
+    if tool_name == "get_wing_summary":
+        coupling.put_var(_design_state, "geom.mac_length", data.get("mac_length"), source_tool=tool_name)
+        coupling.put_var(_design_state, "geom.wing_wetted_area", data.get("wetted_area"), source_tool=tool_name)
+        coupling.put_var(_design_state, "geom.reference_area", data.get("reference_area"), source_tool=tool_name)
+    elif tool_name == "get_fuselage_summary":
+        coupling.put_var(_design_state, "geom.fuselage_wetted_area", data.get("wetted_area"), source_tool=tool_name)
 
 
 def _capture_session(tool_name: str, data: dict) -> None:
@@ -802,10 +820,28 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     if not isinstance(parameters, dict):
         return
 
-    # CD -> aviary drag-scale factor via the NAMED, documented transform (was an inline
-    # formula here; now src/tools/coupling.py, unit-tested). AR sourced from the design.
+    # PHYSICS-BASED drag build-up (Option A'): total CD = SU2 inviscid pressure drag +
+    # a real Schlichting skin-friction estimate from the flight-state Reynolds number and
+    # the morphed geometry's wetted-area ratio. Re from canonical cruise Mach/altitude +
+    # MAC; Swet/Sref from wing+fuselage wetted / reference area (design-responsive), with a
+    # sane band + nominal fallback so a bad geometry read can't produce garbage drag.
     ar = parameters.get("Aircraft.Wing.ASPECT_RATIO")
-    scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar)
+    reynolds = swet_sref = None
+    try:
+        from src.config.canonical import load_canonical
+        _mis = load_canonical().get("mission", {})
+        mac = coupling.get_var(_design_state, "geom.mac_length") or 4.0
+        reynolds = coupling.reynolds_number(_mis.get("cruise_mach", 0.78),
+                                            _mis.get("cruise_altitude_ft", 33000), mac)
+        _ref = coupling.get_var(_design_state, "geom.reference_area")
+        _wwet = coupling.get_var(_design_state, "geom.wing_wetted_area")
+        _fwet = coupling.get_var(_design_state, "geom.fuselage_wetted_area") or 0.0
+        if _ref and _ref > 0 and _wwet:
+            ratio = (_wwet + _fwet) / _ref
+            swet_sref = ratio if 3.0 <= ratio <= 9.0 else None  # else fall back to nominal
+    except Exception:
+        pass
+    scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
 
     injected: list[str] = []
     if "Mission.Design.LIFT_COEFFICIENT" not in parameters:

@@ -49,6 +49,15 @@ CANONICAL_VARS: dict[str, VarSpec] = {
                                "pycycle cruise TSFC (diagnostic; aviary uses its deck)."),
     "prop.fn_lbf": VarSpec("prop.fn_lbf", "pycycle", "lbf", (),
                            "pycycle net thrust at design point (diagnostic)."),
+    # Geometry reference data — feeds the physics-based drag build-up (Reynolds + Swet/Sref).
+    "geom.mac_length": VarSpec("geom.mac_length", "tigl", "m", ("su2",),
+                               "mean aerodynamic chord — reference length for Reynolds."),
+    "geom.wing_wetted_area": VarSpec("geom.wing_wetted_area", "tigl", "m^2", ("su2",),
+                                     "wing wetted area — skin-friction drag build-up."),
+    "geom.fuselage_wetted_area": VarSpec("geom.fuselage_wetted_area", "tigl", "m^2", ("su2",),
+                                         "fuselage wetted area — skin-friction drag build-up."),
+    "geom.reference_area": VarSpec("geom.reference_area", "tigl", "m^2", ("su2",),
+                                   "wing reference (planform) area — drag/CL normalization."),
 }
 
 # ---------------------------------------------------------------------------
@@ -59,23 +68,78 @@ CANONICAL_VARS: dict[str, VarSpec] = {
 # aviary height_energy A320-class bench references.
 AVIARY_BENCH_WING_MASS_KG = 5998.0     # MASS_SCALER = 1.0 corresponds to this wing.
 FN_DES_PER_KG_LBF = 0.0811             # engine thrust per kg MTOM.
-_SKIN_FRICTION_INCREMENT = 0.0050      # inviscid SU2 CD -> viscous-corrected CD.
 _AVIARY_CD0 = 0.022                    # aviary FLOPS baseline zero-lift CD.
 _OSWALD = 0.85                         # span efficiency in the aviary induced-drag est.
+# Full-aircraft wetted-area ratio Swet/Sref — nominal transport value, used as a fallback
+# when the geometry-derived ratio isn't available. (Raymer: ~6 for a jet transport.)
+_NOMINAL_SWET_SREF = 6.0
+_WING_FORM_FACTOR = 1.25               # thickness/sweep form-factor on the friction drag.
+# Default cruise Reynolds (M0.78, 33 kft, MAC~4 m) if flight state isn't supplied.
+_NOMINAL_REYNOLDS = 26.0e6
 
 
-def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: float) -> float:
-    """Map SU2's inviscid cruise CD to aviary's ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR``.
+def isa_density_temperature(altitude_ft: float) -> tuple[float, float]:
+    """ISA atmosphere density (kg/m^3) and temperature (K) — troposphere + lower strat."""
+    import math
+    h = float(altitude_ft) * 0.3048
+    if h <= 11000.0:
+        T = 288.15 - 0.0065 * h
+        p = 101325.0 * (T / 288.15) ** 5.25588
+    else:
+        T = 216.65
+        p = 22632.06 * math.exp(-9.80665 * 0.0289644 * (h - 11000.0) / (8.31447 * 216.65))
+    rho = p / (287.058 * T)
+    return rho, T
 
-    aviary scales its own FLOPS drag polar by this factor. We compare a viscous-
-    corrected SU2 CD against aviary's baseline drag at the same CL and take the ratio,
-    clamped to a sane band. This is the SAME calculation the middleware did inline;
-    it now lives here, named and documented.
+
+def sutherland_viscosity(temperature_k: float) -> float:
+    """Sutherland's law dynamic viscosity (Pa·s) of air."""
+    T = float(temperature_k)
+    return 1.716e-5 * (T / 273.15) ** 1.5 * (273.15 + 110.4) / (T + 110.4)
+
+
+def reynolds_number(mach: float, altitude_ft: float, length_m: float) -> float:
+    """Cruise Reynolds number from flight state + a reference length (MAC)."""
+    import math
+    rho, T = isa_density_temperature(altitude_ft)
+    a = math.sqrt(1.4 * 287.058 * T)          # speed of sound
+    v = float(mach) * a
+    mu = sutherland_viscosity(T)
+    return rho * v * float(length_m) / mu
+
+
+def skin_friction_cd(reynolds: float, swet_sref: float, form_factor: float = _WING_FORM_FACTOR) -> float:
+    """Turbulent flat-plate skin-friction drag coefficient (Schlichting) scaled by the
+    wetted-area ratio and a form factor. This is the PARASITE/friction drag that an
+    inviscid Euler solve physically cannot produce — real physics, not a fudge constant.
+        Cf = 0.455 / (log10 Re)^2.58 ;  CD0_friction = Cf * (Swet/Sref) * FF
+    """
+    import math
+    re = max(float(reynolds), 1.0e5)
+    cf = 0.455 / (math.log10(re)) ** 2.58
+    return cf * float(swet_sref) * float(form_factor)
+
+
+def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: float,
+                                  reynolds: float | None = None,
+                                  swet_sref: float | None = None) -> float:
+    """Map SU2 aero to aviary's ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`` via a
+    PHYSICS-BASED drag build-up (Option A′):
+
+        CD_total = cd_inviscid (SU2: real pressure/induced/wave drag)
+                   + skin_friction_cd(Re, Swet/Sref)   (real viscous friction Euler misses)
+
+    then factor = CD_total / aviary's FLOPS default drag at this CL. Re and Swet/Sref
+    come from the actual flight state + morphed geometry (design-responsive); they fall
+    back to nominal transport values if unavailable. Replaces the old fixed +0.005 fudge,
+    which underestimated friction (the dominant drag) and produced fake near-zero drag.
     """
     ar_eff = max(float(aspect_ratio) if aspect_ratio is not None else 11.0, 8.0)
-    cd_corrected = float(cd_inviscid) + _SKIN_FRICTION_INCREMENT
+    re = reynolds if reynolds else _NOMINAL_REYNOLDS
+    swr = swet_sref if swet_sref else _NOMINAL_SWET_SREF
+    cd_total = float(cd_inviscid) + skin_friction_cd(re, swr)
     cd_aviary_default = _AVIARY_CD0 + (float(cl) ** 2) / (3.14159 * ar_eff * _OSWALD)
-    factor = cd_corrected / cd_aviary_default
+    factor = cd_total / cd_aviary_default
     return max(0.5, min(factor, 2.0))
 
 
