@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### 2026-07-28 — physics-based drag build-up (real skin friction, not a fudge)
+
+A no-API faithful-pipeline check (shared canonical config) exposed that the SU2 Euler solve
+gives near-zero/noisy drag (CD ≈ -6.9e-05 on the morphed wing) — inviscid flow physically has
+no skin friction, and for a high-AR transport at cruise CL the inviscid pressure drag is
+genuinely ~0. The old transform's fixed `+0.005` skin-friction add was ~4x too small, so the
+drag factor clamped to its 0.5 floor and fuel came out optimistically low (fake signal).
+SU2's own reference uses RANS (`rans/oneram6`, SA turbulence, Reynolds, no-slip walls, BL mesh)
+for real drag. Rather than take on RANS (BL mesh + ~5x solve cost), implemented Option A':
+keep Euler for pressure/induced/wave drag and add a REAL flat-plate skin-friction estimate —
+`CD_total = cd_inviscid + Cf(Re)·(Swet/Sref)·FF`, `Cf = 0.455/(log10 Re)^2.58` (Schlichting).
+New physics in `coupling.py` (ISA atmosphere, Sutherland viscosity, `reynolds_number`,
+`skin_friction_cd`); `data_plane` captures MAC + wing/fuselage wetted + reference area
+(typed `geom.*` vars) and computes Re (canonical cruise state + MAC) and Swet/Sref (morphed
+geometry) so the drag is design-responsive. Verified: Re 2.6e7, Cf 0.0026, CD0 0.019
+(textbook), morphed case drag factor 0.82 (was 0.5 floor). RANS remains a future option if
+CFD-computed viscous drag becomes a headline claim. Commit 3a3c576.
+
 ### 2026-07-28 — typed discipline coupling + uncoupled-error enforcement (branch feat/enforce-aero-coupling)
 
 Reworked the SU2->aviary (and mass->aviary, mass->pycycle) coupling from a hidden

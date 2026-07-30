@@ -162,6 +162,31 @@ Wiring plan (data plane, universal):
 
 ---
 
+## 7b. Drag physics — why Euler is fake, and the Option A' fix (2026-07-28)
+
+A no-API faithful-pipeline check found the SU2 drag is a **fake signal**: an Euler (inviscid)
+solve physically has no skin friction — the dominant cruise-drag component (CD0 ≈ 0.018–0.022
+of a total ≈ 0.025–0.030) — and for our high-AR transport at low cruise CL the inviscid
+pressure drag is genuinely ~0 (we measured CD ≈ −6.9e-05 on the morphed wing; D'Alembert +
+numerical noise). The old transform's fixed `+0.005` add was ~4× too small, so the drag factor
+clamped to its 0.5 floor and fuel came out optimistically low.
+
+SU2's own reference confirms this: it ships `TestCases/rans/oneram6` (RANS + SA turbulence +
+`REYNOLDS_NUMBER` + Sutherland viscosity + no-slip `MARKER_HEATFLUX` + a boundary-layer mesh)
+for *real* drag; we had copied the *inviscid* `euler/oneram6` case (`MARKER_EULER`, slip walls).
+
+**Option A' (chosen — meaningful physics without RANS):** keep the cheap Euler solve for
+pressure/induced/wave drag and add a real flat-plate skin-friction estimate:
+`CD_total = cd_inviscid + Cf(Re)·(Swet/Sref)·FF`, `Cf = 0.455/(log10 Re)^2.58` (Schlichting).
+Re from the canonical cruise Mach/altitude + MAC (ISA atmosphere + Sutherland); Swet/Sref from
+the morphed geometry's wetted/reference areas — so the drag is physical AND design-responsive.
+`coupling.py` holds the physics; `data_plane._capture_geometry_ref` feeds the typed `geom.*`
+vars. Verified: Re 2.6e7, Cf 0.0026, CD0 0.019 (textbook), morphed drag factor 0.82.
+
+**Option B (RANS) — future:** the tigl mesher exposes `boundary_layer_enabled` so a y+≈1 BL
+mesh + `SOLVER=RANS` is feasible, giving CFD-computed viscous drag — but ~5× solve cost + mesh
+tuning + revalidation. Worth it only if CFD-fidelity is itself a paper claim.
+
 ## 7. References (file:line)
 - Data plane hooks: `src/tools/data_plane.py:176` (intercept), `:479` (resolve), `:274-323` (aero capture),
   `:~695` (aero inject), `:521-537` (session-id override), `:726-731` (coupling-missing warning).
