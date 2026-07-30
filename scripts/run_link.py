@@ -97,9 +97,16 @@ def main():
         # dir and mass-mcp can't find it (silently falls back to baseline geometry).
         morphed_cpacs = os.path.abspath(os.path.join(os.path.dirname(LOGF) or ".", f"morphed_{combo}_{link}.xml"))
         ex = call("export_cpacs", session_id=gid, output_path=morphed_cpacs)
-        mass_cpacs = ex.get("cpacs_file_path") if ex.get("status") == "success" else CPACS
-        if ex.get("status") != "success":
-            notes.append(f"export_cpacs failed ({ex.get('error') or ex}); mass used baseline CPACS")
+        _exp_path = ex.get("cpacs_file_path")
+        # Guard against the silent-fallback trap: only treat the export as usable if the
+        # file ACTUALLY exists on disk from our vantage point. A missing file here means
+        # mass would read baseline while the log falsely claimed "morphed".
+        if ex.get("status") == "success" and _exp_path and os.path.isfile(_exp_path):
+            mass_cpacs = _exp_path
+        else:
+            mass_cpacs = CPACS
+            notes.append(f"export_cpacs unusable (status={ex.get('status')}, path={_exp_path}, "
+                         f"exists={bool(_exp_path) and os.path.isfile(str(_exp_path))}); mass used baseline CPACS")
         call("generate_volume_mesh", session_id=gid, component_uid="Wing1",
              far_field_distance=canon["geometry"]["far_field_distance"], boundary_layer_enabled=False)
         call("close_cpacs", session_id=gid)
