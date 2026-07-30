@@ -612,6 +612,18 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _design_state.cpacs_file_path = source
             logger.info("Captured CPACS path from open_cpacs request: %s", source)
 
+    # TEMP coarse/fast mesh for the deadline run (env AVION_COARSE_MESH=1). The
+    # geometry prompt does NOT expose far_field/mesh_size, so agents default to a
+    # FINE mesh (far_field 10, auto cell size ~10.5 -> ~660k cells -> slow SU2).
+    # Force a COARSER mesh at the tool boundary so SU2 solves fast. Values chosen so
+    # the Euler solve still converges enough to inject a real CD (verified via a
+    # timed run_link): small domain + large max cell size = far fewer cells.
+    if tool_name == "generate_volume_mesh" and os.environ.get("AVION_COARSE_MESH") == "1":
+        resolved["far_field_distance"] = 5.0
+        resolved["mesh_size_max"] = 25.0
+        resolved["boundary_layer_enabled"] = False
+        logger.info("COARSE MESH forced: far_field=5.0, mesh_size_max=25.0")
+
     # Auto-fix SU2 marker names in update_config_entries
     if tool_name == "update_config_entries" and _design_state:
         updates = resolved.get("updates")
