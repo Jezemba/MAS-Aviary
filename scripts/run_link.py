@@ -92,8 +92,10 @@ def main():
         _log(link, combo, "geometry", morphed=bool(gm.get("rebuilt")), span=ws.get("span"), ref_area=ws.get("reference_area"))
         # Persist the MORPHED geometry to a CPACS file so mass-mcp (now tigl3-capable)
         # computes structural mass on the ACTUAL design, not the baseline. Must run
-        # while the session is open (before close_cpacs).
-        morphed_cpacs = os.path.join(os.path.dirname(LOGF) or ".", f"morphed_{combo}_{link}.xml")
+        # while the session is open (before close_cpacs). The path MUST be ABSOLUTE:
+        # each MCP server has its own cwd, so a relative path lands in the tigl server's
+        # dir and mass-mcp can't find it (silently falls back to baseline geometry).
+        morphed_cpacs = os.path.abspath(os.path.join(os.path.dirname(LOGF) or ".", f"morphed_{combo}_{link}.xml"))
         ex = call("export_cpacs", session_id=gid, output_path=morphed_cpacs)
         mass_cpacs = ex.get("cpacs_file_path") if ex.get("status") == "success" else CPACS
         if ex.get("status") != "success":
