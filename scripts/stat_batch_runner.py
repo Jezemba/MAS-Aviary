@@ -737,26 +737,55 @@ def run_stat_batch(
                     else:
                         print("  [chain] no end-state captured — next link reuses this link's start")
 
-                    # --- Cross-link FEEDBACK: pass this link's design-state assessment
-                    # (fuel, constraint pass/fail, verdict) into the NEXT link's task so
-                    # the chain can actually learn/improve, not just carry parameters. ---
+                    # --- Cross-link FEEDBACK: pass this link's FULL MDO-integrator
+                    # assessment (DESIGN_STATE: constraint verdicts, DISCIPLINARY_CONFLICTS,
+                    # RECOMMENDED_CHANGE, MDO_REASONING) into the NEXT link's task, so the
+                    # chain gets the actionable guidance the integrator produced — not just
+                    # the parsed numbers. Falls back to the parsed eval if no text found. ---
                     _ec = result.eval_classification or {}
-                    if _ec:
-                        def _pf(v):
-                            try:
-                                return f"{float(v):.1f}"
-                            except (TypeError, ValueError):
-                                return str(v)
+
+                    def _pf(v):
+                        try:
+                            return f"{float(v):.1f}"
+                        except (TypeError, ValueError):
+                            return str(v)
+
+                    _num = (
+                        f"  fuel_burned_kg = {_pf(_ec.get('fuel_burned_kg'))} "
+                        f"(constraint <=15000: {'PASS' if _ec.get('fuel_pass') else 'FAIL'})\n"
+                        f"  gtow_kg = {_pf(_ec.get('gtow_kg'))} "
+                        f"(constraint <=90000: {'PASS' if _ec.get('gtow_pass') else 'FAIL'})\n"
+                        f"  wing_mass_kg = {_pf(_ec.get('wing_mass_kg'))} "
+                        f"({'PASS' if _ec.get('wing_mass_pass') else 'FAIL'})"
+                    ) if _ec else ""
+
+                    # Pull the integrator's full final text from the last relevant message.
+                    _integrator = ""
+                    try:
+                        for _m in reversed(result.messages or []):
+                            _c = (_m.get("content") if isinstance(_m, dict)
+                                  else getattr(_m, "content", "")) or ""
+                            if ("DESIGN_STATE" in _c or "RECOMMENDED_CHANGE" in _c
+                                    or "VERDICT" in _c or "MDO_REASONING" in _c):
+                                _integrator = _c
+                                break
+                        if not _integrator and result.messages:
+                            _last = result.messages[-1]
+                            _integrator = (_last.get("content") if isinstance(_last, dict)
+                                           else getattr(_last, "content", "")) or ""
+                    except Exception:
+                        _integrator = ""
+                    if len(_integrator) > 7000:  # cap to keep the task prompt bounded
+                        _integrator = _integrator[:7000] + "\n...[assessment truncated]"
+
+                    if _integrator or _num:
                         chain_feedback = (
-                            f"Previous iteration (link {repeat_idx + 1}) results on the "
-                            f"starting design:\n"
-                            f"  fuel_burned_kg = {_pf(_ec.get('fuel_burned_kg'))} "
-                            f"(constraint <=15000: {'PASS' if _ec.get('fuel_pass') else 'FAIL'})\n"
-                            f"  gtow_kg = {_pf(_ec.get('gtow_kg'))} "
-                            f"(constraint <=90000: {'PASS' if _ec.get('gtow_pass') else 'FAIL'})\n"
-                            f"  wing_mass_kg = {_pf(_ec.get('wing_mass_kg'))} "
-                            f"({'PASS' if _ec.get('wing_mass_pass') else 'FAIL'})\n"
-                            f"  verdict: {_ec.get('reason', _ec.get('result', 'n/a'))}"
+                            f"Previous iteration (link {repeat_idx + 1}) — quick metrics:\n"
+                            f"{_num}\n\n"
+                            f"Full MDO-integrator assessment of that design "
+                            f"(constraint verdicts, disciplinary conflicts, and the "
+                            f"integrator's RECOMMENDED_CHANGE — ACT ON THESE):\n"
+                            f"{_integrator}"
                         )
                         result_dict["chain_feedback"] = chain_feedback
 
