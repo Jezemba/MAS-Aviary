@@ -136,7 +136,7 @@ agents:
         not tool-level instructions.
 
       AGENT ROLE → TOOL MAPPING:
-      - geometry_engineer: open_cpacs, close_cpacs, set_high_level_parameters, get_high_level_parameters,
+      - geometry_engineer: open_cpacs, close_cpacs, export_cpacs, set_high_level_parameters, get_high_level_parameters,
         get_wing_summary, get_fuselage_summary, get_configuration_summary, list_geometric_components, export_component_mesh, generate_volume_mesh
       - aerodynamics_analyst: create_su2_session, close_su2_session, set_mesh, update_config_entries,
         get_valid_config_options, run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status

@@ -195,6 +195,7 @@ templates:
         allowed_tools:
           - open_cpacs
           - close_cpacs
+          - export_cpacs
           - set_high_level_parameters
           - get_high_level_parameters
           - get_wing_summary

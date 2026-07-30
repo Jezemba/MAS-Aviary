@@ -381,15 +381,19 @@ def _capture_cpacs_path(tool_name: str, data: dict) -> None:
                 _design_state.cpacs_file_path = fname
                 logger.info("Captured CPACS path: %s", fname)
 
-    # export_cpacs: the MORPHED geometry was just written to disk. Record it as the
-    # authoritative current-design CPACS so mass tools read the morph, not the baseline
-    # input file — makes the structures discipline geometry-coupled for ALL combos
-    # regardless of whether the agent threads the path perfectly.
-    if tool_name == "export_cpacs":
+    # export_cpacs / close_cpacs(auto-export): the MORPHED geometry was just written to
+    # disk. Record it as the authoritative current-design CPACS so mass tools read the
+    # morph, not the baseline input file — makes the structures discipline
+    # geometry-coupled for ALL combos regardless of whether the agent explicitly
+    # exported or whether export_cpacs is in its toolset. close_cpacs auto-exports on
+    # every geometry-stage teardown, so this fires universally.
+    if tool_name in ("export_cpacs", "close_cpacs"):
         out_path = data.get("cpacs_file_path")
         if out_path and isinstance(out_path, str) and os.path.isfile(out_path):
             _design_state.data_store["morphed_cpacs_path"] = out_path
-            logger.info("Captured MORPHED CPACS path: %s", out_path)
+            logger.info(
+                "Captured MORPHED CPACS path from %s: %s", tool_name, out_path
+            )
 
 
 def _capture_mesh_markers(tool_name: str, data: dict) -> None:
