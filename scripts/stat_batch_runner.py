@@ -309,6 +309,7 @@ def build_task_with_session(
     base_task: str,
     session_id: str,
     params: dict[str, float] | None = None,
+    prior_feedback: str | None = None,
 ) -> str:
     """Build task with pre-created session_id and starting parameters.
 
@@ -333,11 +334,23 @@ def build_task_with_session(
             "valid:true, then run_simulation to measure fuel burn.\n"
         )
 
+    feedback_text = ""
+    if prior_feedback:
+        feedback_text = (
+            "\n=== FEEDBACK FROM THE PREVIOUS DESIGN ITERATION (chain link) ===\n"
+            + prior_feedback
+            + "\nThe STARTING parameters above are that previous design. Use this "
+            "assessment to decide what to change THIS iteration — fix the FAILED "
+            "constraints and reduce fuel burn; do not just repeat the same design.\n"
+            "================================================================\n"
+        )
+
     return (
         f"IMPORTANT — A session has already been created with mission configured.\n"
         f"  session_id = {session_id}\n"
         f"  Mission: 2500 nmi, 239 pax, Mach 0.78, FL330 (DLR-F25).\n"
         f"{params_text}"
+        f"{feedback_text}"
         f"Use this session_id for ALL tool calls. Session setup is done.\n"
         f"WARNING: Creating a new session (calling create_session) will "
         f"produce a blank session without the mission or starting parameters, "
@@ -596,12 +609,14 @@ def run_stat_batch(
         # repeat k>0 starts from repeat k-1's END-STATE design (carry-forward below),
         # so each combo is an independent trajectory from the shared anchor.
         chain_params = dict(anchor_params)
+        chain_feedback: str | None = None  # prior link's assessment, fed to the next link
         # Resume support: if earlier links of this combo already completed, advance the
         # chain to the last completed link's end-state so a resumed run continues.
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
                 chain_params = dict(done["chain_end_params"])
+                chain_feedback = done.get("chain_feedback") or chain_feedback
 
         for repeat_idx in range(n_repeats):
             key = run_key(repeat_idx, combo.name)
@@ -658,7 +673,7 @@ def run_stat_batch(
                 continue
 
             base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
-            task = build_task_with_session(base_task, session_id, params)
+            task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
 
             # Retry loop
             timeout_sec = timeout_minutes * 60
@@ -691,7 +706,7 @@ def run_stat_batch(
                                 setup = setup_session_with_params(tool_map, params)
                                 session_id = setup["session_id"]
                                 base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
-                                task = build_task_with_session(base_task, session_id, params)
+                                task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
                             except Exception as e:
                                 last_error = f"pre-hook retry: {e}"
                                 print(f"  pre-hook retry failed: {e}")
@@ -721,6 +736,29 @@ def run_stat_batch(
                         print(f"  [chain] captured end-state ({moved}/{len(end_state)} vars changed) → seeds next link")
                     else:
                         print("  [chain] no end-state captured — next link reuses this link's start")
+
+                    # --- Cross-link FEEDBACK: pass this link's design-state assessment
+                    # (fuel, constraint pass/fail, verdict) into the NEXT link's task so
+                    # the chain can actually learn/improve, not just carry parameters. ---
+                    _ec = result.eval_classification or {}
+                    if _ec:
+                        def _pf(v):
+                            try:
+                                return f"{float(v):.1f}"
+                            except (TypeError, ValueError):
+                                return str(v)
+                        chain_feedback = (
+                            f"Previous iteration (link {repeat_idx + 1}) results on the "
+                            f"starting design:\n"
+                            f"  fuel_burned_kg = {_pf(_ec.get('fuel_burned_kg'))} "
+                            f"(constraint <=15000: {'PASS' if _ec.get('fuel_pass') else 'FAIL'})\n"
+                            f"  gtow_kg = {_pf(_ec.get('gtow_kg'))} "
+                            f"(constraint <=90000: {'PASS' if _ec.get('gtow_pass') else 'FAIL'})\n"
+                            f"  wing_mass_kg = {_pf(_ec.get('wing_mass_kg'))} "
+                            f"({'PASS' if _ec.get('wing_mass_pass') else 'FAIL'})\n"
+                            f"  verdict: {_ec.get('reason', _ec.get('result', 'n/a'))}"
+                        )
+                        result_dict["chain_feedback"] = chain_feedback
 
                     checkpoint["completed"][key] = result_dict
                     save_checkpoint(ckpt_path, checkpoint)
@@ -793,7 +831,7 @@ def run_stat_batch(
                             setup = setup_session_with_params(tool_map, params)
                             session_id = setup["session_id"]
                             base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
-                            task = build_task_with_session(base_task, session_id, params)
+                            task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
                         except Exception as re_e:
                             print(f"  pre-hook retry failed: {re_e}")
 

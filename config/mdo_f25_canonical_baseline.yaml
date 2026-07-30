@@ -15,11 +15,12 @@
 geometry:
   wing_component_uid: "Wing1"          # was "Wing" in orch/net (caused NotFound retries)
   fuselage_component_uid: "Fuselage1"
-  far_field_distance: 10.0             # was 10.0 vs 50 across combos
-  # Mesh sizing: leave UNSET so generate_volume_mesh auto-scales relative to the
-  # geometry characteristic length (~660k cells). Do NOT pass absolute mesh_size_*.
+  far_field_distance: 5.0              # TEMP coarse/fast (was 10.0): smaller domain -> fewer cells
+  # TEMP coarse mesh for the deadline run: cap the max cell size larger so gmsh
+  # produces a COARSER volume mesh (fewer cells -> faster meshing + faster SU2 solve).
+  # Revert both (far_field 10.0, mesh_size_max null) for the accurate/final run.
   mesh_size_min: null
-  mesh_size_max: null
+  mesh_size_max: 2.0
 
 # ---- AERODYNAMICS (su2-mcp, port 8200) -------------------------------------
 # Full SU2 numerics, verified end-to-end in run6 (real 155 s converged solve).
@@ -49,7 +50,7 @@ su2_config:
   LINEAR_SOLVER_PREC: "ILU"
   LINEAR_SOLVER_ITER: 10
   LINEAR_SOLVER_ERROR: 1.0e-10         # float (not "1E-10" string, which YAML mis-types)
-  ITER: 500
+  ITER: 120                            # TEMP coarse/fast (was 500): cap solver iters for the deadline run; revert to 500 for final
   CONV_FIELD: "RMS_DENSITY"
   CONV_RESIDUAL_MINVAL: -6
   CONV_STARTITER: 10
