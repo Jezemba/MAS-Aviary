@@ -790,12 +790,13 @@ def mission_coupling_error(tool_name: str, resolved: dict) -> dict | None:
         "success": False,
         "error_code": "UNCOUPLED_MISSION",
         "error": (
-            "UNCOUPLED: this is a fully-coupled MDO run, but no SU2 cruise aero is "
-            "available to feed the aviary mission. Run the AERO stage first — "
-            "create_su2_session -> set_mesh -> run_su2_solver -> read_history_csv — "
-            "THEN retry set_aircraft_parameters. The SU2 CL/CD are captured as typed "
-            "variables (aero.cl_cruise / aero.cd_cruise) and injected automatically; "
-            "you do not need to pass them by hand. Do NOT run the mission on default drag."
+            "COUPLING ADVISORY (non-blocking): this mission ran on aviary's DEFAULT "
+            "drag polar because no SU2 cruise aero was captured yet — it is UNCOUPLED. "
+            "To couple it, run the AERO stage (create_su2_session -> set_mesh -> "
+            "run_su2_solver -> read_history_csv) and re-call set_aircraft_parameters; "
+            "the SU2 CL/CD are captured as typed vars (aero.cl_cruise / aero.cd_cruise) "
+            "and inject automatically — you do not need to pass them by hand. Coupling "
+            "here is optional but recommended for a fully-coupled MDO result."
         ),
     }
 

@@ -218,17 +218,27 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         coerced = coerce_tool_arguments(tool, kwargs)
         # 2. Resolve data store references (also injects typed coupling vars)
         resolved = resolve_request(tool.name, coerced)
-        # 2b. Coupling enforcement: if an aviary mission call still has no SU2 aero,
-        #     surface an UNCOUPLED error to the model instead of running on defaults.
-        #     Not a gate — the model's own coordination recovers (run SU2, retry).
-        err = mission_coupling_error(tool.name, resolved)
-        if err is not None:
+        # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
+        #     A hard error made non-sequential coordination structures loop/timeout
+        #     because they can't always run SU2 before the mission. As a warning the
+        #     mission RUNS regardless, and whether it coupled becomes a measured outcome
+        #     (the coordination signal) instead of a crash. Set AVION_HARD_COUPLING=1
+        #     to restore the old hard block (strict mode).
+        import os as _os
+        aero_uncoupled = mission_coupling_error(tool.name, resolved)  # dict or None
+        if aero_uncoupled is not None and _os.environ.get("AVION_HARD_COUPLING") == "1":
             import json as _json
-            return _json.dumps(err)
+            return _json.dumps(aero_uncoupled)
         # 3. Call the actual tool
         result = original_forward(*args, **resolved)
         # 4. Intercept large binary responses
         result = intercept_response(tool.name, result)
+        # 4a. If the mission ran without SU2 aero, attach the coupling advisory as a
+        #     NON-BLOCKING warning so the model can choose to run SU2 and re-couple.
+        if aero_uncoupled is not None:
+            result = _attach_coupling_hint(
+                result, aero_uncoupled.get("error", "aero not coupled into this mission")
+            )
         # 4b. Non-blocking mass-coupling hint: if the mission runs without the structures
         #     discipline coupled, annotate the response so the model can CHOOSE to couple it
         #     (run estimate_mass) — unlike the aero error, this never blocks.
