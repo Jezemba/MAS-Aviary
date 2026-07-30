@@ -90,6 +90,14 @@ def main():
         ws = call("get_wing_summary", session_id=gid, wing_uid="Wing1")
         call("get_fuselage_summary", session_id=gid, fuselage_uid="Fuselage1")
         _log(link, combo, "geometry", morphed=bool(gm.get("rebuilt")), span=ws.get("span"), ref_area=ws.get("reference_area"))
+        # Persist the MORPHED geometry to a CPACS file so mass-mcp (now tigl3-capable)
+        # computes structural mass on the ACTUAL design, not the baseline. Must run
+        # while the session is open (before close_cpacs).
+        morphed_cpacs = os.path.join(os.path.dirname(LOGF) or ".", f"morphed_{combo}_{link}.xml")
+        ex = call("export_cpacs", session_id=gid, output_path=morphed_cpacs)
+        mass_cpacs = ex.get("cpacs_file_path") if ex.get("status") == "success" else CPACS
+        if ex.get("status") != "success":
+            notes.append(f"export_cpacs failed ({ex.get('error') or ex}); mass used baseline CPACS")
         call("generate_volume_mesh", session_id=gid, component_uid="Wing1",
              far_field_distance=canon["geometry"]["far_field_distance"], boundary_layer_enabled=False)
         call("close_cpacs", session_id=gid)
@@ -104,16 +112,26 @@ def main():
         rs = call("run_su2_solver", session_id=ssid, solver="SU2_CFD", max_runtime_seconds=300)
         call("read_history_csv", session_id=ssid, relative_path="history.csv", max_rows=2000, skip_rows=0)
         _log(link, combo, "su2_done", exit_code=rs.get("exit_code"), runtime=rs.get("runtime_seconds"))
-        # MASS — canonical flops/aluminum
-        call("estimate_mass", cpacs_file_path="/tmp/cpacs_out.xml", wing_mass_method=mass_c.get("wing_mass_method", "flops"),
-             material=mass_c.get("material", "aluminum"), aviary_mass_method="FLOPS", design_load_factor=mass_c.get("design_load_factor", 2.5))
+        # MASS — canonical flops/aluminum, on the MORPHED geometry (export_cpacs above +
+        # tigl3-capable mass-mcp runtime), so structural mass is now geometry-COUPLED.
+        mmr = call("estimate_mass", cpacs_file_path=mass_cpacs, wing_mass_method=mass_c.get("wing_mass_method", "flops"),
+                   material=mass_c.get("material", "aluminum"), aviary_mass_method="FLOPS", design_load_factor=mass_c.get("design_load_factor", 2.5))
+        _mb = mmr.get("mass_breakdown") or {}
+        _oem = (_mb.get("mOEM_kg") if isinstance(_mb, dict) else None)
+        _wing = ((_mb.get("components") or {}).get("mWing_kg") if isinstance(_mb, dict) else None)
+        _log(link, combo, "mass", status=mmr.get("status"), oem_kg=_oem, wing_kg=_wing,
+             geom=("morphed" if mass_cpacs != CPACS else "baseline-fallback"))
+        if mmr.get("status") != "success":
+            notes.append(f"mass-mcp non-success: {mmr.get('error_message')}")
         # PYCYCLE — canonical design point
         c = call("create_cycle_model", cycle_type="turbofan", mode="design"); csid = c.get("session_id")
         call("set_inputs", session_id=csid, values={"fc.alt": prop.get("design_altitude_ft", 33000), "fc.MN": prop.get("design_mach", 0.78),
                                                      "T4_MAX": prop.get("T4_MAX_degR", 2857), "splitter.BPR": prop.get("BPR", 5.105)})
-        call("run_cycle", session_id=csid, use_driver=False, outputs_of_interest=["perf.TSFC", "perf.Fn"])
+        rcr = call("run_cycle", session_id=csid, use_driver=False, outputs_of_interest=["perf.TSFC", "perf.Fn"])
+        _log(link, combo, "pycycle", converged=(rcr.get("converged") or rcr.get("success")))
         # AVIARY — canonical mission + physics coupling (enforced)
         a = call("create_session", initial_parameters={}); asid = a.get("session_id")
+        _log(link, combo, "aviary_solving")
         call("configure_mission", session_id=asid, range_nmi=mis["range_nmi"], num_passengers=mis["num_passengers"],
              cruise_mach=mis["cruise_mach"], cruise_altitude_ft=mis["cruise_altitude_ft"], optimizer_max_iter=mis["optimizer_max_iter"])
         sap = call("set_aircraft_parameters", session_id=asid, parameters=design)
@@ -135,7 +153,8 @@ def main():
         out["notes"] = notes + [f"pipeline error: {type(e).__name__}: {e}"]
 
     _log(link, combo, "result", ok=out.get("ok"), fuel=out.get("fuel_burned_kg"),
-         cruise_cd=out.get("cruise_cd_avg"), coupled=out.get("coupled"), drag_factor=out.get("drag_factor"))
+         cruise_cd=out.get("cruise_cd_avg"), coupled=out.get("coupled"), drag_factor=out.get("drag_factor"),
+         wing_mass_kg=out.get("wing_mass_kg"), gtow_kg=out.get("gtow_kg"))
     print(json.dumps(out, default=str))
 
 

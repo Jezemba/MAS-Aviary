@@ -381,6 +381,16 @@ def _capture_cpacs_path(tool_name: str, data: dict) -> None:
                 _design_state.cpacs_file_path = fname
                 logger.info("Captured CPACS path: %s", fname)
 
+    # export_cpacs: the MORPHED geometry was just written to disk. Record it as the
+    # authoritative current-design CPACS so mass tools read the morph, not the baseline
+    # input file — makes the structures discipline geometry-coupled for ALL combos
+    # regardless of whether the agent threads the path perfectly.
+    if tool_name == "export_cpacs":
+        out_path = data.get("cpacs_file_path")
+        if out_path and isinstance(out_path, str) and os.path.isfile(out_path):
+            _design_state.data_store["morphed_cpacs_path"] = out_path
+            logger.info("Captured MORPHED CPACS path: %s", out_path)
+
 
 def _capture_mesh_markers(tool_name: str, data: dict) -> None:
     """When a mesh is exported/generated, capture its marker names from the actual mesh."""
@@ -565,18 +575,30 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 )
                 resolved["session_id"] = stored_sid
 
-    # Auto-inject cpacs_file_path for mass-mcp tools
+    # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
+    # current design's geometry) so structural mass is geometry-coupled; else fall back
+    # to the captured input path. A morphed export ALWAYS wins over a stale/baseline
+    # path the agent may pass, since the whole point is mass-on-the-current-design.
     if tool_name in _CPACS_PATH_TOOLS and _design_state:
         cpacs_arg = resolved.get("cpacs_file_path", "")
-        real_path = _design_state.cpacs_file_path
-        # If agent provided a path that doesn't exist, replace with real one
-        if real_path and (not cpacs_arg or not os.path.isfile(str(cpacs_arg))):
-            if cpacs_arg and cpacs_arg != real_path:
+        morphed = _design_state.data_store.get("morphed_cpacs_path")
+        if morphed and os.path.isfile(str(morphed)):
+            if cpacs_arg != morphed:
                 logger.info(
-                    "Replaced bad cpacs_file_path '%s' with '%s' for %s",
-                    cpacs_arg, real_path, tool_name,
+                    "Pointed %s at MORPHED CPACS '%s' (was '%s')",
+                    tool_name, morphed, cpacs_arg,
                 )
-            resolved["cpacs_file_path"] = real_path
+            resolved["cpacs_file_path"] = morphed
+        else:
+            real_path = _design_state.cpacs_file_path
+            # If agent provided a path that doesn't exist, replace with the real one.
+            if real_path and (not cpacs_arg or not os.path.isfile(str(cpacs_arg))):
+                if cpacs_arg and cpacs_arg != real_path:
+                    logger.info(
+                        "Replaced bad cpacs_file_path '%s' with '%s' for %s",
+                        cpacs_arg, real_path, tool_name,
+                    )
+                resolved["cpacs_file_path"] = real_path
 
     # Capture cpacs path from open_cpacs REQUEST (the source param)
     if tool_name == "open_cpacs" and _design_state:
@@ -760,6 +782,49 @@ def mission_coupling_error(tool_name: str, resolved: dict) -> dict | None:
             "you do not need to pass them by hand. Do NOT run the mission on default drag."
         ),
     }
+
+
+def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
+    """Return a NON-BLOCKING coupling hint when an aviary mission call is about to run
+    without the structures-discipline mass coupled — else None.
+
+    Unlike ``mission_coupling_error`` (aero, a hard UNCOUPLED error that blocks until
+    the model reruns SU2), mass coupling is OPTIONAL: aviary has its own internal FLOPS
+    wing mass, so we do not block. We just make the coupling OPPORTUNITY visible — "you
+    can couple structural mass here" — and let the model's own coordination decide whether
+    to run estimate_mass. The hint is attached to the (successful) response, not returned
+    in place of it. Same AVION_ENFORCE_COUPLING toggle as the aero error.
+
+    Fires only for ``set_aircraft_parameters``. Suppressed when mass is already coupled —
+    either the resolved params already carry ``Aircraft.Wing.MASS_SCALER`` (injected from
+    the registry or set by the agent) or mass-mcp has run this session (``mass_wing_kg``
+    captured, so the injector will fill it in).
+    """
+    import os
+    if tool_name != "set_aircraft_parameters":
+        return None
+    if os.environ.get("AVION_ENFORCE_COUPLING", "1") != "1":
+        return None
+    if _design_state is None:
+        return None
+    params = resolved.get("parameters")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if isinstance(params, dict) and "Aircraft.Wing.MASS_SCALER" in params:
+        return None  # already coupled (injected or agent-provided)
+    if _design_state.data_store.get("mass_wing_kg") is not None:
+        return None  # mass-mcp ran; the injector couples it — no hint needed
+    return (
+        "COUPLING AVAILABLE (optional): the structures discipline can be coupled here. "
+        "Run estimate_mass (mass-mcp) on the current morphed geometry BEFORE the mission "
+        "and its wing mass is captured as the typed var mass.wing_kg and injected as "
+        "Aircraft.Wing.MASS_SCALER automatically. Proceeding now uses aviary's own internal "
+        "FLOPS wing mass instead — valid, but the external structures discipline is not "
+        "coupled into this run. Your choice."
+    )
 
 
 def _inject_phase_h_aero(resolved: dict) -> None:

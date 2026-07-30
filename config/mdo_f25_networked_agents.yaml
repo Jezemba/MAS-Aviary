@@ -11,6 +11,9 @@ peer_template:
 
     1. TiGL (Geometry — port 8500, 15 tools):
        Session: open_cpacs(source_type, source) → session_id, close_cpacs
+                export_cpacs(session_id, output_path) → writes the MORPHED geometry to a
+                CPACS file so mass-mcp sizes structure on your design (call after morphing;
+                close_cpacs alone does NOT persist the morph)
        Inspect: get_configuration_summary, list_geometric_components,
                 get_wing_summary(session_id, wing_uid="Wing"),
                 get_fuselage_summary(session_id, fuselage_uid="Fuselage"),

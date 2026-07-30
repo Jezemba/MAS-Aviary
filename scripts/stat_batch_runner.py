@@ -185,12 +185,50 @@ def run_key(repeat: int, combo_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _load_mcp_tools(config) -> dict:
-    """Load MCP tools and return a name→tool mapping."""
+# One sentinel tool per MCP server — if any is missing after discovery, that
+# server's tools failed to register (the nondeterministic mcpadapt/streamable-http
+# discovery race that surfaces as e.g. KeyError 'create_su2_session' mid-run).
+_EXPECTED_SENTINELS = {
+    "tigl": "open_cpacs",
+    "su2": "create_su2_session",
+    "mass": "estimate_mass",
+    "pycycle": "create_cycle_model",
+    "aviary": "create_session",
+}
+
+
+def _load_mcp_tools(config, max_attempts: int = 4) -> dict:
+    """Load MCP tools and return a name→tool mapping.
+
+    Verifies every MCP server registered its tools (one sentinel per server) and
+    RETRIES the whole discovery if any server dropped out — a link must never run
+    with a missing discipline. Fails loud after ``max_attempts`` rather than
+    silently proceeding (which previously showed up as KeyError deep in a link).
+    """
     from src.tools.tool_loader import load_tools_for_agent
 
-    tools = load_tools_for_agent([], config)  # empty list = load all
-    return {t.name: t for t in tools}
+    last_missing: list[str] = []
+    for attempt in range(1, max_attempts + 1):
+        tools = load_tools_for_agent([], config)  # empty list = load all
+        tool_map = {t.name: t for t in tools}
+        last_missing = [
+            f"{srv}({sentinel})"
+            for srv, sentinel in _EXPECTED_SENTINELS.items()
+            if sentinel not in tool_map
+        ]
+        if not last_missing:
+            return tool_map
+        print(
+            f"  [tool-discovery] attempt {attempt}/{max_attempts}: missing "
+            f"{', '.join(last_missing)} — retrying",
+            flush=True,
+        )
+    raise RuntimeError(
+        "MCP tool discovery incomplete after "
+        f"{max_attempts} attempts — missing servers: {', '.join(last_missing)}. "
+        "Check that all 5 MCP servers are up (tigl:8500 su2:8200 mass:8700 "
+        "pycycle:8400 aviary:8600) before retrying."
+    )
 
 
 def _extract_session_id(resp) -> str:

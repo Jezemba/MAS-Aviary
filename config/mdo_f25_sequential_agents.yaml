@@ -150,11 +150,15 @@ templates:
              risks a multi-million-cell mesh that times out SU2 when the wing
              grows.
 
-          7. Call close_cpacs(session_id) so the updated CPACS file is
-             flushed to disk. The downstream mass-mcp stage reads the
-             CPACS file directly from disk (it does not connect to the
-             TiGL MCP server), so close_cpacs MUST be called or
-             mass-mcp will see stale or partial data.
+          7. Call export_cpacs(session_id, output_path="/tmp/morphed_<session>.xml")
+             to write your MORPHED geometry to a CPACS file, THEN close_cpacs(session_id).
+             This matters: the downstream mass-mcp stage reads a CPACS file from disk
+             (it does not connect to the TiGL server), so it must read the file you
+             EXPORT here. close_cpacs alone does NOT persist the morph — without
+             export_cpacs, mass-mcp computes structural mass on the ORIGINAL baseline
+             geometry, decoupled from your design. (The data plane also records this
+             export and points the mass stage at it automatically, but you should still
+             call export_cpacs so the morph is on disk.)
 
           ── REQUIRED OUTPUT FORMAT ────────────────────────────────────────
 

@@ -1,5 +1,50 @@
 ## [Unreleased]
 
+### 2026-07-30 — FIXED: mass-mcp structural discipline now geometry-COUPLED (real fix)
+
+**Bug (surfaced by a "mass = null" log line during live verification):** `mass-mcp`'s
+`estimate_mass` reads a CPACS **file on disk**. tigl-mcp had no tool to persist the morphed
+session, so mass ran on the UNMODIFIED baseline geometry — structural mass was constant across
+designs (geometry-DECOUPLED). Worse: its captured `mass.wing_kg` feeds aviary as
+`Aircraft.Wing.MASS_SCALER` **whenever a combo calls mass-mcp**, so a successful mass step would
+PIN aviary's wing mass to a baseline-derived constant (scaler ≈ 1.28), while a combo that
+*skipped* mass-mcp used aviary's responsive internal FLOPS (scaler 1.0) — a
+**coordination-behavior-dependent ~28% wing-mass confound** for the paper's tool-use metric.
+
+**Fix (Jessica chose the real fix over deferring, 2026-07-30) — two parts:**
+1. **`tigl-mcp` new tool `export_cpacs`** (`tools/cpacs_io.py`): serializes the session's live
+   (morphed) TiXI document to a file via `exportDocumentAsString`. The morph's `WriteCPACS`
+   already writes the deformation back into the session TiXI, so this exports the *morphed*
+   geometry. Verified: a fresh TiGL open of the export sees the morph (wing area 122→239 m²).
+2. **mass-mcp runtime given tigl3.** mass-mcp's parser already *prefers* tigl3 (which applies
+   CPACS transforms correctly) and only falls back to XPath (which ignores the scaling
+   transform → baseline) when tigl3 is absent. Its `.deepseek` venv (py3.13) lacked tigl3.
+   Cloned `tigl-env` → **`mass-tigl`** conda env (py3.12, has tigl3+tixi3), `pip install -e
+   mass-mcp` into it (numpy pinned to 1.26.4 for aviary; tigl3 still imports), and relaunched
+   the mass-mcp server (8700) from the clone. No mass-mcp code change — its as-designed tigl3
+   path now works. Cloning kept the working tigl-env untouched (zero risk).
+
+`scripts/run_link.py` now calls `export_cpacs` after the morph (while the session is open) and
+passes the morphed CPACS path to `estimate_mass`; the data-plane cpacs-path auto-inject leaves
+a valid path untouched (only replaces missing/nonexistent paths). Mass step logs
+`geom="morphed"`.
+
+**Verified responsive:** `estimate_mass` baseline wing 7560 kg vs morphed (area 239) 11189 kg
+(+48%) — mass now tracks the design. Consequently the `MASS_SCALER` injection is now a
+*meaningful, design-responsive* coupling: routing mass-mcp's output into aviary is correct (not
+a baseline pin), so "combo couples mass vs doesn't" is the genuine coordination signal the paper
+measures, not an artifact.
+
+### 2026-07-30 — tool-discovery load-retry guard (nondeterministic MCP registration)
+
+A SOLO run_link link failed with `KeyError: 'create_su2_session'` — su2-mcp's tools did not
+register at discovery time (nondeterministic streamable-http/mcpadapt discovery, not just a
+concurrency issue). `_load_mcp_tools` (`scripts/stat_batch_runner.py`, used by both the live
+run_link and the paid sweep) now verifies one sentinel tool per server
+(`open_cpacs`/`create_su2_session`/`estimate_mass`/`create_cycle_model`/`create_session`) and
+RETRIES the whole discovery up to 4×, failing loud with the missing servers instead of letting
+a link silently run with a discipline missing.
+
 ### 2026-07-28 — physics-based drag build-up (real skin friction, not a fudge)
 
 A no-API faithful-pipeline check (shared canonical config) exposed that the SU2 Euler solve

@@ -446,11 +446,13 @@ class TestPhaseHAeroInjection:
         )
         params = out["parameters"]
         assert params["Mission.Design.LIFT_COEFFICIENT"] == pytest.approx(0.187)
-        # CD_realistic = 0.0128 + 0.005 = 0.0178
-        # CD_av_default = 0.022 + 0.187**2 / (pi * 11 * 0.85) ≈ 0.02319
-        # scale ≈ 0.0178 / 0.02319 ≈ 0.768
+        # The drag factor now comes from the PHYSICS build-up (Schlichting skin friction),
+        # not the old fixed +0.005 fudge (which gave ~0.768). With CD0 skin friction added
+        # to the inviscid 0.0128, the realistic CD exceeds aviary's default polar, so the
+        # factor is ~1.39 (>1). Exact value shifts slightly with the Reynolds path (mission
+        # state vs nominal), so assert the physics ballpark, not a brittle exact number.
         assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == \
-            pytest.approx(0.768, abs=0.01)
+            pytest.approx(1.39, abs=0.05)
 
     def test_inject_does_not_overwrite_explicit_agent_values(
         self, fresh_state,

@@ -163,6 +163,35 @@ def coerce_tool_arguments(tool: Tool, kwargs: dict) -> dict:
     return coerced
 
 
+def _attach_coupling_hint(result, hint: str):
+    """Attach a non-blocking coupling hint to a tool result (dict or JSON string).
+
+    Adds the hint under ``coupling_hints`` without disturbing the payload, so the model
+    sees the coupling opportunity in the response. Leaves non-JSON string results
+    untouched (nothing safe to annotate)."""
+    import json as _json
+
+    payload = result
+    was_str = False
+    if isinstance(result, str):
+        stripped = result.strip()
+        if stripped[:1] not in "{[":
+            return result  # plain text — don't mangle it
+        try:
+            payload = _json.loads(stripped)
+        except (ValueError, TypeError):
+            return result
+        was_str = True
+    if not isinstance(payload, dict):
+        return result
+    hints = payload.get("coupling_hints")
+    if not isinstance(hints, list):
+        hints = []
+    hints.append(hint)
+    payload["coupling_hints"] = hints
+    return _json.dumps(payload) if was_str else payload
+
+
 def wrap_tool_with_middleware(tool: Tool) -> Tool:
     """Wrap a Tool with the full middleware stack:
 
@@ -173,7 +202,12 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
 
     Skips tools that don't have the expected attributes (e.g. mock tools).
     """
-    from src.tools.data_plane import intercept_response, mission_coupling_error, resolve_request
+    from src.tools.data_plane import (
+        intercept_response,
+        mass_coupling_hint,
+        mission_coupling_error,
+        resolve_request,
+    )
 
     original_forward = getattr(tool, "forward", None)
     if original_forward is None or not getattr(tool, "inputs", None):
@@ -195,6 +229,12 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         result = original_forward(*args, **resolved)
         # 4. Intercept large binary responses
         result = intercept_response(tool.name, result)
+        # 4b. Non-blocking mass-coupling hint: if the mission runs without the structures
+        #     discipline coupled, annotate the response so the model can CHOOSE to couple it
+        #     (run estimate_mass) — unlike the aero error, this never blocks.
+        hint = mass_coupling_hint(tool.name, resolved)
+        if hint:
+            result = _attach_coupling_hint(result, hint)
         return result
 
     tool.forward = middleware_forward
