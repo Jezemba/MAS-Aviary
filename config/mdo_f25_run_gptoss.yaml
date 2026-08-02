@@ -18,8 +18,18 @@
 # JSON) — handled in src/llm/thinking_model.py; without that it burns a retry on
 # every single call.
 #
-# ⚠️ Still NOT validated for paper metrics — use for coupling re-measurement and
-# code debugging.
+# ⚠️⚠️ NOT VIABLE ON THIS BOX AS CONFIGURED — kept for the record + for the day
+# MXFP4 works. Three runs, three CUDA OOMs at progressively later points:
+#   19/19 GiB caps  -> OOM allocating 4.3 GiB  (~11k-token orchestrated prompt)
+#   15/15 GiB + CPU -> OOM allocating 15.8 GiB at step 2, after
+#                      list_available_tools pushed context to ~40k tokens
+# Root cause is gpt-oss's 201k vocab against this framework's very long MCP
+# tool-schema prompts: the per-token logits width makes long-context
+# allocations enormous, and bf16 weights (~40 GB, because MXFP4 needs
+# triton >= 3.4) leave no room for them.
+# THE FIX is MXFP4 in a SEPARATE env (triton >= 3.4 + `kernels`): weights drop
+# ~40 GB -> ~13 GB, fits ONE card, frees ~27 GB for activations. Do NOT upgrade
+# triton in this venv — that is the ABI trap that broke vLLM (see B7).
 llm:
   model_id: "openai/gpt-oss-20b"
   backend: "transformers"
