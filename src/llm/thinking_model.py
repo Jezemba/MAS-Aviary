@@ -42,6 +42,18 @@ logger = logging.getLogger(__name__)
 # Pre-compiled pattern for <think>...</think> blocks (supports nested tags).
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
+# gpt-oss (harmony format) names the function in a channel header rather than
+# inside the JSON body:
+#
+#     commentary to=functions.get_wing_area json{"aircraft_name": "DLR-F25"}
+#
+# i.e. the JSON carries ONLY the arguments.  The generic finder below looks for
+# an object holding both "name" and "arguments", fails, and falls back to the
+# first dict it saw — the bare argument object — producing
+# "Tool call needs a 'name' key. Got keys: ['aircraft_name']".  That cost a
+# retry on essentially EVERY gpt-oss tool call.  Recognise the header instead.
+_HARMONY_TOOL_RE = re.compile(r"to\s*=\s*(?:functions?\.)([A-Za-z_][A-Za-z0-9_]*)")
+
 
 def _find_tool_call_json(
     text: str,
@@ -64,6 +76,33 @@ def _find_tool_call_json(
     Raises ``ValueError`` when no valid JSON object is found at all.
     """
     candidates: list[dict] = []
+
+    # gpt-oss / harmony: the function name lives in a `to=functions.NAME`
+    # header and the JSON body holds only the arguments.  Detect that shape
+    # FIRST and rebuild the canonical {name, arguments} dict, otherwise the
+    # generic scan below returns the bare argument object and the caller
+    # rejects it for missing a name key.  Only fires when the text does not
+    # already contain a well-formed call, so models that emit the standard
+    # shape (Qwen3 et al.) are completely unaffected.
+    harmony = _HARMONY_TOOL_RE.search(text)
+    if harmony:
+        decoder = json.JSONDecoder(strict=False)
+        pos = harmony.end()
+        while pos < len(text):
+            idx = text.find("{", pos)
+            if idx == -1:
+                break
+            try:
+                obj, end_idx = decoder.raw_decode(text, idx)
+            except (json.JSONDecodeError, ValueError):
+                pos = idx + 1
+                continue
+            if isinstance(obj, dict):
+                # A complete call after the header wins — use it as-is.
+                if name_key in obj and arguments_key in obj:
+                    return obj
+                return {name_key: harmony.group(1), arguments_key: obj}
+            pos = end_idx
 
     i = 0
     while i < len(text):
