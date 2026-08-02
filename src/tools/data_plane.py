@@ -171,6 +171,52 @@ def get_design_state():
     return _design_state
 
 
+def reset_design_state():
+    """Drop the process-global DesignState so the NEXT link starts clean.
+
+    ``tool_loader._init_data_plane_if_needed`` deliberately REUSES an existing
+    DesignState — several ``load_tools_for_agent`` calls within one link (one
+    per agent) must share one state, which is what makes the typed coupling
+    registry work at all. But nothing ever cleared it between links, so the
+    singleton lived for the whole ``stat_batch_runner`` process and every
+    chain link inherited the previous link's state (.claude/BUGS.md B8):
+
+      - ``aero.cl_cruise`` / ``aero.cd_cruise`` from link k-1's SU2 solve were
+        injected into link k's mission, which then reported
+        ``aero_coupling_status = "injected"`` while flying DRAG FROM A
+        DIFFERENT GEOMETRY. That is precisely the failure the coupling work
+        exists to prevent: "design change -> SU2 rerun -> aviary uses THOSE
+        results".
+      - ``mission_coupling_error`` stayed silent on links 1..N even when SU2
+        never ran there, because the stale registry looked coupled.
+      - stale ``sessions['tigl']`` was auto-injected into link k's geometry
+        calls (``resolve_request`` overrides a provided session_id with the
+        stored one), so those calls hit link k-1's still-open server session
+        and read the OLD geometry.
+
+    Call this at each link boundary, BEFORE the pre-hook creates the new
+    aviary session (the pre-hook's ``create_session`` must be captured into
+    the FRESH state, not wiped by a later reset).
+
+    A FRESH DesignState is installed immediately rather than leaving ``None``:
+    the pre-hook's programmatic ``create_session`` call goes through this same
+    middleware and its session must be captured, and
+    ``_init_data_plane_if_needed`` would otherwise build a second state later
+    and discard that capture.
+
+    The tool->server map is intentionally preserved: it is static topology
+    (which tool lives on which MCP), not per-design state.
+
+    Returns the new DesignState.
+    """
+    global _design_state
+    from src.coordination.design_state import DesignState
+
+    _design_state = DesignState()
+    logger.info("Data plane reset — fresh DesignState for the next link.")
+    return _design_state
+
+
 # ── Response middleware ──────────────────────────────────────────────────────
 
 def intercept_response(tool_name: str, response: Any) -> Any:

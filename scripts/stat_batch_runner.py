@@ -641,7 +641,18 @@ def run_stat_batch(
             print(f"[{run_count}/{total_runs - completed - failed}] repeat={repeat_idx:03d} "
                   f"combo={combo.name} (chain link {repeat_idx + 1}/{n_repeats})")
 
-            # Pre-hook: create session and set starting params via MCP
+            # Pre-hook: create session and set starting params via MCP.
+            #
+            # Reset the data-plane FIRST. The DesignState is a process-global
+            # singleton that load_tools_for_agent deliberately reuses (all of a
+            # link's agents must share one), but nothing used to clear it
+            # between links — so link k inherited link k-1's typed aero
+            # registry, mass values and MCP session ids, and aviary flew link
+            # k-1's SU2 drag on link k's geometry while reporting itself
+            # "coupled". See .claude/BUGS.md B8. Reset before the pre-hook so
+            # the new aviary session is captured into the FRESH state.
+            from src.tools.data_plane import reset_design_state
+            reset_design_state()
             try:
                 setup = setup_session_with_params(tool_map, params)
                 session_id = setup["session_id"]
@@ -703,6 +714,10 @@ def run_stat_batch(
                             # link; the agent's own stochasticity gives the retry a
                             # fresh trajectory from the identical starting design.
                             try:
+                                # Fresh data plane for the retry too — the
+                                # failed attempt may have left partial aero /
+                                # mass / session state (.claude/BUGS.md B8).
+                                reset_design_state()
                                 setup = setup_session_with_params(tool_map, params)
                                 session_id = setup["session_id"]
                                 base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
@@ -857,6 +872,8 @@ def run_stat_batch(
                         # Chain: retry from the SAME deterministic start (do NOT
                         # regenerate params — a chain link must keep its fixed start).
                         try:
+                            # Fresh data plane for the retry too — see B8.
+                            reset_design_state()
                             setup = setup_session_with_params(tool_map, params)
                             session_id = setup["session_id"]
                             base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
