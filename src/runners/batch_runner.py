@@ -1053,7 +1053,21 @@ def run_combination(
             result.token_breakdown = {**snap, "cost_usd": result.cost_usd, "model_id": model_id}
             result.total_tokens = snap["total_tokens"]
         else:
+            # LOCAL backends (transformers/vllm) never touch the cost METER —
+            # it only wraps LiteLLM. Previously that left token_breakdown empty,
+            # so the design ledger recorded model_id=None and a local Qwen row
+            # was INDISTINGUISHABLE from a paid Claude row. Now that debugging
+            # runs on local models while paper runs use Opus, both land in the
+            # same logs/design_ledger.jsonl — stamp the model either way so the
+            # provenance of every row is unambiguous.
             result.total_tokens = sum(m.token_count or 0 for m in messages)
+            result.token_breakdown = {
+                **snap,
+                "cost_usd": result.cost_usd,
+                "model_id": model_id,
+                "total_tokens": result.total_tokens,
+                "metered": False,  # local backend: tokens estimated, cost is $0
+            }
         result.messages = [_msg_to_dict(m) for m in messages]
         result.gpu_memory_mb = _gpu_memory_mb()
         result.traces = traces
