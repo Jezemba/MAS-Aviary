@@ -20,6 +20,13 @@ class LLMConfig:
     temperature: float = 0.7
     reasoning_effort: str = "medium"
     reliability: dict = field(default_factory=dict)
+    # Extra kwargs forwarded verbatim to transformers' from_pretrained (local
+    # backend only). Needed for multi-GPU placement: device_map "balanced"
+    # splits by layer, and for an MoE like gpt-oss-20b that landed ~24 GB of the
+    # bf16-dequantized weights on GPU 0, leaving too little headroom for the
+    # long-prompt logits (201k vocab) -> CUDA OOM mid-run. `max_memory` caps
+    # each device so the split is actually even.
+    model_kwargs: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -1,0 +1,77 @@
+# LOCAL / FREE config — identical to mdo_f25_run_claude.yaml except the LLM.
+#
+# Purpose: run the coordination framework end-to-end on a LOCAL open model so
+# CODE debugging costs $0. Uses backend "transformers" (in-process on the two
+# RTX 5090s) rather than "vllm" — vLLM is ABI-broken on this Blackwell sm_120
+# box (torch/vllm/flash-attn `undefined symbol`), see .claude/BUGS.md B7.
+#
+# STRONGER local model than Qwen3-8B (~21B MoE, 4 experts/token). Reason for
+# existing: Qwen3-8B COMPLETED an orchestrated link but its discipline workers
+# no-op'd — no SU2 at all, every worker returning a ~100-char answer straight to
+# final_answer — so its "uncoupled" verdict measured the model, not the
+# coordination structure (.claude/BUGS.md B1 follow-up).
+#
+# MXFP4 weights dequantize to bf16 (~40 GB) because Triton >= 3.4 / kernels are
+# not installed, so device_map MUST shard across both 5090s. Loads in ~7 s.
+#
+# gpt-oss emits harmony tool calls (`to=functions.NAME` header + bare argument
+# JSON) — handled in src/llm/thinking_model.py; without that it burns a retry on
+# every single call.
+#
+# ⚠️ Still NOT validated for paper metrics — use for coupling re-measurement and
+# code debugging.
+llm:
+  model_id: "openai/gpt-oss-20b"
+  backend: "transformers"
+  # MUST stay "balanced": bf16-dequantized gpt-oss-20b does not fit one 32 GB card.
+  device_map: "balanced"
+  torch_dtype: "auto"
+  # "balanced" splits by LAYER, and gpt-oss's MoE blocks are chunky enough that
+  # it put ~24 GB on GPU 0 and OOM'd mid-run: the orchestrated prompt is ~7k
+  # tokens and gpt-oss's 201k vocab makes the prefill logits alone ~3-4 GB.
+  # Cap each device so the split is genuinely even and both keep headroom.
+  model_kwargs:
+    max_memory:
+      0: "19GiB"
+      1: "19GiB"
+  # gpt-oss reasons in its analysis channel before the call, so the same
+  # rationale as Qwen applies: leave room for reasoning + the tool call.
+  max_new_tokens: 4096
+  temperature: 0.3
+  reliability:
+    max_retries: 3
+
+mcp:
+  mode: "real"
+  servers:
+    - name: "tigl"
+      url: "http://127.0.0.1:8500/mcp"
+      transport: "streamable-http"
+    - name: "su2"
+      url: "http://127.0.0.1:8200/mcp"
+      transport: "streamable-http"
+    - name: "mass"
+      url: "http://127.0.0.1:8700/mcp"
+      transport: "streamable-http"
+    - name: "pycycle"
+      url: "http://127.0.0.1:8400/mcp"
+      transport: "streamable-http"
+    - name: "aviary"
+      url: "http://127.0.0.1:8600/mcp"
+      transport: "streamable-http"
+
+skills:
+  path: "skills/aircraft-design-mdo"
+  mode: "auto"
+
+agents_config: "config/mdo_f25_sequential_agents.yaml"
+coordination_config: "config/aviary_mdo_f25_sequential.yaml"
+
+logging:
+  level: "INFO"
+  output_dir: "logs/"
+  save_full_history: true
+
+ui:
+  enabled: false
+  port: 8501

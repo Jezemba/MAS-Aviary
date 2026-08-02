@@ -104,10 +104,15 @@ def load_model(config: LLMConfig) -> Model:
 
     # Default: transformers backend.
     reliability = ReliabilityConfig(**(config.reliability or {}))
-    return ThinkingModel(
-        model_id=config.model_id,
-        device_map=config.device_map,
-        torch_dtype=config.torch_dtype,
-        max_new_tokens=config.max_new_tokens,
-        reliability=reliability,
-    )
+    kwargs: dict = {
+        "model_id": config.model_id,
+        "device_map": config.device_map,
+        "torch_dtype": config.torch_dtype,
+        "max_new_tokens": config.max_new_tokens,
+        "reliability": reliability,
+    }
+    # Forwarded to from_pretrained. Chiefly `max_memory`, which is how a big
+    # local model gets an EVEN multi-GPU split — see LLMConfig.model_kwargs.
+    if config.model_kwargs:
+        kwargs["model_kwargs"] = dict(config.model_kwargs)
+    return ThinkingModel(**kwargs)
