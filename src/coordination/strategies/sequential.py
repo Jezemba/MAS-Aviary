@@ -20,6 +20,7 @@ Execution:
 import json
 import re
 
+from src.coordination.completion_signal import signals_completion
 from src.coordination.history import AgentMessage
 from src.coordination.pipeline_templates import (
     PipelineStage,
@@ -234,11 +235,14 @@ class SequentialStrategy(CoordinationStrategy):
         if self._current_stage_index >= len(self._stage_order):
             return True
 
-        # Termination keyword in last message.
+        # Termination keyword ASSERTED in last message. Negated mentions
+        # ("Not TASK_COMPLETE: fuel still over limit" — the integrator's usual
+        # negative verdict) and quoted previous-link feedback do not count.
+        # See src/coordination/completion_signal.py and .claude/BUGS.md B2.
         if history:
             last = history[-1]
             content = last.content if isinstance(last, AgentMessage) else str(last)
-            if self._termination_keyword and self._termination_keyword in content:
+            if signals_completion(content, self._termination_keyword):
                 return True
 
         # Max turns.

@@ -22,6 +22,7 @@ Modes:
 
 import re
 
+from src.coordination.completion_signal import signals_completion
 from src.coordination.execution_handler import PlaceholderExecutor
 from src.coordination.history import AgentMessage
 from src.coordination.strategy import CoordinationAction, CoordinationStrategy
@@ -352,11 +353,13 @@ class OrchestratedStrategy(CoordinationStrategy):
         if self._phase == "done":
             return True
 
-        # Check termination keyword in last message.
+        # Check termination keyword ASSERTED in last message — negated
+        # mentions and quoted previous-link feedback do not count.
+        # See src/coordination/completion_signal.py and .claude/BUGS.md B2.
         if history:
             last = history[-1]
             content = last.content if isinstance(last, AgentMessage) else str(last)
-            if self._termination_keyword and self._termination_keyword in content:
+            if signals_completion(content, self._termination_keyword):
                 return True
 
         # Check max turns.

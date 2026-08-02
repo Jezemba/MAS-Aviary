@@ -21,6 +21,7 @@ Toggles (all independent, any combination valid):
 """
 
 from src.coordination.blackboard import Blackboard
+from src.coordination.completion_signal import signals_completion
 from src.coordination.history import AgentMessage
 from src.coordination.strategy import CoordinationAction, CoordinationStrategy
 from src.tools.networked_tools import (
@@ -456,11 +457,13 @@ class NetworkedStrategy(CoordinationStrategy):
 
     def is_complete(self, history: list, current_state: dict) -> bool:
         """Check if the task is finished."""
-        # Check termination keyword in last message.
+        # Check termination keyword ASSERTED in last message — negated
+        # mentions and quoted previous-link feedback do not count.
+        # See src/coordination/completion_signal.py and .claude/BUGS.md B2.
         if history:
             last = history[-1]
             content = last.content if isinstance(last, AgentMessage) else str(last)
-            if self._termination_keyword and self._termination_keyword in content:
+            if signals_completion(content, self._termination_keyword):
                 return True
 
         # Check max turns.

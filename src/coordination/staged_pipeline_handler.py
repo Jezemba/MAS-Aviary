@@ -19,6 +19,10 @@ from src.coordination.completion_criteria import (
     CompletionResult,
     evaluate_completion,
 )
+from src.coordination.completion_signal import (
+    signals_blackboard_done,
+    signals_completion,
+)
 from src.coordination.execution_handler import Assignment, ExecutionHandler
 from src.coordination.history import AgentMessage, ToolCallRecord
 from src.coordination.stage_definition import (
@@ -639,18 +643,26 @@ class StagedPipelineHandler(ExecutionHandler):
         MarkTaskDone) in the incoming context string, and for the
         termination keyword in any prior stage output.  This mirrors the
         terminal-state gate in GraphRoutedHandler.
+
+        Detection goes through :mod:`src.coordination.completion_signal`, which
+        ignores (a) negated mentions and (b) the forwarded previous-link
+        feedback block.  A bare substring scan here caused the phantom-link bug
+        (.claude/BUGS.md B2): the integrator's ``"Not TASK_COMPLETE: ... fuel
+        violates its limit"`` verdict, forwarded into link k>0's task by the
+        cross-link feedback, matched — so every stage was skipped and the link
+        ran in 0.17 s with 0 tokens while re-reporting the prior link's fuel.
         """
         # Blackboard entry written by MarkTaskDone: "[STATUS] task_complete"
-        if "[status] task_complete" in task_context.lower():
+        if signals_blackboard_done(task_context):
             return True
 
-        # Termination keyword anywhere in the incoming context.
-        if self._termination_keyword and self._termination_keyword in task_context:
+        # Termination keyword asserted anywhere in the incoming context.
+        if signals_completion(task_context, self._termination_keyword):
             return True
 
         # Termination keyword in any prior stage output from this execute() call.
         for _, content, _ in previous_outputs:
-            if self._termination_keyword and self._termination_keyword in content:
+            if signals_completion(content, self._termination_keyword):
                 return True
 
         return False

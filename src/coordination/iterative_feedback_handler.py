@@ -21,6 +21,7 @@ import re
 import time
 from typing import Any, Callable
 
+from src.coordination.completion_signal import signals_completion
 from src.coordination.execution_handler import Assignment, ExecutionHandler
 from src.coordination.feedback_extraction import (
     AttemptFeedback,
@@ -410,8 +411,10 @@ class IterativeFeedbackHandler(ExecutionHandler):
                 msg.metadata["aspiration_met"] = met
                 attempt_feedbacks.append(fb)
 
-                # Check termination keyword.
-                if self._termination_keyword and self._termination_keyword in content:
+                # Check termination keyword — ASSERTED only. A negated mention
+                # ("Not TASK_COMPLETE: ...") or quoted previous-link feedback
+                # must not end the attempt loop. See .claude/BUGS.md B2.
+                if signals_completion(content, self._termination_keyword):
                     self.attempt_histories.append(attempt_feedbacks)
                     self._last_successful_output = content
                     _set_total_attempts(messages, assignment_msg_start, attempt_feedbacks)
