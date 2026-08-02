@@ -27,6 +27,11 @@ dependencies = [
 [project.optional-dependencies]
 ui = ["streamlit>=1.54.0", "altair>=6.0.0"]
 vllm = ["openai>=2.24.0"]
+# Local 4-bit (NF4) inference for the free/offline debugging configs. Verified
+# working on Blackwell sm_120 with torch 2.7.0+cu128 — and it installs WITHOUT
+# touching torch/transformers, unlike the MXFP4 path (triton >= 3.4) that would
+# have been needed for gpt-oss-20b. See .claude/BUGS.md B7b/B7c.
+quant = ["bitsandbytes>=0.50.0"]
 tracking = ["wandb>=0.25.0"]
 dev = [
     "pytest>=8.0",

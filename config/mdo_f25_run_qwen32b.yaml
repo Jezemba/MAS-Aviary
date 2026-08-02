@@ -1,0 +1,91 @@
+# LOCAL / FREE config — identical to mdo_f25_run_claude.yaml except the LLM.
+#
+# Qwen3-32B, pre-quantized to 4-bit NF4 (bitsandbytes). This is the local model
+# to use for $0 debugging and for the B1 coupling re-measurement — it is the
+# first local option that clears BOTH walls the earlier attempts hit:
+#
+#   Qwen3-8B      runs fine, but its discipline workers no-op'd (never ran SU2),
+#                 so its "uncoupled" verdict measured the MODEL, not the
+#                 coordination structure.
+#   gpt-oss-20b   3 runs, 3 CUDA OOMs. 201k vocab + bf16 weights (~40 GB,
+#                 because MXFP4 needs triton >= 3.4) left no room for the
+#                 ~40k-token prompts this framework produces.
+#   Qwen3.5-9B    transformers 4.57.6 does not recognise model type `qwen3_5`.
+#
+# Why this one fits (all measured, see .claude/BUGS.md B7c):
+#   * 4-bit NF4 weights ~17.9 GiB instead of ~65 GiB bf16 — the whole point.
+#     NOTE: use the PLAIN `-bnb-4bit` repo, NOT `-unsloth-bnb-4bit`. The latter
+#     is Unsloth "Dynamic 2.0", which keeps many layers at higher precision and
+#     is 36.6 GB — it does NOT fit: accelerate tries to spill modules to CPU and
+#     bnb-4bit hard-refuses ("Some modules are dispatched on the CPU or the
+#     disk"). Measured, not assumed.
+#   * max_position_embeddings = 40,960 NATIVE. The framework's context reached
+#     ~40k tokens once list_available_tools injected the full MCP tool schemas,
+#     which is exactly what blew up gpt-oss. No YaRN/rope-scaling needed.
+#   * vocab 151,936 vs gpt-oss's 201,088 — ~25% narrower logits.
+#   * KV cache at the full 40k context is ~10.7 GiB (64 layers x 8 KV heads x
+#     head_dim 128). Weights + KV ~30 GiB across two 32 GiB cards = comfortable.
+#   * `qwen3` architecture — the SAME family as Qwen3-8B, which already works
+#     end-to-end here (ThinkingModel's <think> stripping and tool-call parsing
+#     are already proven against it). No new parser surprises, unlike gpt-oss's
+#     harmony format.
+#
+# REQUIRES: pip install -e ".[quant]"  (bitsandbytes >= 0.50). Verified working
+# on Blackwell sm_120 with torch 2.7.0+cu128 — and it installs WITHOUT touching
+# torch/transformers, unlike the triton >= 3.4 upgrade gpt-oss would have needed
+# (that is the ABI trap that broke vLLM here — see B7).
+#
+# ⚠️ Still a local model: good for code debugging and coupling re-measurement,
+# NOT validated as a substitute for Opus 5 on paper coordination metrics.
+llm:
+  model_id: "unsloth/Qwen3-32B-bnb-4bit"
+  backend: "transformers"
+  # The 4-bit quantization_config is embedded in the repo's config.json, so
+  # transformers applies it automatically — no explicit quantization args here.
+  # NF4 weights are small enough (~19 GiB) that a layer-based split cannot
+  # starve either card, so no max_memory pinning is needed (contrast gpt-oss,
+  # where bf16 weights put ~24 GiB on GPU 0 and OOM'd).
+  device_map: "balanced"
+  torch_dtype: "auto"
+  # Qwen3 thinks by default and a <think> block alone can exceed 1024 tokens —
+  # at max_new_tokens 1024 EVERY generation truncates mid-think and the
+  # ThinkingModel burns its retries. 4096 leaves room for think + the tool call.
+  max_new_tokens: 4096
+  temperature: 0.3
+  reliability:
+    max_retries: 3
+
+mcp:
+  mode: "real"
+  servers:
+    - name: "tigl"
+      url: "http://127.0.0.1:8500/mcp"
+      transport: "streamable-http"
+    - name: "su2"
+      url: "http://127.0.0.1:8200/mcp"
+      transport: "streamable-http"
+    - name: "mass"
+      url: "http://127.0.0.1:8700/mcp"
+      transport: "streamable-http"
+    - name: "pycycle"
+      url: "http://127.0.0.1:8400/mcp"
+      transport: "streamable-http"
+    - name: "aviary"
+      url: "http://127.0.0.1:8600/mcp"
+      transport: "streamable-http"
+
+skills:
+  path: "skills/aircraft-design-mdo"
+  mode: "auto"
+
+agents_config: "config/mdo_f25_sequential_agents.yaml"
+coordination_config: "config/aviary_mdo_f25_sequential.yaml"
+
+logging:
+  level: "INFO"
+  output_dir: "logs/"
+  save_full_history: true
+
+ui:
+  enabled: false
+  port: 8501
