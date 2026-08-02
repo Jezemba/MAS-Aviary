@@ -30,10 +30,16 @@ llm:
   # it put ~24 GB on GPU 0 and OOM'd mid-run: the orchestrated prompt is ~7k
   # tokens and gpt-oss's 201k vocab makes the prefill logits alone ~3-4 GB.
   # Cap each device so the split is genuinely even and both keep headroom.
+  # 19/19 GiB still OOM'd: a ~11k-token orchestrated prompt needs a single
+  # ~4.3 GiB allocation and GPU1 had only 3.26 GiB spare. Cap lower so ~10 GB
+  # of layers offload to CPU and BOTH cards keep ~16 GiB of activation headroom.
+  # Costs generation speed; the alternative (MXFP4, ~13 GB weights) needs
+  # triton >= 3.4 in a SEPARATE env — do not upgrade triton here, see B7.
   model_kwargs:
     max_memory:
-      0: "19GiB"
-      1: "19GiB"
+      0: "15GiB"
+      1: "15GiB"
+      cpu: "60GiB"
   # gpt-oss reasons in its analysis channel before the call, so the same
   # rationale as Qwen applies: leave room for reasoning + the tool call.
   max_new_tokens: 4096
