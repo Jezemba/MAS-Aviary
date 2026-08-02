@@ -1,0 +1,60 @@
+# LOCAL / FREE config — identical to mdo_f25_run_claude.yaml except the LLM.
+#
+# Purpose: run the coordination framework end-to-end on a LOCAL open model so
+# CODE debugging costs $0. Uses backend "transformers" (in-process on the two
+# RTX 5090s) rather than "vllm" — vLLM is ABI-broken on this Blackwell sm_120
+# box (torch/vllm/flash-attn `undefined symbol`), see .claude/BUGS.md B7.
+#
+# ⚠️ NOT FOR PAPER METRICS. Qwen3-8B is far weaker at 5-MCP tool-calling
+# coordination than Opus 5 (gpt-4o already proved too unreliable here — see the
+# comment in mdo_f25_run_claude.yaml). Use this to answer "does the framework
+# run end-to-end without crashing?", not "which coordination structure wins?".
+llm:
+  model_id: "Qwen/Qwen3-8B"
+  backend: "transformers"
+  # "balanced" shards the 8B across both GPUs; "cuda:0" fits it on one (16 GB
+  # bf16) and leaves GPU 1 free.
+  device_map: "balanced"
+  torch_dtype: "auto"
+  # Qwen3 thinks by default and a <think> block alone can exceed 1024 tokens —
+  # at max_new_tokens 1024 EVERY generation truncates mid-think and the
+  # ThinkingModel burns its retries. 4096 leaves room for think + the tool call.
+  max_new_tokens: 4096
+  temperature: 0.3
+  reliability:
+    max_retries: 3
+
+mcp:
+  mode: "real"
+  servers:
+    - name: "tigl"
+      url: "http://127.0.0.1:8500/mcp"
+      transport: "streamable-http"
+    - name: "su2"
+      url: "http://127.0.0.1:8200/mcp"
+      transport: "streamable-http"
+    - name: "mass"
+      url: "http://127.0.0.1:8700/mcp"
+      transport: "streamable-http"
+    - name: "pycycle"
+      url: "http://127.0.0.1:8400/mcp"
+      transport: "streamable-http"
+    - name: "aviary"
+      url: "http://127.0.0.1:8600/mcp"
+      transport: "streamable-http"
+
+skills:
+  path: "skills/aircraft-design-mdo"
+  mode: "auto"
+
+agents_config: "config/mdo_f25_sequential_agents.yaml"
+coordination_config: "config/aviary_mdo_f25_sequential.yaml"
+
+logging:
+  level: "INFO"
+  output_dir: "logs/"
+  save_full_history: true
+
+ui:
+  enabled: false
+  port: 8501
