@@ -106,16 +106,39 @@ def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
     return {"applied": applied, "held_constant": not deviations, "deviations": deviations}
 
 
-# Aviary's default (uncoupled) cruise drag is ~0.0208; a SU2-coupled run is ~0.014.
-# Below this threshold => SU2 aero was injected into the mission (fully coupled).
+# LEGACY heuristic threshold. Kept ONLY as a fallback for runs where the data
+# plane state is unavailable (e.g. re-scoring an old trace offline).
+#
+# It is no longer valid as a primary signal: it was calibrated when the CD->drag
+# transform was the old fixed "+0.005" fudge, under which a coupled run flew
+# cruise_cd_avg ~0.014 vs aviary's ~0.0208 default. The physics-based drag
+# build-up (Option A', 2026-07-28) adds a real Schlichting skin-friction term, so
+# a COUPLED run now flies ~0.020-0.030 — at or ABOVE this threshold. Every
+# coupled run since that change was therefore mislabelled "uncoupled". See
+# .claude/BUGS.md B1.
 _AERO_COUPLED_CD_MAX = 0.018
 
 
 def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
-    """Whether SU2 aero actually reached aviary this run, from the flown cruise_cd_avg
-    (SU2-coupled ~0.014 vs aviary default ~0.0208) read out of the aviary get_results
-    observations. The DRAG_COEFF_FACTOR name appears in the prompt text so it is NOT a
-    reliable signal — cruise_cd_avg is. Lets us flag/enforce fully-coupled runs."""
+    """Whether SU2 aero actually reached aviary this run.
+
+    AUTHORITATIVE source: the data plane records the outcome of the Phase-H
+    injection directly — ``aero_coupling_status`` is "injected" (with the exact
+    CL/CD/drag-factor used) or "MISSING_no_su2_aero". That is ground truth: it is
+    written by the injector itself at the tool boundary, not inferred.
+
+    This function used to IGNORE that and re-derive coupling from the flown
+    ``cruise_cd_avg`` with a threshold calibrated for a superseded drag
+    transform, which produced a systematic FALSE NEGATIVE: e.g. the
+    sequential_staged_pipeline link 0 was genuinely coupled (the mission stage's
+    own output records the framework-injected LIFT_COEFFICIENT=0.0922 and
+    SUBSONIC_DRAG_COEFF_FACTOR=0.918) yet the ledger recorded
+    "uncoupled_default_drag" because it flew cruise_cd_avg 0.0299 > 0.018. This
+    is the measurement error behind B1's "7 of 8 combos fail to couple".
+
+    The heuristic is retained only as a flagged fallback when no data-plane
+    state is available.
+    """
     obs = []
     for body in (traces or {}).values():
         if not isinstance(body, dict):
@@ -128,12 +151,51 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
     # match cruise_cd_avg even through CSV/JSON escaping of the quote before the colon
     cds = re.findall(r'cruise_cd_avg\\?"?\s*[:=]\s*([0-9.]+)', blob)
     cd = float(cds[-1]) if cds else None
-    coupled = cd is not None and cd < _AERO_COUPLED_CD_MAX
-    # How many times the model hit the UNCOUPLED_MISSION error before recovering —
+    # How many times the model hit the UNCOUPLED_MISSION advisory before recovering —
     # a coordination signal (0 = coupled aero before mission on the first try).
     retries = blob.count("UNCOUPLED_MISSION")
-    return {"coupled": coupled, "cruise_cd_avg": cd, "coupling_retries": retries,
-            "status": "coupled" if coupled else ("uncoupled_default_drag" if cd is not None else "unknown")}
+
+    record = {"cruise_cd_avg": cd, "coupling_retries": retries}
+
+    # --- Authoritative path: ask the data plane what actually happened. ---
+    # append_record() runs immediately after the link, before the next link's
+    # reset_design_state(), so this state still belongs to THIS link.
+    try:
+        from src.tools.data_plane import get_design_state
+
+        ds = get_design_state()
+        store = getattr(ds, "data_store", None) if ds is not None else None
+        status = (store or {}).get("aero_coupling_status")
+        if status is not None:
+            coupled = status == "injected"
+            record.update({
+                "coupled": coupled,
+                "status": "coupled" if coupled else "uncoupled_default_drag",
+                "detection": "data_plane",
+                "aero_coupling_status": status,
+                "injected_cl": (store or {}).get("aero_injected_cl"),
+                "injected_cd": (store or {}).get("aero_injected_cd"),
+                "injected_drag_factor": (store or {}).get("aero_injected_drag_factor"),
+                # typed_registry | legacy_fallback — which capture path supplied the aero.
+                "aero_coupling_source": (store or {}).get("aero_coupling_source"),
+            })
+            return record
+    except Exception:  # logging must never break a run
+        pass
+
+    # --- Fallback: the superseded cruise_cd_avg heuristic, clearly flagged. ---
+    coupled = cd is not None and cd < _AERO_COUPLED_CD_MAX
+    record.update({
+        "coupled": coupled,
+        "status": "coupled" if coupled else ("uncoupled_default_drag" if cd is not None else "unknown"),
+        "detection": "cd_threshold_fallback",
+        "detection_warning": (
+            "No data-plane state available; fell back to the cruise_cd_avg "
+            "threshold, which is mis-calibrated for the physics-based drag "
+            "build-up and under-reports coupling. Treat as unreliable."
+        ),
+    })
+    return record
 
 
 def _discipline_outputs(traces: dict[str, Any]) -> dict[str, float]:
