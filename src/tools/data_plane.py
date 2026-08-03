@@ -323,6 +323,45 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
             pass
 
 
+def _note_aero_capture_failure(reason: str, data: dict) -> None:
+    """Record + log that ``read_history_csv`` ran but produced NO usable CL/CD.
+
+    This used to be a silent ``return``, and that silence cost real debugging
+    time. In the networked re-measurement (Qwen3-32B, 2026-08-02) the agent did
+    everything the coupling contract asks for — it ran SU2 and then called
+    read_history_csv, immediately followed by four set_aircraft_parameters
+    calls — yet the run came out UNCOUPLED. The reason was only visible by
+    hand-reading the raw tool response: SU2 had been configured without force
+    output, so history.csv contained ONLY residual columns
+
+        Time_Iter, Outer_Iter, Inner_Iter, "rms[Rho]", "rms[RhoU]", ...
+
+    with no CL/CD at all (typically a missing MARKER_MONITORING). The capture
+    found nothing, returned quietly, and the failure was indistinguishable
+    downstream from "the agent never ran aero" — which is exactly the kind of
+    ambiguity that made .claude/BUGS.md B1 look like a pure ordering problem
+    for months.
+
+    The status lands in ``aero_coupling_status`` so the design ledger reports
+    the DISTINCT failure mode rather than lumping it in with MISSING_no_su2_aero.
+    """
+    if _design_state is None:
+        return
+    cols = data.get("columns")
+    col_preview = cols[:12] if isinstance(cols, list) else None
+    _design_state.data_store["aero_coupling_status"] = "SU2_NO_FORCE_OUTPUT"
+    _design_state.data_store["aero_capture_failure"] = reason
+    if col_preview is not None:
+        _design_state.data_store["aero_capture_columns"] = col_preview
+    logger.warning(
+        "AERO CAPTURE FAILED: %s. SU2 ran but its history carries no force "
+        "coefficients — check that the SU2 config sets MARKER_MONITORING (and "
+        "force fields in HISTORY_OUTPUT); without them the mission CANNOT be "
+        "coupled even though the aero stage 'succeeded'. Columns seen: %s",
+        reason, col_preview,
+    )
+
+
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     """Phase H: stash CL/CD from SU2's read_history_csv into data_store.
 
@@ -340,9 +379,11 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
 
     rows = data.get("rows")
     if not isinstance(rows, list) or not rows:
+        _note_aero_capture_failure("read_history_csv returned no rows", data)
         return
     last = rows[-1]
     if not isinstance(last, dict):
+        _note_aero_capture_failure("read_history_csv rows are not dicts", data)
         return
 
     cl = last.get("CL")
@@ -365,6 +406,9 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         cl_f = float(cl)
         cd_f = float(cd)
     except (TypeError, ValueError):
+        _note_aero_capture_failure(
+            "read_history_csv has no usable CL/CD columns", data
+        )
         return
 
     # Legacy keys (kept during transition / as fallback source).

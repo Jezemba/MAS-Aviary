@@ -168,11 +168,26 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
         status = (store or {}).get("aero_coupling_status")
         if status is not None:
             coupled = status == "injected"
+            # Distinguish the failure MODES — they need different fixes:
+            #   MISSING_no_su2_aero : aero never ran (or ran after the mission)
+            #   SU2_NO_FORCE_OUTPUT : aero DID run and history WAS read, but SU2
+            #                         emitted only residuals (no MARKER_MONITORING),
+            #                         so there were never any CL/CD to capture.
+            # Both used to report identically as "uncoupled_default_drag", which
+            # is what made B1 look like a pure ordering problem.
+            if coupled:
+                ledger_status = "coupled"
+            elif status == "SU2_NO_FORCE_OUTPUT":
+                ledger_status = "uncoupled_su2_no_force_output"
+            else:
+                ledger_status = "uncoupled_default_drag"
             record.update({
                 "coupled": coupled,
-                "status": "coupled" if coupled else "uncoupled_default_drag",
+                "status": ledger_status,
                 "detection": "data_plane",
                 "aero_coupling_status": status,
+                "aero_capture_failure": (store or {}).get("aero_capture_failure"),
+                "aero_capture_columns": (store or {}).get("aero_capture_columns"),
                 "injected_cl": (store or {}).get("aero_injected_cl"),
                 "injected_cd": (store or {}).get("aero_injected_cd"),
                 "injected_drag_factor": (store or {}).get("aero_injected_drag_factor"),
