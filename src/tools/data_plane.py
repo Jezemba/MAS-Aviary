@@ -411,6 +411,38 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         )
         return
 
+    # PHYSICAL PLAUSIBILITY BRACKET. The mass capture has had one of these since
+    # the beginning; aero did not, and that gap bit hard on 2026-08-03: an SU2
+    # config with no REF_AREA fell back to SU2's default of 1.0 m^2 instead of
+    # the wing's ~192 m^2, inflating CL by ~190x. The captured CL=15.18 was
+    # injected as Mission.Design.LIFT_COEFFICIENT, aviary's Newton solver tried
+    # to trim to it and diverged, and the run reported GTOW 310,918 kg / fuel
+    # 208,551 kg -- roughly 4x and 17x their real values -- while the ledger
+    # cheerfully recorded status "coupled".
+    #
+    # A transport cruises at CL ~0.5; even full high-lift tops out near 3.0.
+    # Anything outside these brackets is a broken reference quantity or an
+    # unconverged solve, never a real aircraft, and injecting it is strictly
+    # worse than leaving aviary on its own drag polar.
+    if not (-0.5 <= cl_f <= 3.0) or not (0.0 < cd_f <= 1.0):
+        if _design_state is not None:
+            _design_state.data_store["aero_coupling_status"] = "AERO_IMPLAUSIBLE"
+            _design_state.data_store["aero_capture_failure"] = (
+                f"implausible CL={cl_f:.4g} / CD={cd_f:.4g}"
+            )
+            _design_state.data_store["aero_rejected_cl"] = cl_f
+            _design_state.data_store["aero_rejected_cd"] = cd_f
+        logger.warning(
+            "AERO REJECTED as non-physical: CL=%.4g CD=%.4g (expected CL in "
+            "[-0.5, 3.0], CD in (0, 1.0]). NOT injecting — a bad coefficient "
+            "diverges aviary's trim and produces nonsense mass/fuel. Most likely "
+            "the SU2 config is missing REF_AREA/REF_LENGTH (SU2 then defaults "
+            "REF_AREA to 1.0 m^2 and every coefficient is scaled by the wing "
+            "area), or the solve did not converge.",
+            cl_f, cd_f,
+        )
+        return
+
     # Legacy keys (kept during transition / as fallback source).
     _design_state.data_store["aero_cl_cruise"] = cl_f
     _design_state.data_store["aero_cd_cruise"] = cd_f
