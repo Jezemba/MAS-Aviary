@@ -207,6 +207,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         mass_coupling_hint,
         mission_coupling_error,
         resolve_request,
+        unresolved_ref_error,
     )
 
     original_forward = getattr(tool, "forward", None)
@@ -218,6 +219,15 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         coerced = coerce_tool_arguments(tool, kwargs)
         # 2. Resolve data store references (also injects typed coupling vars)
         resolved = resolve_request(tool.name, coerced)
+        # 2a. Fail fast on a ref-shaped argument that does not resolve. Otherwise
+        #     the literal key string is sent to the server and interpreted as
+        #     DATA, producing an error that names the wrong problem (observed:
+        #     a one-character typo in a mesh ref surfaced as "Invalid
+        #     base64-encoded string", and the agent reissued the same call).
+        import json as _json
+        bad_ref = unresolved_ref_error(tool.name, resolved)
+        if bad_ref is not None:
+            return _json.dumps(bad_ref)
         # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
         #     A hard error made non-sequential coordination structures loop/timeout
         #     because they can't always run SU2 before the mission. As a warning the

@@ -848,6 +848,71 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     )
 
 
+# A value shaped like a data-store ref key: "<tool_name>__<field>".
+_REF_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__[A-Za-z0-9_]+$")
+
+
+def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
+    """Return an error dict when an argument LOOKS like a data-store ref but
+    could not be resolved — else None.
+
+    ``resolve_request`` deliberately passes an unrecognised ref through as a
+    literal rather than guessing at a substitute (never silently swap in the
+    wrong payload). That policy is right, but the resulting failure was
+    unhelpful: the raw key string reached the MCP server, which tried to use it
+    as DATA and produced an error naming the wrong problem.
+
+    Observed live 2026-08-03 (sweep run 1/16): the agent passed
+    ``mesh_base64="generated_volume_mesh__mesh_base64"`` — one character off the
+    real key ``generate_volume_mesh__mesh_base64`` — and su2-mcp replied
+
+        "Failed to set mesh: Invalid base64-encoded string: number of data
+         characters (29) cannot be 1 more than a multiple of 4"
+
+    which says nothing about refs. The agent could not self-correct and reissued
+    the identical call.
+
+    Catching it here fails fast with the ACTUAL available keys, and (when the
+    typo is unambiguous) names the intended one, so the model's own error
+    recovery can fix it in one step.
+    """
+    if _design_state is None:
+        return None
+    store = getattr(_design_state, "data_store", None) or {}
+    if not store:
+        return None
+
+    for key, value in resolved.items():
+        if not isinstance(value, str) or not _REF_SHAPE_RE.match(value.strip()):
+            continue
+        if value.strip() in store:
+            continue  # resolvable — resolve_request already handled it
+
+        available = sorted(k for k in store if isinstance(k, str) and "__" in k)
+        if not available:
+            continue
+
+        import difflib
+
+        close = difflib.get_close_matches(value.strip(), available, n=1, cutoff=0.8)
+        suggestion = (
+            f" Did you mean '{close[0]}'?" if close else ""
+        )
+        return {
+            "success": False,
+            "error_code": "UNRESOLVED_REF",
+            "error": (
+                f"Argument '{key}' looks like a stored-payload reference but no such "
+                f"reference exists: '{value.strip()}'.{suggestion} "
+                f"Available references: {available}. "
+                "Pass one of these exactly (or the {\"ref\": \"<key>\"} form). This call "
+                "was NOT sent to the server — the literal string would have been "
+                "interpreted as data."
+            ),
+        }
+    return None
+
+
 def mission_coupling_error(tool_name: str, resolved: dict) -> dict | None:
     """Return an UNCOUPLED error dict if an aviary mission call is about to run WITHOUT
     the SU2 cruise aero — else None. Called by the tool wrapper AFTER resolve_request
