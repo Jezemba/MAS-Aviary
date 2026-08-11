@@ -735,6 +735,12 @@ _VERDICT_RE = re.compile(
 
 _METRIC_TOOL_NAMES = frozenset(("get_results", "run_simulation", "set_aircraft_parameters"))
 
+# Evidence that a mission was actually FLOWN. set_aircraft_parameters is
+# deliberately excluded: it configures the aircraft and returns a validation
+# probe, not a flown trajectory, so on its own it does not license trusting a
+# prose metric. Used to gate the prose fallback (.claude/BUGS.md B19).
+_MISSION_EXECUTION_TOOLS = frozenset(("run_simulation", "get_results"))
+
 _METRIC_KEYS = ("fuel_burned_kg", "gtow_kg", "wing_mass_kg", "reserve_fuel_kg", "zero_fuel_weight_kg")
 
 
@@ -885,16 +891,32 @@ def _extract_aviary_eval_from_messages(messages: list[AgentMessage]) -> dict | N
     zfw = tool_result["zero_fuel_weight_kg"] if tool_result else None
     converged = tool_result["converged"] if tool_result else True
 
+    # The prose fallback exists for a REAL mission whose tool output got
+    # truncated. It must never manufacture metrics for a mission that never ran.
+    # Observed twice (.claude/BUGS.md B19): a run that never called
+    # run_simulation / get_results / set_aircraft_parameters still reported
+    # fuel_burned_kg 24908.495 and gtow_kg 78126.0, because structures_analyst
+    # relabelled mass-mcp's mFuel_kg (structural fuel CAPACITY) and mTOM_kg as
+    # mission results in its prose and _FUEL_RE believed it. The second
+    # occurrence was classified converged=True, so nothing downstream would
+    # have excluded it. Gate the fallback on evidence a mission actually ran.
+    mission_ran = any(
+        tc.tool_name in _MISSION_EXECUTION_TOOLS
+        for msg in messages
+        for tc in msg.tool_calls
+        if tc.error is None
+    )
+
     # Fallback: regex on agent content for any metric still None.
-    if fuel is None:
+    if fuel is None and mission_ran:
         fuel = _regex_extract_metric(_FUEL_RE, messages)
-    if gtow is None:
+    if gtow is None and mission_ran:
         gtow = _regex_extract_metric(_GTOW_RE, messages)
-    if wing is None:
+    if wing is None and mission_ran:
         wing = _regex_extract_metric(_WING_MASS_RE, messages)
-    if reserve is None:
+    if reserve is None and mission_ran:
         reserve = _regex_extract_metric(_RESERVE_FUEL_RE, messages)
-    if zfw is None:
+    if zfw is None and mission_ran:
         zfw = _regex_extract_metric(_ZFW_RE, messages)
 
     # Convergence from agent content (if not found in tool output).
