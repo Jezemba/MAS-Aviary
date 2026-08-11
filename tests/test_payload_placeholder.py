@@ -66,6 +66,24 @@ class TestPlaceholdersRejected:
         err = unresolved_ref_error("set_mesh", {"mesh_base64": "generated_volume_mesh__mesh_base64"})
         assert f"Did you mean '{REAL_KEY}'?" in err["error"]
 
+    def test_create_su2_session_initial_mesh_is_covered(self):
+        """`initial_mesh` was MISSED by the first hand-enumerated _PAYLOAD_ARGS,
+        so a bad payload reached create_su2_session and produced su2-mcp's
+        "Invalid base64-encoded string" during the 2026-08-04 rerun. The set is
+        now derived from the live tool schemas."""
+        err = unresolved_ref_error(
+            "create_su2_session", {"initial_mesh": "<MESH_BASE64 ref from GEOMETRY_SETUP>"}
+        )
+        assert err is not None
+        assert err["error_code"] == "UNRESOLVED_REF"
+        assert REAL_KEY in err["error"]
+
+    def test_mesh_file_name_is_NOT_treated_as_payload(self):
+        """Names are not payloads — 'mesh.su2' must pass untouched."""
+        assert unresolved_ref_error(
+            "create_su2_session", {"mesh_file_name": "mesh.su2", "output_mesh_name": "out.su2"}
+        ) is None
+
 
 class TestLegitimateCallsPassThrough:
     def test_correct_ref_accepted(self):

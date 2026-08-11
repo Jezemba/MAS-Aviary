@@ -888,9 +888,18 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
 _REF_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__[A-Za-z0-9_]+$")
 
 # Arguments that must carry a stored payload, never a literal the model wrote.
+#
+# Derived from the live tool schemas (tools/list on tigl:8500 and su2:8200),
+# NOT from memory: the first version of this set was hand-enumerated and missed
+# `initial_mesh`, so a bad payload reached create_su2_session and produced
+# "Invalid base64-encoded string" in the very run that proved the guard worked
+# for set_mesh. Re-derive with:
+#   list_tools.py <url> | grep -iE "mesh|base64|cad|step|content"
+# Note `mesh_file_name` / `output_mesh_name` are NAMES, not payloads — excluded.
 _PAYLOAD_ARGS = frozenset({
     "mesh_base64", "cad_base64", "step_base64", "stl_base64",
     "mesh_data", "cad_data", "step_data", "stl_data", "content_base64",
+    "initial_mesh",   # create_su2_session — carries the volume mesh
 })
 
 # Placeholders a model substitutes for a payload it did not actually carry.
