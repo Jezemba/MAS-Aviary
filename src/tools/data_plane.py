@@ -887,6 +887,45 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
 # A value shaped like a data-store ref key: "<tool_name>__<field>".
 _REF_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__[A-Za-z0-9_]+$")
 
+# Arguments that must carry a stored payload, never a literal the model wrote.
+_PAYLOAD_ARGS = frozenset({
+    "mesh_base64", "cad_base64", "step_base64", "stl_base64",
+    "mesh_data", "cad_data", "step_data", "stl_data", "content_base64",
+})
+
+# Placeholders a model substitutes for a payload it did not actually carry.
+# Measured 25 times across 13 runs of the 2026-08-04 sweep (.claude/BUGS.md B14):
+# "<MESH_BASE64_FROM_GEOMETRY_STAGE>", "<MESH_BASE64 ref ...>",
+# "base64_mesh_data==", even "SGVsbG8gd29ybGQ=" ("Hello world"). su2-mcp then
+# answers "Incorrect padding" / "Invalid base64-encoded string", which names the
+# wrong problem, so the model cannot self-correct and reissues the same call.
+_PLACEHOLDER_RES = (
+    re.compile(r"^<.*>$", re.DOTALL),           # <MESH_BASE64_FROM_GEOMETRY_STAGE>
+    re.compile(r"^\.{3}$"),                      # ...
+    re.compile(r"^(YOUR|INSERT|PLACEHOLDER|TODO|EXAMPLE)[_A-Z0-9]*$", re.I),
+    re.compile(r"^[a-z0-9_]*(base64|mesh)[a-z0-9_]*={0,2}$", re.I),  # base64_mesh_data==
+)
+
+# A real base64 payload is far larger than any of these; anything this short in a
+# payload argument is a stand-in regardless of whether it happens to decode.
+_MIN_PAYLOAD_CHARS = 512
+
+
+def _placeholder_reason(arg_name: str, value: str) -> str | None:
+    """Why *value* cannot be a real payload for *arg_name* — or None if it might be."""
+    if arg_name not in _PAYLOAD_ARGS:
+        return None
+    text = value.strip()
+    for rx in _PLACEHOLDER_RES:
+        if rx.match(text):
+            return "it looks like a placeholder, not a payload"
+    if len(text) < _MIN_PAYLOAD_CHARS:
+        return (
+            f"it is only {len(text)} characters — far too short to be a real "
+            f"payload (expected thousands)"
+        )
+    return None
+
 
 def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
     """Return an error dict when an argument LOOKS like a data-store ref but
@@ -919,10 +958,17 @@ def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
         return None
 
     for key, value in resolved.items():
-        if not isinstance(value, str) or not _REF_SHAPE_RE.match(value.strip()):
+        if not isinstance(value, str):
             continue
         if value.strip() in store:
             continue  # resolvable — resolve_request already handled it
+
+        # Two ways an argument fails to carry its payload: it is ref-SHAPED but
+        # unknown (a mistyped key), or it is a payload argument holding an
+        # obvious stand-in the model invented.
+        reason = _placeholder_reason(key, value)
+        if reason is None and not _REF_SHAPE_RE.match(value.strip()):
+            continue
 
         available = sorted(k for k in store if isinstance(k, str) and "__" in k)
         if not available:
@@ -934,16 +980,21 @@ def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
         suggestion = (
             f" Did you mean '{close[0]}'?" if close else ""
         )
+        problem = (
+            reason
+            if reason is not None
+            else "it looks like a stored-payload reference, but no such reference exists"
+        )
         return {
             "success": False,
             "error_code": "UNRESOLVED_REF",
             "error": (
-                f"Argument '{key}' looks like a stored-payload reference but no such "
-                f"reference exists: '{value.strip()}'.{suggestion} "
+                f"Argument '{key}' cannot be used: {problem} "
+                f"(got '{value.strip()[:60]}').{suggestion} "
                 f"Available references: {available}. "
-                "Pass one of these exactly (or the {\"ref\": \"<key>\"} form). This call "
-                "was NOT sent to the server — the literal string would have been "
-                "interpreted as data."
+                "Pass one of these exactly (or the {\"ref\": \"<key>\"} form) — do NOT "
+                "type the payload yourself. This call was NOT sent to the server; the "
+                "literal string would have been interpreted as data."
             ),
         }
     return None

@@ -9,6 +9,7 @@ Supports three backends:
   OpenAI GPT, etc.) via the litellm library.
 """
 
+import json
 import os
 
 from smolagents.models import Model
@@ -36,8 +37,42 @@ def _pick_litellm_api_key(model_id: str) -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
 
+# Process-global cache of loaded models, keyed by the config that produced them.
+#
+# Coordinator.from_config calls load_model() once PER RUN, so a 16-run sweep
+# loaded the same 17.9 GB local model 16 times. Beyond the waste, it caused a
+# hard failure (.claude/BUGS.md B16): stat_batch_runner's _run_with_timeout
+# abandons a timed-out worker THREAD while it is still alive, so that thread
+# keeps the previous model resident, and the next run's load hit
+#   ValueError: Some modules are dispatched on the CPU or the disk
+# killing both networked_graph_routed runs at 0 turns / 0 seconds.
+#
+# The weights are identical across runs and carry no per-run state, so reusing
+# one instance removes the double allocation entirely. Agents within a run
+# already share a single model, so cross-run sharing is the same situation.
+_MODEL_CACHE: dict[tuple, Model] = {}
+
+
+def _cache_key(config: LLMConfig) -> tuple:
+    return (
+        config.backend, config.model_id, config.device_map, config.torch_dtype,
+        config.max_new_tokens, config.temperature, config.api_base,
+        json.dumps(config.reliability or {}, sort_keys=True),
+        json.dumps(config.model_kwargs or {}, sort_keys=True, default=str),
+    )
+
+
+def clear_model_cache() -> None:
+    """Drop cached models (frees GPU memory when nothing else holds a reference)."""
+    _MODEL_CACHE.clear()
+
+
 def load_model(config: LLMConfig) -> Model:
     """Create and return a model configured per the LLM config.
+
+    Local (transformers) models are cached and REUSED across calls — see
+    _MODEL_CACHE. Cloud backends are cached too, but they are cheap clients, so
+    the benefit there is only avoiding redundant construction.
 
     Args:
         config: LLMConfig with model_id, backend, and generation params.
@@ -45,6 +80,17 @@ def load_model(config: LLMConfig) -> Model:
     Returns:
         A ready-to-use Model instance.
     """
+    key = _cache_key(config)
+    cached = _MODEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    model = _build_model(config)
+    _MODEL_CACHE[key] = model
+    return model
+
+
+def _build_model(config: LLMConfig) -> Model:
+    """Construct a fresh model instance (uncached)."""
     if config.backend == "litellm":
         from smolagents import LiteLLMModel
 

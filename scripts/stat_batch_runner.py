@@ -43,11 +43,24 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import logging
 import math
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+# Without this the sweep discards every data-plane diagnostic — "AERO NOT
+# INJECTED", "AERO CAPTURE FAILED", "Captured aero into typed registry", the
+# unresolved-ref suggestion — so an 11-hour bug hunt runs with its warnings
+# switched off (.claude/BUGS.md B15). The same gap was fixed in run_link.py.
+# Warnings go to stderr so stdout's progress lines stay parseable.
+logging.basicConfig(
+    level=os.environ.get("AVION_LOG_LEVEL", "WARNING").upper(),
+    stream=sys.stderr,
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 import numpy as np
 import torch
@@ -386,11 +399,14 @@ _DEFAULT_TIMEOUT_MINUTES = 20
 
 
 def _aggressive_gpu_cleanup():
-    """Force-free all GPU memory between runs.
+    """Free per-run GPU memory (agents, activations, KV cache) between runs.
 
-    Deletes all TransformersModel / smolagents agent references from
-    every module's namespace, then runs gc + empty_cache.  This prevents
-    CUDA OOM when daemon threads from timed-out runs hold stale model refs.
+    Deliberately does NOT free the LLM weights: model_loader caches the model
+    and reuses it across runs (.claude/BUGS.md B16), which is what stops a
+    timed-out run's still-live thread from making the next run's load fail.
+    The cache is a plain dict, so the type-name sweep below cannot reach the
+    model inside it — and ThinkingModel was never matched by `heavy_types`
+    anyway, since that lists the base class name, not the subclass.
     """
     import sys
 
