@@ -231,6 +231,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_aero_coefficients(tool_name, data)
                 _capture_wing_mass_from_mass_estimate(tool_name, data)
                 _capture_geometry_ref(tool_name, data)
+                _capture_param_bounds(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -248,6 +249,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_aero_coefficients(tool_name, response)
         _capture_wing_mass_from_mass_estimate(tool_name, response)
         _capture_geometry_ref(tool_name, response)
+        _capture_param_bounds(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
@@ -411,37 +413,10 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         )
         return
 
-    # PHYSICAL PLAUSIBILITY BRACKET. The mass capture has had one of these since
-    # the beginning; aero did not, and that gap bit hard on 2026-08-03: an SU2
-    # config with no REF_AREA fell back to SU2's default of 1.0 m^2 instead of
-    # the wing's ~192 m^2, inflating CL by ~190x. The captured CL=15.18 was
-    # injected as Mission.Design.LIFT_COEFFICIENT, aviary's Newton solver tried
-    # to trim to it and diverged, and the run reported GTOW 310,918 kg / fuel
-    # 208,551 kg -- roughly 4x and 17x their real values -- while the ledger
-    # cheerfully recorded status "coupled".
-    #
-    # A transport cruises at CL ~0.5; even full high-lift tops out near 3.0.
-    # Anything outside these brackets is a broken reference quantity or an
-    # unconverged solve, never a real aircraft, and injecting it is strictly
-    # worse than leaving aviary on its own drag polar.
-    if not (-0.5 <= cl_f <= 3.0) or not (0.0 < cd_f <= 1.0):
-        if _design_state is not None:
-            _design_state.data_store["aero_coupling_status"] = "AERO_IMPLAUSIBLE"
-            _design_state.data_store["aero_capture_failure"] = (
-                f"implausible CL={cl_f:.4g} / CD={cd_f:.4g}"
-            )
-            _design_state.data_store["aero_rejected_cl"] = cl_f
-            _design_state.data_store["aero_rejected_cd"] = cd_f
-        logger.warning(
-            "AERO REJECTED as non-physical: CL=%.4g CD=%.4g (expected CL in "
-            "[-0.5, 3.0], CD in (0, 1.0]). NOT injecting — a bad coefficient "
-            "diverges aviary's trim and produces nonsense mass/fuel. Most likely "
-            "the SU2 config is missing REF_AREA/REF_LENGTH (SU2 then defaults "
-            "REF_AREA to 1.0 m^2 and every coefficient is scaled by the wing "
-            "area), or the solve did not converge.",
-            cl_f, cd_f,
-        )
-        return
+    # Capture records what SU2 MEASURED — no judgement here. SU2's inviscid CD is
+    # legitimately near-zero or slightly negative (d'Alembert); the friction term
+    # is added later by aero_cd_to_aviary_drag_factor. Validation belongs at the
+    # injection point, against the consumer's declared bounds.
 
     # Legacy keys (kept during transition / as fallback source).
     _design_state.data_store["aero_cl_cruise"] = cl_f
@@ -456,6 +431,35 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         "Captured aero into typed registry: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
         cl_f, cd_f,
     )
+
+
+def _capture_param_bounds(tool_name: str, data: dict) -> None:
+    """Cache aviary's published parameter bounds from get_design_space.
+
+    These are the consumer's own declared contract — the only authority on what
+    an injected coupling value may be. Nothing here is chosen by us.
+    """
+    if _design_state is None or tool_name != "get_design_space":
+        return
+    params = data.get("parameters")
+    if not isinstance(params, list):
+        return
+    bounds = {}
+    for p in params:
+        if not isinstance(p, dict):
+            continue
+        name, lo, hi = p.get("name"), p.get("min"), p.get("max")
+        if name and isinstance(lo, (int, float)) and isinstance(hi, (int, float)):
+            bounds[name] = (float(lo), float(hi))
+    if bounds:
+        _design_state.data_store["param_bounds"] = bounds
+
+
+def _bounds_for(param: str):
+    """Declared (min, max) for an aviary parameter, or None if not published."""
+    if _design_state is None:
+        return None
+    return (_design_state.data_store.get("param_bounds") or {}).get(param)
 
 
 def _capture_geometry_ref(tool_name: str, data: dict) -> None:
@@ -1111,6 +1115,29 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     except Exception:
         pass
     scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
+
+    # The drag factor is already held to aviary's declared range by
+    # aero_cd_to_aviary_drag_factor's clamp; CL had no equivalent check, so a
+    # broken reference area (CL 15.18 vs a declared max of 1.0) reached aviary
+    # and diverged its trim. Validate against the bound aviary itself publishes
+    # via get_design_space — aviary reports such a value in `violations` but
+    # still returns valid=True, so it will not stop us.
+    _cl_bounds = _bounds_for("Mission.Design.LIFT_COEFFICIENT")
+    if _cl_bounds and not (_cl_bounds[0] <= float(cl) <= _cl_bounds[1]):
+        _design_state.data_store["aero_coupling_status"] = "AERO_OUT_OF_BOUNDS"
+        _design_state.data_store["aero_capture_failure"] = (
+            f"CL={float(cl):.4g} outside aviary's declared "
+            f"[{_cl_bounds[0]}, {_cl_bounds[1]}]"
+        )
+        _design_state.data_store["aero_rejected_cl"] = float(cl)
+        _design_state.data_store["aero_rejected_cd"] = float(cd)
+        logger.warning(
+            "AERO NOT INJECTED: CL=%.4g is outside aviary's declared bounds "
+            "[%s, %s] for Mission.Design.LIFT_COEFFICIENT. Usually a bad SU2 "
+            "REF_AREA. Leaving aviary on its default drag polar.",
+            float(cl), _cl_bounds[0], _cl_bounds[1],
+        )
+        return
 
     injected: list[str] = []
     if "Mission.Design.LIFT_COEFFICIENT" not in parameters:

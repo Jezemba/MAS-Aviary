@@ -17,16 +17,55 @@ import argparse
 import contextlib
 import io
 import json
+import logging
 import math
 import os
 import sys
 import time
+
+# This probe had NO logging configuration, so every data-plane logger.warning was
+# discarded — including the aero diagnostics ("AERO REJECTED as non-physical",
+# "AERO CAPTURE FAILED"). A run could come back coupled=False with an empty
+# `notes` list and no clue anywhere as to why, which is precisely the blindness
+# this no-API probe exists to eliminate. Warnings now reach stderr, leaving
+# stdout's single JSON line (which callers parse) untouched.
+logging.basicConfig(
+    level=os.environ.get("AVION_LOG_LEVEL", "WARNING").upper(),
+    stream=sys.stderr,
+    format="%(levelname)s %(name)s: %(message)s",
+)
 
 sys.path.insert(0, ".")
 os.environ.setdefault("AVION_ENFORCE_COUPLING", "1")
 from src.config.loader import load_config                       # noqa: E402
 from src.config.canonical import load_canonical, render_snippets  # noqa: E402
 from scripts.stat_batch_runner import _load_mcp_tools, generate_random_params, PARAM_RANGES  # noqa: E402
+
+
+def _aero_status() -> dict:
+    """Read the data plane's own record of what happened to the SU2 aero.
+
+    `coupled: false` alone cannot distinguish "aero never ran" from "aero ran but
+    SU2 emitted no forces" from "aero was captured but rejected as non-physical" —
+    three different bugs with three different fixes. Surface the status, the
+    values actually injected, and anything rejected.
+    """
+    try:
+        from src.tools.data_plane import get_design_state
+
+        ds = get_design_state()
+        store = getattr(ds, "data_store", None) or {}
+        return {
+            k: store.get(k)
+            for k in (
+                "aero_coupling_status", "aero_capture_failure", "aero_capture_columns",
+                "aero_injected_cl", "aero_injected_cd", "aero_injected_drag_factor",
+                "aero_rejected_cl", "aero_rejected_cd",
+            )
+            if store.get(k) is not None
+        }
+    except Exception as exc:  # diagnostics must never break the probe
+        return {"error": str(exc)[:120]}
 
 CPACS = "/home/aipexws3/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml"
 LOGF = os.environ.get("MCP_LOG_FILE", "logs/live_agent_chain.jsonl")
@@ -119,8 +158,24 @@ def main():
         call("update_config_entries", session_id=ssid, updates=cfg)
         _log(link, combo, "su2_solving")
         rs = call("run_su2_solver", session_id=ssid, solver="SU2_CFD", max_runtime_seconds=300)
-        call("read_history_csv", session_id=ssid, relative_path="history.csv", max_rows=2000, skip_rows=0)
-        _log(link, combo, "su2_done", exit_code=rs.get("exit_code"), runtime=rs.get("runtime_seconds"))
+        if isinstance(rs, dict) and (rs.get("error") or rs.get("exit_code") not in (0, None)):
+            notes.append(f"su2 solver: {str(rs.get('error') or rs)[:200]}")
+        # read_history_csv is the ONLY aero capture point — the data plane pulls
+        # CL/CD out of this response via intercept_response. Its return value used
+        # to be DISCARDED, so when the call failed (e.g. SU2 wrote no history.csv)
+        # capture silently no-op'd, `coupled` came back False, and `notes` was
+        # empty: a run indistinguishable from one where aero was never attempted.
+        # Surface it instead.
+        hr = call("read_history_csv", session_id=ssid, relative_path="history.csv", max_rows=2000, skip_rows=0)
+        if isinstance(hr, dict):
+            if hr.get("error"):
+                notes.append(f"read_history_csv: {str(hr.get('error'))[:200]}")
+            elif hr.get("unmatched_columns"):
+                notes.append(f"read_history_csv unmatched columns: {hr.get('unmatched_columns')}")
+            elif not hr.get("rows"):
+                notes.append("read_history_csv returned no rows — no aero to capture")
+        _log(link, combo, "su2_done", exit_code=rs.get("exit_code"), runtime=rs.get("runtime_seconds"),
+             history_rows=(len(hr.get("rows") or []) if isinstance(hr, dict) else None))
         # MASS — canonical flops/aluminum, on the MORPHED geometry (export_cpacs above +
         # tigl3-capable mass-mcp runtime), so structural mass is now geometry-COUPLED.
         mmr = call("estimate_mass", cpacs_file_path=mass_cpacs, wing_mass_method=mass_c.get("wing_mass_method", "flops"),
@@ -139,6 +194,9 @@ def main():
         rcr = call("run_cycle", session_id=csid, use_driver=False, outputs_of_interest=["perf.TSFC", "perf.Fn"])
         _log(link, combo, "pycycle", converged=(rcr.get("converged") or rcr.get("success")))
         # AVIARY — canonical mission + physics coupling (enforced)
+        # Publishes aviary's parameter bounds into the data plane, which uses them
+        # to validate injected coupling values against the consumer's own contract.
+        call("get_design_space")
         a = call("create_session", initial_parameters={}); asid = a.get("session_id")
         _log(link, combo, "aviary_solving")
         call("configure_mission", session_id=asid, range_nmi=mis["range_nmi"], num_passengers=mis["num_passengers"],
@@ -155,6 +213,11 @@ def main():
         ap2 = (gr.get("design_parameters") or {}).get("aircraft_params") or {}
         out.update({"ok": bool(summ.get("fuel_burned_kg")), "fuel_burned_kg": summ.get("fuel_burned_kg"),
                     "gtow_kg": summ.get("gtow_kg"), "wing_mass_kg": summ.get("wing_mass_kg"),
+                    # The data plane's OWN verdict on the aero coupling — "injected",
+                    # "MISSING_no_su2_aero", "SU2_NO_FORCE_OUTPUT" or "AERO_IMPLAUSIBLE".
+                    # Without this, `coupled: false` was indistinguishable across four
+                    # very different causes needing four different fixes.
+                    "aero_status": _aero_status(),
                     "cruise_cd_avg": gr.get("cruise_cd_avg"), "coupled": bool(inj), "drag_factor": drag,
                     "injected": inj, "end_design": {k: ap2.get(k) for k in PARAM_RANGES if ap2.get(k) is not None},
                     "notes": notes})
