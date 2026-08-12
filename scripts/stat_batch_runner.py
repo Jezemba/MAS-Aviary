@@ -437,41 +437,97 @@ def _aggressive_gpu_cleanup():
     print(f"  [GPU cleanup] {mem:.0f} MB allocated after cleanup")
 
 
-def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=None):
-    """Run a combination with a wall-clock timeout.
+def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cover
+    """Child entry point: run the combination and send the result back."""
+    try:
+        from src.runners.batch_runner import run_combination
 
-    Uses a subprocess so that on timeout the entire process (and its GPU
-    memory) can be killed cleanly — no leaked daemon threads.
-    """
-    import threading
-
-    result_box = [None]
-    error_box = [None]
-
-    def _target():
+        result = run_combination(combo, task, config, session_id=session_id)
         try:
-            from src.runners.batch_runner import run_combination
+            pipe.send(("ok", result))
+        except Exception as exc:
+            # The run itself succeeded; only the handoff failed. Say exactly
+            # that, so a serialisation problem is never mistaken for a failed
+            # run (the caller would otherwise retry a run that worked).
+            pipe.send(("unsendable", f"{type(exc).__name__}: {exc}"))
+    except Exception as exc:
+        pipe.send(("error", exc))
+    finally:
+        pipe.close()
 
-            result_box[0] = run_combination(
-                combo,
-                task,
-                config,
-                session_id=session_id,
-            )
-        except Exception as e:
-            error_box[0] = e
 
-    t = threading.Thread(target=_target, daemon=True)
-    t.start()
-    t.join(timeout=timeout_seconds)
+def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=None):
+    """Run a combination with a wall-clock timeout, in a killable subprocess.
 
-    if t.is_alive():
-        # Force GPU cleanup even though the thread is still alive
+    This used to say "uses a subprocess" while using
+    ``threading.Thread(daemon=True)``. Python cannot kill a thread, so on
+    timeout the run kept executing -- holding its agents, activations and KV
+    cache -- and only the WEIGHTS were spared by the model cache. The next run
+    then failed at model load with "Some modules are dispatched on the CPU or
+    the disk". Measured (.claude/BUGS.md B16): two 75-minute timeouts left their
+    threads alive and both `networked_graph_routed` runs died at load, 0 turns
+    and 0 seconds, producing no data for an infrastructure reason.
+
+    A subprocess makes the timeout path actually reclaim everything: terminate
+    the child and the GPU memory goes with it. The cost is that the in-process
+    model cache no longer spans runs, so each run reloads the weights (~18 GiB,
+    measured at 6.9 s warm on this box) -- cheap against ~30-minute runs, and
+    far cheaper than losing a combo.
+
+    ``spawn`` is required: ``fork`` would inherit a CUDA context that is invalid
+    in the child.
+    """
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    proc = ctx.Process(
+        target=_subprocess_target,
+        args=(child_conn, combo, task, config, session_id),
+        daemon=False,
+    )
+    proc.start()
+    child_conn.close()  # only the child holds the send end now
+
+    payload = None
+    if parent_conn.poll(timeout_seconds):
+        try:
+            payload = parent_conn.recv()
+        except EOFError:
+            payload = None
+    else:
+        # Timed out: kill the child, and with it every byte of GPU memory the
+        # run had allocated. This is the case the thread version could not
+        # handle at all.
+        proc.terminate()
+        proc.join(timeout=30)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=30)
         _aggressive_gpu_cleanup()
         raise TimeoutError(f"Run exceeded {timeout_seconds / 60:.0f}m timeout")
-    if error_box[0] is not None:
-        raise error_box[0]
-    return result_box[0]
+
+    proc.join(timeout=60)
+    if proc.is_alive():  # pragma: no cover - defensive
+        proc.kill()
+        proc.join(timeout=30)
+
+    if payload is None:
+        raise RuntimeError(
+            f"Run process exited without returning a result "
+            f"(exitcode={proc.exitcode}). This is an infrastructure failure, "
+            "not a failed design run -- check for an OOM kill."
+        )
+    kind, value = payload
+    if kind == "error":
+        raise value
+    if kind == "unsendable":
+        raise RuntimeError(
+            f"The run COMPLETED but its result could not be returned from the "
+            f"subprocess: {value}. Treat this as an infrastructure failure, not "
+            "a design failure."
+        )
+    return value
 
 
 def _is_zero_fuel(result) -> bool:
