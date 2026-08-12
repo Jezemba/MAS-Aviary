@@ -52,9 +52,24 @@ _NO_SESSION_TOOLS = _SESSION_CREATION_TOOLS | frozenset({
     "ping", "get_design_space", "get_su2_status", "get_valid_config_options",
 })
 
-# Tools that need cpacs_file_path (mass-mcp tools).
+# Tools that need cpacs_file_path (mass-mcp tools, plus SU2 session creation).
+#
+# `create_su2_session` is here because a new SU2 session starts from a minimal
+# config that cannot solve, and recovering from that requires the caller to make
+# a SECOND call to configure_from_cpacs. Measured live (sweep 2026-08-12, run
+# 5/16): the tool was advertised to the agent, the failing responses named it
+# five separate times, and the agent's next action after each was `final_answer`
+# -- it called configure_from_cpacs ZERO times across 6 sessions and 6 solves,
+# and the run failed with zero fuel.
+#
+# The lesson generalises: an error that supplies a VALUE to substitute into the
+# call being made gets acted on (the tigl UID fix took recovery from a mean 8.8
+# guesses to 1), while an error that asks for a DIFFERENT TOOL does not. So the
+# session is configured at creation instead of being left in a state that needs
+# a follow-up the caller will not make.
 _CPACS_PATH_TOOLS = frozenset({
     "estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown",
+    "create_su2_session",
 })
 
 # Tools whose responses ARE the analytical content the agent has to
