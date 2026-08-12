@@ -149,13 +149,16 @@ agents:
       AGENT ROLE → TOOL MAPPING:
       - geometry_engineer: open_cpacs, close_cpacs, export_cpacs, set_high_level_parameters, get_high_level_parameters,
         get_wing_summary, get_fuselage_summary, get_configuration_summary, list_geometric_components, export_component_mesh, generate_volume_mesh
-      - aerodynamics_analyst: create_su2_session, close_su2_session, set_mesh, update_config_entries,
-        get_valid_config_options, run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status
-        (call get_valid_config_options BEFORE update_config_entries so you
-         pick option combinations that pass SU2's static checks — e.g.
-         CONV_NUM_METHOD_FLOW="JST" requires MUSCL_FLOW="NO". Without it
-         the agent has to guess and SU2 errors with "Centered schemes do
-         not use MUSCL reconstruction".)
+      - aerodynamics_analyst: create_su2_session, close_su2_session, set_mesh, configure_from_cpacs,
+        run_su2_solver, read_history_csv, sample_surface_solution, list_result_files, get_su2_status
+        (build the config with configure_from_cpacs(session_id, cpacs_file_path) --
+         it derives REF_AREA, REF_LENGTH and the markers from the aircraft
+         definition. Do NOT compose an SU2 config by hand: this listing used to
+         name update_config_entries here, and the resulting hand-written configs
+         were rejected by SU2 in 80-91% of runs. Observed live 2026-08-12 with
+         this exact wording still in place: a config with no markers at all,
+         "The configuration file doesn't have any definition for marker
+         farfield", so the run produced no CL/CD and flew uncoupled.)
       - structures_analyst: validate_cpacs_inputs, estimate_mass, get_cpacs_mass_breakdown
       - propulsion_analyst: create_cycle_model, close_cycle_model, get_design_inputs, list_variables,
         set_inputs, run_cycle, get_outputs, get_cycle_summary

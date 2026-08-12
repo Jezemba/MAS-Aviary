@@ -114,10 +114,11 @@ mdo_f25_pipeline:
              # (CPACS's own <reference><area> is stale after morphing).
              # MARKER_MONITORING + force HISTORY_OUTPUT included by construction.
              # SU2 numerics come from the canonical baseline (identical for ALL combos).
-             # Then set REF from the ACTUAL geometry via get_wing_summary (do NOT hardcode
-             # the D150 baseline 61.39) in a SECOND update_config_entries call:
-             # {"REF_AREA": <WING_REF_AREA_M2>, "REF_LENGTH": <WING_MAC_LENGTH_M>,
-             #  "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}.
+             # REF_AREA/REF_LENGTH need no second call: the data plane injects the
+             # values measured by get_wing_summary into configure_from_cpacs
+             # (verified live -- "Injected computed REF_AREA=58.505"). Asking for
+             # a follow-up update_config_entries here reintroduced hand-written
+             # config edits, which is what this tool exists to remove.
              Note: the marker names `aircraft` and `farfield` are what
              tigl-mcp's gmsh writes into the .su2 file. The data-plane
              middleware also auto-corrects guesses (e.g. "wing",

@@ -114,7 +114,7 @@ mdo_f25_graph:
         fixture (pinned by tests/test_su2_solver_live.py, verified
         live in v18 wandb 7ngitswj, CL=0.1871 CD=0.0128 L/D=14.6).
 
-        TOOLS: create_su2_session, set_mesh, update_config_entries,
+        TOOLS: create_su2_session, set_mesh, configure_from_cpacs,
         run_su2_solver, read_history_csv, list_result_files
 
         1. Call create_su2_session(base_name="f25_cruise") → SU2_SESSION_ID.
@@ -133,10 +133,11 @@ mdo_f25_graph:
              # (CPACS's own <reference><area> is stale after morphing).
              # MARKER_MONITORING + force HISTORY_OUTPUT included by construction.
              # SU2 numerics come from the canonical baseline (identical for ALL combos).
-             # Then set REF from the ACTUAL geometry via get_wing_summary (do NOT hardcode
-             # the D150 baseline 61.39) in a SECOND update_config_entries call:
-             # {"REF_AREA": <WING_REF_AREA_M2>, "REF_LENGTH": <WING_MAC_LENGTH_M>,
-             #  "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}.
+             # REF_AREA/REF_LENGTH need no second call: the data plane injects the
+             # values measured by get_wing_summary into configure_from_cpacs
+             # (verified live -- "Injected computed REF_AREA=58.505"). Asking for
+             # a follow-up update_config_entries here reintroduced hand-written
+             # config edits, which is what this tool exists to remove.
            Markers `aircraft` / `farfield` match gmsh's tags on this
            mesh; the data-plane middleware also auto-corrects common
            guesses (`wall`, `wing`, etc.).
