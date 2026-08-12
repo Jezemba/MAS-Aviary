@@ -779,11 +779,20 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 logger.info("Injected computed REF_LENGTH=%.3f into configure_from_cpacs", _mac)
         if not resolved.get("overrides"):
             try:
-                from src.config.canonical import load_canonical
+                import json as _json
 
-                _su2 = (load_canonical() or {}).get("su2_config") or {}
+                from src.config.canonical import render_snippets
+
+                # Go through render_snippets, NOT the raw canonical dict. The
+                # su2_config block carries non-SU2 metadata — `ref_from_upstream`
+                # is a directive meaning "REF comes from upstream geometry" — and
+                # the renderer already excludes it. Reading the raw dict wrote
+                # REF_FROM_UPSTREAM= True into the config and SU2 rejected the
+                # whole thing, which is the exact class of failure this tool
+                # exists to eliminate.
+                _su2 = _json.loads(render_snippets()["SU2_CONFIG"])
                 if _su2:
-                    resolved["overrides"] = dict(_su2)
+                    resolved["overrides"] = _su2
                     logger.info(
                         "Injected canonical su2_config (%d keys) into configure_from_cpacs",
                         len(_su2),

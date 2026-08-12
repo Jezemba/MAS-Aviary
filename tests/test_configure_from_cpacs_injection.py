@@ -85,6 +85,25 @@ class TestCanonicalNumericsInjected:
         assert str(ov.get("TIME_DISCRE_FLOW")) == "EULER_IMPLICIT"
         assert "PHYSICAL_PROBLEM" not in ov
 
+    def test_non_su2_metadata_is_never_injected(self):
+        """The canonical su2_config carries `ref_from_upstream`, a DIRECTIVE
+        meaning "REF comes from upstream geometry" — not an SU2 option. Reading
+        the raw dict wrote REF_FROM_UPSTREAM= True into the config and SU2
+        rejected the whole file, which is exactly the failure this tool exists
+        to eliminate. render_snippets already excludes it."""
+        out = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/f25.xml"})
+        ov = out.get("overrides") or {}
+        assert "ref_from_upstream" not in ov
+        assert "REF_FROM_UPSTREAM" not in {str(k).upper() for k in ov}
+
+    def test_every_injected_key_is_su2_shaped(self):
+        """SU2 options are uppercase; anything else is our own metadata."""
+        import re
+
+        out = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/f25.xml"})
+        for k in (out.get("overrides") or {}):
+            assert re.match(r"^[A-Z][A-Z0-9_]*$", str(k)), f"non-SU2 key injected: {k}"
+
     def test_agent_supplied_overrides_are_respected(self):
         out = resolve_request(
             "configure_from_cpacs",
