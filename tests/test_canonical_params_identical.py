@@ -63,10 +63,22 @@ def _text(path: str) -> str:
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)
-def test_uses_su2_placeholder_not_hardcoded(cfg):
-    """Each combo references <<SU2_CONFIG>> and hardcodes no SU2 numerics."""
+def test_su2_config_is_not_hardcoded_in_prompts(cfg):
+    """No combo may bake SU2 numerics into its prompt text.
+
+    The property under test is unchanged -- agents must not carry SU2 settings
+    around by hand -- but the MECHANISM changed on 2026-08-12. Combos used to
+    embed a `<<SU2_CONFIG>>` placeholder for the agent to transcribe into
+    `update_config_entries`, and transcription drift made SU2 reject 80-91% of
+    the resulting configs. They now call `configure_from_cpacs`, which builds
+    the config server-side from the aircraft definition, so the placeholder is
+    deliberately absent. Asserting on the placeholder tested the old mechanism,
+    not the property.
+    """
     raw = _text(cfg)
-    assert "<<SU2_CONFIG>>" in raw, f"{cfg} does not reference <<SU2_CONFIG>>"
+    assert "configure_from_cpacs" in raw, (
+        f"{cfg} must build its SU2 config with configure_from_cpacs"
+    )
     for token in HARDCODED_SU2_FORBIDDEN:
         assert token not in raw, f"{cfg} still hardcodes SU2 param {token}"
 

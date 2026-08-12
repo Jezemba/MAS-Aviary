@@ -24,7 +24,7 @@ from src.coordination.completion_signal import (
     signals_completion,
 )
 from src.coordination.execution_handler import Assignment, ExecutionHandler
-from src.coordination.history import AgentMessage, ToolCallRecord
+from src.coordination.history import AgentMessage, ToolCallRecord, estimate_token_count
 from src.coordination.stage_definition import (
     PipelineDefinition,
     StageDefinition,
@@ -305,6 +305,7 @@ class StagedPipelineHandler(ExecutionHandler):
                 msg = AgentMessage(
                     agent_name=assignment.agent_name,
                     content=assignment.task,
+                    token_count=estimate_token_count(assignment.task),
                     turn_number=turn,
                     timestamp=time.time(),
                     metadata={
@@ -358,6 +359,7 @@ class StagedPipelineHandler(ExecutionHandler):
                 msg = AgentMessage(
                     agent_name=assignment.agent_name,
                     content="",
+                    token_count=estimate_token_count(""),
                     turn_number=turn,
                     timestamp=time.time(),
                     error=f"Agent '{assignment.agent_name}' not found",

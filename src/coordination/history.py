@@ -83,3 +83,47 @@ class SharedHistory:
 
     def __len__(self) -> int:
         return len(self._messages)
+
+
+def estimate_token_count(content: str, agent: object | None = None) -> int | None:
+    """Token count for a message, from the agent's own usage when available.
+
+    ``token_count`` was set on only 3 of the 11 AgentMessage construction sites,
+    so `org_theory_metrics` treated it as unavailable and hardcoded three
+    metrics to null with the warnings
+
+        "orchestrator_token_growth: token_count is always null in current messages"
+        "information_ratio: requires token_count on messages, always null in current runs"
+        "per_stage_tokens (staged_pipeline): token_count always null"
+
+    Task/prompt messages carry information too -- an orchestrator's instruction
+    to a worker is exactly what "information asymmetry" is about -- so every
+    message gets a count, not just agent replies.
+
+    Prefers smolagents' real usage (``step.token_usage``), falling back to a
+    length estimate. The estimate is marked by returning it only when there is
+    content, so a genuinely empty message stays None rather than reading as
+    zero-information.
+    """
+    if agent is not None:
+        for attr in ("token_count", "total_tokens"):
+            val = getattr(agent, attr, None)
+            if isinstance(val, int) and val > 0:
+                return val
+        mem = getattr(agent, "memory", None)
+        steps = getattr(mem, "steps", None) if mem else None
+        if steps:
+            total = 0
+            for step in steps:
+                usage = getattr(step, "token_usage", None)
+                if isinstance(usage, dict):
+                    total += usage.get("total_tokens", 0) or (
+                        usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                    )
+                elif isinstance(usage, int):
+                    total += usage
+            if total:
+                return total
+    if content:
+        return max(1, len(content) // 4)
+    return None

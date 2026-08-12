@@ -162,8 +162,16 @@ def _orchestrated_os_metrics(
     worker_turns = len(worker_msgs)
     orchestrator_overhead_ratio = orchestrator_turns / total if total else 0.0
 
-    # orchestrator_token_growth: needs token_count (always None)
-    warnings.append("orchestrator_token_growth: token_count is always null in current messages")
+    # orchestrator_token_growth: how the orchestrator's own context grows per
+    # turn. Was hardcoded None because token_count was set on only 3 of 11
+    # AgentMessage sites; every site now populates it (history.estimate_token_count).
+    orch_tokens = [_get(m, "token_count") or 0 for m in orch_msgs]
+    orchestrator_token_growth = None
+    if len(orch_tokens) >= 2 and any(orch_tokens):
+        # Mean per-turn delta: positive means the orchestrator is accumulating
+        # context faster than it sheds it.
+        deltas = [b - a for a, b in zip(orch_tokens, orch_tokens[1:])]
+        orchestrator_token_growth = round(sum(deltas) / len(deltas), 2)
 
     # cost_per_agent: mean orchestrator wall-time per spawned worker
     orch_time = sum(_get(m, "duration_seconds", 0.0) for m in orch_msgs)
@@ -183,8 +191,14 @@ def _orchestrated_os_metrics(
     warnings.append("authority_transfers: requires metadata.event='authority_transfer', not present in AgentMessage")
 
     # --- Information Asymmetry ---
-    # information_ratio: requires per-message token counts (always None)
-    warnings.append("information_ratio: requires token_count on messages, always null in current runs")
+    # information_ratio: what share of the total token flow the orchestrator
+    # holds. 1.0 means it sees everything and workers see nothing; near 0 means
+    # the workers carry the information. Also previously hardcoded None.
+    orch_tok = sum(_get(m, "token_count") or 0 for m in orch_msgs)
+    work_tok = sum(_get(m, "token_count") or 0 for m in worker_msgs)
+    information_ratio = round(orch_tok / (orch_tok + work_tok), 4) if (orch_tok + work_tok) else None
+    if information_ratio is None:
+        warnings.append("information_ratio: no token counts on any message")
 
     return {
         # Span of Control
@@ -192,14 +206,14 @@ def _orchestrated_os_metrics(
         "orchestrator_turns": orchestrator_turns,
         "worker_turns": worker_turns,
         "orchestrator_overhead_ratio": round(orchestrator_overhead_ratio, 4),
-        "orchestrator_token_growth": None,
+        "orchestrator_token_growth": orchestrator_token_growth,
         "cost_per_agent": round(cost_per_agent, 3) if cost_per_agent is not None else None,
         "reasoning_iterations": reasoning_iterations,
         # Oversight
         "authority_holder": authority_holder,
         "authority_transfers": None,
         # Information Asymmetry
-        "information_ratio": None,
+        "information_ratio": information_ratio,
     }
 
 

@@ -190,14 +190,37 @@ class TestOrchestratedOSMetrics:
         # Only 1 orchestrator turn before first worker
         assert result["reasoning_iterations"] == 1
 
-    def test_null_fields_with_warnings(self):
+    def test_fields_without_data_are_null_with_a_warning(self):
+        """Messages carrying no token_count still yield null -- but these are no
+        longer PERMANENTLY null. orchestrator_token_growth and information_ratio
+        were hardcoded to None with a warning saying token_count was 'always
+        null in current messages'; the real cause was that only 3 of 11
+        AgentMessage sites set it. All sites now do, so these compute whenever
+        the data is there (see test_token_metrics_populated.py)."""
         msgs = self._make_messages()
         w = []
         result = _orchestrated_os_metrics(msgs, {}, None, w)
         assert result["orchestrator_token_growth"] is None
-        assert result["authority_transfers"] is None
         assert result["information_ratio"] is None
-        assert len(w) >= 3
+        assert any("token counts" in x for x in w)
+
+    def test_authority_transfers_is_still_unavailable(self):
+        """Genuinely not emitted: needs metadata.event='authority_transfer'."""
+        msgs = self._make_messages()
+        w = []
+        result = _orchestrated_os_metrics(msgs, {}, None, w)
+        assert result["authority_transfers"] is None
+        assert any("authority_transfer" in x for x in w)
+
+    def test_metrics_compute_when_tokens_are_present(self):
+        """The point of the fix: with token counts, these are real numbers."""
+        msgs = self._make_messages()
+        for i, m in enumerate(msgs):
+            m.token_count = 100 * (i + 1)
+        w = []
+        result = _orchestrated_os_metrics(msgs, {}, None, w)
+        assert result["information_ratio"] is not None
+        assert 0.0 <= result["information_ratio"] <= 1.0
 
     def test_authority_holder(self):
         msgs = self._make_messages()

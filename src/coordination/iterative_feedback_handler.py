@@ -28,7 +28,7 @@ from src.coordination.feedback_extraction import (
     extract_feedback,
     format_feedback_for_retry,
 )
-from src.coordination.history import AgentMessage, ToolCallRecord
+from src.coordination.history import AgentMessage, ToolCallRecord, estimate_token_count
 from src.logging.logger import InstrumentationLogger
 
 # ---------------------------------------------------------------------------
@@ -266,6 +266,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
             msg = AgentMessage(
                 agent_name=assignments[0].agent_name,
                 content=self._last_successful_output,
+                token_count=estimate_token_count(self._last_successful_output),
                 turn_number=turn_offset,
                 timestamp=time.time(),
                 metadata={
@@ -295,6 +296,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
                 msg = AgentMessage(
                     agent_name=assignment.agent_name,
                     content="",
+                    token_count=estimate_token_count(""),
                     turn_number=turn,
                     timestamp=time.time(),
                     error=f"Agent '{assignment.agent_name}' not found",
@@ -353,6 +355,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
                     msg = AgentMessage(
                         agent_name=assignment.agent_name,
                         content=content,
+                        token_count=estimate_token_count(content),
                         turn_number=turn,
                         timestamp=time.time(),
                         duration_seconds=duration,

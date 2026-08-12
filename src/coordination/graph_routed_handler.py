@@ -33,7 +33,7 @@ from src.coordination.graph_definition import (
     resolve_agent_for_role,
     validate_graph_strict,
 )
-from src.coordination.history import AgentMessage, ToolCallRecord
+from src.coordination.history import AgentMessage, ToolCallRecord, estimate_token_count
 from src.coordination.resource_manager import ResourceManager
 from src.logging.logger import InstrumentationLogger
 
@@ -460,6 +460,7 @@ class GraphRoutedHandler(ExecutionHandler):
                 msg = AgentMessage(
                     agent_name="graph_routed_handler",
                     content="",
+                    token_count=estimate_token_count(""),
                     turn_number=turn + 1,
                     timestamp=time.time(),
                     error=f"State {current_state!r} not found in graph",
@@ -492,6 +493,7 @@ class GraphRoutedHandler(ExecutionHandler):
                     msg = AgentMessage(
                         agent_name=state_def.agent or "unknown",
                         content="",
+                        token_count=estimate_token_count(""),
                         turn_number=turn + 1,
                         timestamp=time.time(),
                         error=str(e),
@@ -520,6 +522,7 @@ class GraphRoutedHandler(ExecutionHandler):
                     msg = AgentMessage(
                         agent_name=state_def.agent,
                         content=content,
+                        token_count=estimate_token_count(content),
                         turn_number=turn,
                         timestamp=time.time(),
                         duration_seconds=duration,
