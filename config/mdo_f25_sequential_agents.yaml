@@ -279,16 +279,35 @@ templates:
              set_mesh(session_id, mesh_base64=<base64_data>). If no
              mesh was provided, note this and proceed with config only.
 
-          3. Call update_config_entries ONCE with the COMPLETE F25 cruise
-             preset below — do NOT split into multiple calls. The SU2
-             config requires ALL of these together; piecemeal calls
-             return "missing_required" warnings and burn a step:
+          3. Call configure_from_cpacs ONCE — do NOT hand-write the SU2
+             config. It builds a complete, valid Euler config FROM the
+             aircraft definition:
 
-               updates=<<SU2_CONFIG>>
-                 # SU2 numerics from the canonical baseline (identical for ALL combos).
-                 # REF is design-dependent: set it in a SECOND update_config_entries call
-                 # from upstream geometry (get_wing_summary): {"REF_AREA": <WING_REF_AREA_M2>,
-                 # "REF_LENGTH": <WING_MAC_LENGTH_M>, "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}
+               configure_from_cpacs(session_id=<su2 sid>,
+                                    cpacs_file_path=<the CPACS you opened>)
+
+             That is the WHOLE call. You do not pass numerics and you do not
+             pass REF values:
+               • the pinned cruise flight state + solver numerics are supplied
+                 automatically from the canonical baseline (identical for ALL
+                 combos, which is what makes them comparable);
+               • REF_AREA / REF_LENGTH are supplied automatically from the
+                 geometry you already measured with get_wing_summary, so they
+                 track the MORPHED design. Do NOT read them from the CPACS
+                 file — its <reference><area> is a declared value that morphing
+                 does not update, so it still describes the BASELINE wing.
+               • MARKER_MONITORING and the force fields in HISTORY_OUTPUT are
+                 included by construction. Without them SU2 solves happily and
+                 writes NO CL/CD, so the mission cannot couple.
+
+             Hand-writing this config is how runs failed: SU2 rejected 80-91%
+             of hand-written configs (PHYSICAL_PROBLEM instead of SOLVER,
+             GREEN-GAUSS instead of GREEN_GAUSS, IMPLICIT instead of
+             EULER_IMPLICIT, MARKER_BODY, MACH), and a solve that never starts
+             leaves no history and no aero to couple.
+
+             Only use update_config_entries afterwards if you deliberately want
+             to change a specific setting from the pinned baseline.
 
              Why these numerics matter (this is SU2's ONERA M6 recipe):
                • JST + W_CYCLE multigrid + FGMRES + WLS gradient is exactly
@@ -416,6 +435,7 @@ templates:
           - create_su2_session
           - close_su2_session
           - set_mesh
+          - configure_from_cpacs   # build the SU2 config FROM the CPACS geometry
           - update_config_entries
           # get_valid_config_options returns the option combinations
           # SU2 will actually accept (e.g. CONV_NUM_METHOD_FLOW="JST"

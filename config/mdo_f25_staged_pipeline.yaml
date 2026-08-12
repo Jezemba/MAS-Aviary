@@ -102,8 +102,17 @@ mdo_f25_pipeline:
           1. create_su2_session(base_name="f25_cruise")
           2. set_mesh(session_id=<su2 sid>, mesh_base64=<MESH_BASE64 ref
              from previous stage's output>, update_config=True)
-          3. update_config_entries(session_id=<su2 sid>, create_if_missing=True,
-             updates=<<SU2_CONFIG>>):
+          3. configure_from_cpacs(session_id=<su2 sid>,
+             cpacs_file_path=<the CPACS you opened>):
+             # Do NOT hand-write the SU2 config. SU2 rejected 80-91% of
+             # hand-written configs (PHYSICAL_PROBLEM vs SOLVER, GREEN-GAUSS vs
+             # GREEN_GAUSS, IMPLICIT vs EULER_IMPLICIT) and a solve that never
+             # starts leaves no history and no aero to couple.
+             # Numerics + cruise flight state come from the canonical baseline
+             # automatically. REF_AREA/REF_LENGTH come from the geometry you
+             # measured with get_wing_summary, so they track the MORPHED design
+             # (CPACS's own <reference><area> is stale after morphing).
+             # MARKER_MONITORING + force HISTORY_OUTPUT included by construction.
              # SU2 numerics come from the canonical baseline (identical for ALL combos).
              # Then set REF from the ACTUAL geometry via get_wing_summary (do NOT hardcode
              # the D150 baseline 61.39) in a SECOND update_config_entries call:

@@ -28,7 +28,18 @@ peer_template:
 
     2. SU2 (Aerodynamics CFD — port 8200, 17 tools):
        Session: create_su2_session() → session_id, close_su2_session
-       Config: update_config_entries(session_id, updates=<<SU2_CONFIG>>)
+       Config: configure_from_cpacs(session_id, cpacs_file_path=<the CPACS you opened>)
+               # Builds a complete valid Euler config FROM the aircraft definition.
+               # Do NOT hand-write the SU2 config: SU2 rejected 80-91% of
+               # hand-written ones (PHYSICAL_PROBLEM vs SOLVER, GREEN-GAUSS vs
+               # GREEN_GAUSS, IMPLICIT vs EULER_IMPLICIT), and a solve that never
+               # starts leaves no history and no aero to couple.
+               # Numerics + cruise flight state come from the canonical baseline
+               # automatically; REF_AREA/REF_LENGTH come from the geometry you
+               # measured with get_wing_summary, so they track the MORPHED design.
+               # (CPACS's own <reference><area> is stale after morphing.)
+               # MARKER_MONITORING + force HISTORY_OUTPUT are included by
+               # construction — without them SU2 writes no CL/CD at all.
                # Then set REF from the ACTUAL geometry via get_wing_summary (identical
                # rule for all combos): {"REF_AREA": <WING_REF_AREA_M2>, "REF_LENGTH":
                # <WING_MAC_LENGTH_M>, "REF_ORIGIN_MOMENT_X/Y/Z": <WING_MAC_QC_*>}.

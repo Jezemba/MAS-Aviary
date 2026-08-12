@@ -750,6 +750,47 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         resolved["boundary_layer_enabled"] = False
         logger.info("COARSE MESH forced: far_field=5.0, mesh_size_max=25.0")
 
+    # configure_from_cpacs builds the SU2 config from the aircraft definition
+    # instead of the agent retyping ~20 physics options (which is why SU2
+    # rejected 80-91% of agent-written configs). Two things must be supplied
+    # that the agent should not have to transcribe either:
+    #
+    #  * the pinned flight state + numerics, so every combo solves the same
+    #    cruise point — otherwise they are not comparable;
+    #  * the COMPUTED reference area/MAC. CPACS's <reference><area> is a
+    #    DECLARED value that morphing does not update — a real morphed export
+    #    still said 122.4 while get_wing_summary computed 65.98 for that same
+    #    geometry — so the declared value would silently describe the baseline
+    #    wing and reproduce the wrong-CL failure (B12).
+    #
+    # Both already live in the typed registry, captured from get_wing_summary.
+    if tool_name == "configure_from_cpacs" and _design_state:
+        from src.tools import coupling as _cpl
+
+        if resolved.get("ref_area") is None:
+            _area = _cpl.get_var(_design_state, "geom.reference_area")
+            if _area:
+                resolved["ref_area"] = float(_area)
+                logger.info("Injected computed REF_AREA=%.3f into configure_from_cpacs", _area)
+        if resolved.get("ref_length") is None:
+            _mac = _cpl.get_var(_design_state, "geom.mac_length")
+            if _mac:
+                resolved["ref_length"] = float(_mac)
+                logger.info("Injected computed REF_LENGTH=%.3f into configure_from_cpacs", _mac)
+        if not resolved.get("overrides"):
+            try:
+                from src.config.canonical import load_canonical
+
+                _su2 = (load_canonical() or {}).get("su2_config") or {}
+                if _su2:
+                    resolved["overrides"] = dict(_su2)
+                    logger.info(
+                        "Injected canonical su2_config (%d keys) into configure_from_cpacs",
+                        len(_su2),
+                    )
+            except Exception:  # canonical is a convenience here, never a blocker
+                pass
+
     # Auto-fix SU2 marker names in update_config_entries
     if tool_name == "update_config_entries" and _design_state:
         updates = resolved.get("updates")
