@@ -527,7 +527,27 @@ def run_stat_batch(
     _SKIP = {"placeholder"}
     combos = [c for c in all_combos if "placeholder" not in c.name and c.name not in _SKIP]
     if combo_names:
+        # A requested name that matches nothing used to vanish here without a
+        # word: the sweep simply ran fewer combos than asked for, and the only
+        # signal was a smaller run count noticed hours later. Only an ENTIRELY
+        # empty result said anything. One typo in an 8-combo, 12-hour launch is
+        # a combo silently missing from the paper's data.
+        known = {c.name for c in combos}
+        unmatched = [n for n in combo_names if n not in known]
+        if unmatched:
+            print(
+                f"ERROR: {len(unmatched)} requested combination(s) do not exist: "
+                f"{', '.join(unmatched)}"
+            )
+            print(f"Available: {', '.join(sorted(known))}")
+            return
         combos = [c for c in combos if c.name in combo_names]
+        # Execution follows REGISTRY order, not the order given on the command
+        # line. Print what will actually run so the sequence is never inferred
+        # from watching which combo appears next.
+        print(f"Running {len(combos)} combination(s), in this order:")
+        for i, c in enumerate(combos, 1):
+            print(f"  {i}. {c.name}")
 
     if not combos:
         print("No matching combinations found.")
