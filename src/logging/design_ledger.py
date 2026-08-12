@@ -81,9 +81,22 @@ def _applied_design(traces: dict[str, Any]) -> dict[str, float]:
 
 
 def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
-    """What pinned discipline controls the agent actually passed to estimate_mass,
-    plus a per-control deviation flag vs the canonical baseline. Last-write-wins."""
-    applied: dict[str, str] = {}
+    """Every pinned discipline-control value the agent passed, with a deviation
+    flag if ANY of them disagrees with the canonical baseline.
+
+    This was last-write-wins (``applied[key] = m[-1]``), so only the final call
+    survived and a mid-run change was invisible. Measured (.claude/BUGS.md B20):
+    one run called ``estimate_mass`` with ``wing_mass_method_used: "oas"`` AND
+    ``"flops"`` while canonical pins flops, and the ledger recorded
+    ``{"applied": {"wing_mass_method": "flops"}, "held_constant": true,
+    "deviations": {}}`` -- a clean sheet for a run that used both.
+
+    That is not cosmetic. OAS returned 11,419.8 kg against FLOPS' 7,560.6 kg, a
+    51% difference in wing mass, and that value feeds Aircraft.Wing.MASS_SCALER
+    straight into the mission. A run that silently switched structural method is
+    not comparable with the others, so it must not be recorded as held constant.
+    """
+    observed: dict[str, list[str]] = {}
     for body in (traces or {}).values():
         if not isinstance(body, dict):
             continue
@@ -95,15 +108,38 @@ def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
                 args = tc.get("arguments") or (tc.get("function") or {}).get("arguments")
                 s = args if isinstance(args, str) else json.dumps(args)
                 for key, pat in _CONTROL_KEYS:
-                    m = re.findall(pat, s)
-                    if m:
-                        applied[key] = m[-1].lower()
-    deviations = {
-        k: {"got": applied[k], "expected": exp}
-        for k, exp in _CONTROL_EXPECTED.items()
-        if k in applied and applied[k] != exp
+                    for value in re.findall(pat, s):
+                        seen = observed.setdefault(key, [])
+                        v = value.lower()
+                        if v not in seen:      # order-preserving dedupe
+                            seen.append(v)
+
+    # `applied` keeps its last-value meaning so existing readers are unaffected.
+    applied = {k: vals[-1] for k, vals in observed.items()}
+
+    deviations: dict[str, Any] = {}
+    for key, expected in _CONTROL_EXPECTED.items():
+        values = observed.get(key)
+        if not values:
+            continue
+        offending = [v for v in values if v != expected]
+        if offending:
+            deviations[key] = {
+                "got": applied[key],
+                "expected": expected,
+                "all_values": values,
+                # A run that used several methods is not merely deviant, it is
+                # internally inconsistent -- worth distinguishing when deciding
+                # whether the run is usable at all.
+                "changed_mid_run": len(values) > 1,
+            }
+
+    return {
+        "applied": applied,
+        "observed": observed,
+        "held_constant": not deviations,
+        "deviations": deviations,
     }
-    return {"applied": applied, "held_constant": not deviations, "deviations": deviations}
 
 
 # LEGACY heuristic threshold. Kept ONLY as a fallback for runs where the data
