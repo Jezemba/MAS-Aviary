@@ -376,7 +376,27 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     before the call leaves the framework. Mission_architect never has
     to think about Phase H.
     """
-    if _design_state is None or tool_name != "read_history_csv":
+    if _design_state is None or tool_name not in ("read_history_csv", "run_su2_solver"):
+        return
+
+    # run_su2_solver now reports the coefficients it just computed, so capture
+    # no longer depends on the agent choosing read_history_csv to read results
+    # with. Measured live (sweep 2026-08-12): run 1/16 coupled and run 3/16 did
+    # not, and the ONLY difference in the aero stage was that run 3 reached for
+    # sample_surface_solution instead. SU2 had solved cleanly in both.
+    if tool_name == "run_su2_solver":
+        coeffs = data.get("final_coefficients")
+        if not isinstance(coeffs, dict) or not coeffs:
+            # Not a failure worth flagging here: a solve that errored is already
+            # reported by solver_error/config_errors, and read_history_csv may
+            # still capture later in the same run.
+            return
+        try:
+            cl_f = float(coeffs["CL"])
+            cd_f = float(coeffs["CD"])
+        except (KeyError, TypeError, ValueError):
+            return
+        _store_aero(cl_f, cd_f, source="run_su2_solver")
         return
 
     rows = data.get("rows")
@@ -413,23 +433,34 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         )
         return
 
-    # Capture records what SU2 MEASURED — no judgement here. SU2's inviscid CD is
-    # legitimately near-zero or slightly negative (d'Alembert); the friction term
-    # is added later by aero_cd_to_aviary_drag_factor. Validation belongs at the
-    # injection point, against the consumer's declared bounds.
+    _store_aero(cl_f, cd_f, source="read_history_csv")
 
+
+def _store_aero(cl_f: float, cd_f: float, source: str) -> None:
+    """Write captured coefficients into the typed registry.
+
+    Capture records what SU2 MEASURED -- no judgement here. SU2's inviscid CD is
+    legitimately near-zero or slightly negative (d'Alembert); the friction term
+    is added later by aero_cd_to_aviary_drag_factor. Validation belongs at the
+    injection point, against the consumer's declared bounds.
+
+    ``source`` is the tool the values actually came from, so the registry's
+    provenance stays honest now that there is more than one capture point.
+    """
+    if _design_state is None:
+        return
     # Legacy keys (kept during transition / as fallback source).
     _design_state.data_store["aero_cl_cruise"] = cl_f
     _design_state.data_store["aero_cd_cruise"] = cd_f
     # Typed registry (the coupling contract): SU2 writes its named output variables.
     from src.tools import coupling
-    coupling.put_var(_design_state, "aero.cl_cruise", cl_f, source_tool="read_history_csv")
-    coupling.put_var(_design_state, "aero.cd_cruise", cd_f, source_tool="read_history_csv")
+    coupling.put_var(_design_state, "aero.cl_cruise", cl_f, source_tool=source)
+    coupling.put_var(_design_state, "aero.cd_cruise", cd_f, source_tool=source)
     if cd_f:
-        coupling.put_var(_design_state, "aero.l_over_d", cl_f / cd_f, source_tool="read_history_csv")
+        coupling.put_var(_design_state, "aero.l_over_d", cl_f / cd_f, source_tool=source)
     logger.info(
-        "Captured aero into typed registry: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
-        cl_f, cd_f,
+        "Captured aero into typed registry from %s: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
+        source, cl_f, cd_f,
     )
 
 

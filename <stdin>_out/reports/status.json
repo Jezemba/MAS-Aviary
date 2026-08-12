@@ -1,0 +1,11 @@
+{
+ "Problem": "<stdin>",
+ "Script": "",
+ "Optimizer": "ScipyOptimize_SLSQP",
+ "Number of driver iterations": 8,
+ "Number of model evals": 8,
+ "Number of deriv evals": 7,
+ "Wall clock run time": "00 hours 00 minutes 01 seconds 872.9 milliseconds",
+ "Exit status": "SUCCESS",
+ "Report generation date and time": "2026-05-23 18:51:43 "
+}
