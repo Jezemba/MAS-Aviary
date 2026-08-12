@@ -159,15 +159,31 @@ def main() -> None:
                   f"{cap:>13} {(f'{fuel:.0f}' if fuel else 'None'):>8} "
                   f"{ob['constraints_passed']}/{ob['constraints_total']:<3} {str(noop):>5}")
 
-    # ---- why uncoupled ---------------------------------------------------
+    # ---- coupling, split by whether it was actually MEASURED -------------
+    # `cd_threshold_fallback` is not a measurement. It is the mis-calibrated
+    # cruise_cd heuristic the ledger itself flags as unreliable ("under-reports
+    # coupling; treat as unreliable"), used when data-plane state is missing.
+    # Counting those rows as uncoupled is precisely the B1 false negative that
+    # produced the original "7 of 8 combos fail to couple" claim, so they are
+    # reported as NOT MEASURED and excluded from the rate.
+    reliable = [r for r in rows if r["aero_coupling"].get("detection") == "data_plane"]
+    unreliable = [r for r in rows if r["aero_coupling"].get("detection") != "data_plane"]
+    rel_coupled = sum(1 for r in reliable if r["aero_coupling"].get("coupled"))
+
+    print(f"\ncoupling (reliably measured only): {rel_coupled}/{len(reliable)}"
+          f"{f' ({100 * rel_coupled / len(reliable):.0f}%)' if reliable else ''}")
     reasons = Counter(
         r["aero_coupling"].get("aero_coupling_status") or "unknown"
-        for r in rows if not r["aero_coupling"].get("coupled")
+        for r in reliable if not r["aero_coupling"].get("coupled")
     )
-    print(f"\ncoupling: {coupled_total}/{len(rows)} "
-          f"({100 * coupled_total / max(len(rows), 1):.0f}%)")
     for reason, n in reasons.most_common():
         print(f"  uncoupled - {reason}: {n}")
+    if unreliable:
+        print(f"  NOT MEASURED (detection fell back): {len(unreliable)}"
+              "   <- excluded; the fallback under-reports coupling")
+        for r in unreliable:
+            print(f"     {r['combo'][:44]} lk{r['chain'].get('link')} "
+                  f"detection={r['aero_coupling'].get('detection')}")
 
     # ---- B23: how many runs depended on the new capture path --------------
     caps = Counter(capture_source(t) for _, t in runs)
