@@ -122,3 +122,50 @@ class TestOtherToolsUnaffected:
         _capture_geometry()
         ds = __import__("src.tools.data_plane", fromlist=["x"]).get_design_state()
         assert coupling.get_var(ds, "geom.reference_area") == pytest.approx(65.985)
+
+
+class TestSessionCreationGetsTheSameInjections:
+    """`create_su2_session` applies configuration at creation (su2-mcp 70e75cc),
+    so it must receive the SAME injections as `configure_from_cpacs`.
+
+    Wiring only `cpacs_file_path` through was not enough. Observed live
+    (remaining5b run 1/10): the session auto-configured with geometry references
+    and markers but no flight numerics, and SU2 answered
+
+        "Config file is missing the CONV_NUM_METHOD_FLOW option."
+
+    The response named configure_from_cpacs as the remedy and the caller
+    returned final_answer instead -- the tool-switch failure measured in B33. A
+    session that arrives half-configured is still a session that cannot solve.
+    """
+
+    def test_canonical_numerics_are_injected(self):
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        ov = out.get("overrides") or {}
+        assert ov, "create_su2_session must receive the canonical su2_config"
+        for required in ("CONV_NUM_METHOD_FLOW", "TIME_DISCRE_FLOW", "CFL_NUMBER", "ITER"):
+            assert required in ov, f"{required} missing -- SU2 rejects the config without it"
+
+    def test_the_exact_option_su2_complained_about(self):
+        ov = resolve_request("create_su2_session", {"base_name": "f25"}).get("overrides") or {}
+        assert ov.get("CONV_NUM_METHOD_FLOW")
+
+    def test_computed_references_are_injected(self):
+        _capture_geometry(reference_area=58.505, mac_length=3.282)
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert out["ref_area"] == pytest.approx(58.505)
+        assert out["ref_length"] == pytest.approx(3.282)
+
+    def test_caller_supplied_values_still_win(self):
+        _capture_geometry()
+        out = resolve_request(
+            "create_su2_session", {"base_name": "f25", "ref_area": 200.0, "overrides": {"ITER": 7}}
+        )
+        assert out["ref_area"] == 200.0
+        assert out["overrides"] == {"ITER": 7}
+
+    def test_no_su2_metadata_leaks_in(self):
+        """`ref_from_upstream` is a directive, not an SU2 option."""
+        ov = resolve_request("create_su2_session", {"base_name": "f25"}).get("overrides") or {}
+        assert "ref_from_upstream" not in ov
+        assert "REF_FROM_UPSTREAM" not in {str(k).upper() for k in ov}

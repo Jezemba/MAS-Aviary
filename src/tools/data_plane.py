@@ -866,19 +866,26 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     #    wing and reproduce the wrong-CL failure (B12).
     #
     # Both already live in the typed registry, captured from get_wing_summary.
-    if tool_name == "configure_from_cpacs" and _design_state:
+    # create_su2_session accepts the SAME configuration arguments and applies
+    # them at creation (su2-mcp 70e75cc). It must therefore receive the SAME
+    # injections, or a session auto-configures with geometry and markers but NO
+    # flight numerics -- observed live: SU2 answered "Config file is missing the
+    # CONV_NUM_METHOD_FLOW option", the caller was told to call
+    # configure_from_cpacs, and it returned final_answer instead. Wiring the
+    # path in without the overrides made the session better but still unusable.
+    if tool_name in ("configure_from_cpacs", "create_su2_session") and _design_state:
         from src.tools import coupling as _cpl
 
         if resolved.get("ref_area") is None:
             _area = _cpl.get_var(_design_state, "geom.reference_area")
             if _area:
                 resolved["ref_area"] = float(_area)
-                logger.info("Injected computed REF_AREA=%.3f into configure_from_cpacs", _area)
+                logger.info("Injected computed REF_AREA=%.3f into %s", _area, tool_name)
         if resolved.get("ref_length") is None:
             _mac = _cpl.get_var(_design_state, "geom.mac_length")
             if _mac:
                 resolved["ref_length"] = float(_mac)
-                logger.info("Injected computed REF_LENGTH=%.3f into configure_from_cpacs", _mac)
+                logger.info("Injected computed REF_LENGTH=%.3f into %s", _mac, tool_name)
         if not resolved.get("overrides"):
             try:
                 import json as _json
@@ -896,8 +903,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 if _su2:
                     resolved["overrides"] = _su2
                     logger.info(
-                        "Injected canonical su2_config (%d keys) into configure_from_cpacs",
-                        len(_su2),
+                        "Injected canonical su2_config (%d keys) into %s",
+                        len(_su2), tool_name,
                     )
             except Exception:  # canonical is a convenience here, never a blocker
                 pass
