@@ -31,13 +31,27 @@ CALL_RE = re.compile(r"Calling tool: '([a-z_0-9]+)' with arguments: (\{.{0,300})
 RUN_HDR_RE = re.compile(r"^\[(\d+)/(\d+)\] repeat=(\d+) combo=(\S+)", re.M)
 
 
-def split_runs(log_text: str) -> list[tuple[str, str]]:
-    """Split the sweep log into (combo, text) per run, in order."""
+OUTCOME_RE = re.compile(r"(?:\u2192|->)\s+(success|failed)\s*\|")
+
+
+def split_runs(log_text: str, finished_only: bool = True) -> list[tuple[str, str]]:
+    """Split the sweep log into (combo, text) per run, in order.
+
+    Only runs that have actually FINISHED are returned by default. An
+    in-progress run has no ledger row yet, and the backward scan that matches
+    rows to runs would then reach past this sweep into an older one -- which it
+    did: an in-flight orchestrated_staged_pipeline was attributed a 24908 kg
+    result from a previous sweep. Analysing partial data is how a stale number
+    ends up in a table.
+    """
     marks = [(m.start(), m.group(4)) for m in RUN_HDR_RE.finditer(log_text)]
     out = []
     for i, (pos, combo) in enumerate(marks):
         end = marks[i + 1][0] if i + 1 < len(marks) else len(log_text)
-        out.append((combo, log_text[pos:end]))
+        text = log_text[pos:end]
+        if finished_only and not OUTCOME_RE.search(text):
+            continue
+        out.append((combo, text))
     return out
 
 
