@@ -31,7 +31,8 @@ CALL_RE = re.compile(r"Calling tool: '([a-z_0-9]+)' with arguments: (\{.{0,300})
 RUN_HDR_RE = re.compile(r"^\[(\d+)/(\d+)\] repeat=(\d+) combo=(\S+)", re.M)
 
 
-OUTCOME_RE = re.compile(r"(?:\u2192|->)\s+(success|failed)\s*\|")
+OUTCOME_RE = re.compile(r"(?:\u2192|->)\s+(success|failed)\s*\||FAILED after \d+ attempts?:")
+FAILED_RE = re.compile(r"FAILED after \d+ attempts?: (.+)")
 
 
 def split_runs(log_text: str, finished_only: bool = True) -> list[tuple[str, str]]:
@@ -117,8 +118,15 @@ def main() -> None:
         # of this script attributed a discarded sweep's networked run to the
         # live one. Match the log's (combo, link) sequence instead, newest
         # occurrence first, so only this sweep's rows are analysed.
+        # Only SUCCESSFUL runs have a ledger row. Matching a failed run would
+        # reach back into an older sweep for a (combo, link) that this sweep
+        # never produced -- it attributed a discarded sweep's 7389 kg no-op run
+        # to a failed orchestrated run here. Failures are counted above and
+        # matched to nothing.
         wanted = []
         for combo, text in runs:
+            if FAILED_RE.search(text):
+                continue
             m = re.search(r"chain link (\d+)/", text)
             wanted.append((combo, int(m.group(1)) - 1 if m else None))
         rows = []
@@ -138,7 +146,23 @@ def main() -> None:
     for r in rows:
         by_combo[r["combo"]].append(r)
 
-    print(f"runs in log: {len(runs)}   ledger rows analysed: {len(rows)}\n")
+    # A failed run writes no ledger row, so it is invisible to every
+    # ledger-driven statistic below. Counting only what completed reports a
+    # cleaner experiment than actually ran -- exactly the silent omission this
+    # codebase keeps producing -- so failures are surfaced first.
+    failures = []
+    for combo, text in runs:
+        m = FAILED_RE.search(text)
+        if m:
+            failures.append((combo, m.group(1).strip()[:80]))
+
+    print(f"runs in log: {len(runs)}   ledger rows analysed: {len(rows)}   "
+          f"FAILED: {len(failures)}\n")
+    if failures:
+        print("failed runs (no ledger row, excluded from every figure below):")
+        for combo, why in failures:
+            print(f"  {combo[:46]:46} {why}")
+        print()
 
     # ---- per combo -------------------------------------------------------
     hdr = f"{'combo':44} {'lk':>2} {'coupled':>7} {'capture':>13} {'fuel':>8} {'cons':>5} {'noop':>5}"
