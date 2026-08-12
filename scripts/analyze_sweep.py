@@ -264,6 +264,62 @@ def main() -> None:
         print(f"  coupled - uncoupled = {delta:+.0f} kg"
               f"{'   <- coupling still penalised (B17 open)' if delta > 0 else ''}")
 
+    # ---- B17 mechanism: WHICH SIDE of aviary's default does SU2 land on? ----
+    # "Coupling makes the objective worse" and "SU2's drag exceeds aviary's
+    # default drag" are different claims with different fixes. The drag factor
+    # is the discriminator: >1 means the coupled run flies MORE drag than the
+    # uncoupled baseline, so higher fuel is the physics, not a coupling defect.
+    couples = [
+        (r["combo"], r["chain"].get("link"),
+         r["aero_coupling"].get("injected_drag_factor"),
+         r["aero_coupling"].get("injected_cd"),
+         r["outcomes"].get("fuel_burned_kg"))
+        for r in rows if r["aero_coupling"].get("coupled")
+    ]
+    couples = [c for c in couples if c[2] is not None]
+    if couples:
+        print("\ndrag factor on coupled runs (B17 mechanism):")
+        print(f"  {'combo':40} {'lk':>2} {'drag_f':>7} {'cd':>10} {'fuel':>8}")
+        for combo, link, df, cd, fuel in sorted(couples, key=lambda x: x[2]):
+            flag = "  penalised" if df > 1.0 else "  helped"
+            print(f"  {combo[:40]:40} {link:>2} {df:>7.4f} "
+                  f"{(cd if cd is not None else 0):>10.6f} "
+                  f"{(fuel or 0):>8.0f}{flag}")
+        above = [c for c in couples if c[2] > 1.0]
+        print(f"  {len(above)}/{len(couples)} coupled runs fly MORE drag than aviary's default")
+        # Does the drag factor actually ORDER the fuel? Measured 2026-08-12: no.
+        # drag_f 0.9505 -> 15853 kg while 0.9629 -> 13917 kg, and the LOWEST-fuel
+        # run (12265 kg) is one of the "penalised" ones. So the drag factor is a
+        # contributor, not the driver, and calling B17 a calibration problem on
+        # this evidence would be wrong.
+        ranked = sorted(couples, key=lambda c: c[2])
+        fuels_in_df_order = [c[4] for c in ranked if c[4]]
+        monotonic = all(a <= b for a, b in zip(fuels_in_df_order, fuels_in_df_order[1:]))
+        print(f"  fuel rises monotonically with drag factor: {monotonic}")
+        if not monotonic:
+            print("  -> the drag factor does NOT order the fuel, so B17 cannot be read off it")
+
+    # ---- B17 confounder: coupled runs are the ones that CHANGED the design ---
+    # Coupling correlates with having done real geometry work, and a poor design
+    # choice costs far more fuel than the drag factor does. Comparing coupled vs
+    # uncoupled fuel therefore compares design choices, not coupling.
+    def _ar(r):
+        return (r.get("design_applied") or {}).get("aspect_ratio")
+
+    changed = [r for r in rows if r.get("design_applied")]
+    unchanged = [r for r in rows if not r.get("design_applied")]
+    print(f"\ndesign engagement: {len(changed)} runs changed the design, "
+          f"{len(unchanged)} left it untouched")
+    if changed:
+        ars = [(_ar(r), r["outcomes"].get("fuel_burned_kg")) for r in changed]
+        ars = [(a, f) for a, f in ars if a and f]
+        for a, f in sorted(ars):
+            print(f"  aspect_ratio {a:>5.1f} -> fuel {f:>8.0f}")
+        if len({a for a, _ in ars}) > 1:
+            print("  -> fuel tracks the DESIGN, so a coupled-vs-uncoupled fuel comparison is "
+                  "confounded: it compares design choices, not the effect of coupling.")
+            print("  -> the clean test is the SAME design flown with and without injection.")
+
 
 if __name__ == "__main__":
     main()
