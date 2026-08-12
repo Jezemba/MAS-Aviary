@@ -110,6 +110,37 @@ class TestLegitimateCallsPassThrough:
         assert unresolved_ref_error("set_mesh", {"mesh_base64": "<PLACEHOLDER>"}) is None
 
 
+class TestOnlyRealPayloadsAreSuggested:
+    """Filtering available refs on "__" alone surfaced internal bookkeeping. An
+    agent that had skipped generate_volume_mesh was told its available reference
+    was 'analysis_vars__src' — the typed registry's source map — i.e. invited to
+    pass variable provenance as a mesh. Worse than no suggestion, because it
+    looks actionable."""
+
+    def test_bookkeeping_keys_are_not_offered(self):
+        from src.tools.data_plane import get_design_state
+
+        ds = get_design_state()
+        ds.data_store["analysis_vars__src"] = {"aero.cl_cruise": "read_history_csv"}
+        err = unresolved_ref_error("set_mesh", {"mesh_base64": "exported"})
+        assert "analysis_vars__src" not in err["error"]
+
+    def test_no_payload_yet_names_the_producing_step(self):
+        from src.coordination.design_state import DesignState
+
+        ds = DesignState()
+        ds.data_store["analysis_vars__src"] = {"x": "y"}
+        init_data_plane(ds, TOOL_SERVER_MAP)
+        err = unresolved_ref_error("set_mesh", {"mesh_base64": "exported"})
+        assert err is not None
+        assert "generate_volume_mesh" in err["error"]
+        assert "none exists yet" in err["error"]
+
+    def test_real_payload_is_still_offered(self):
+        err = unresolved_ref_error("set_mesh", {"mesh_base64": "exported"})
+        assert REAL_KEY in err["error"]
+
+
 class TestMiddlewareBlocksBeforeServer:
     def test_placeholder_never_reaches_the_tool(self):
         from src.tools.type_coercion import apply_coercion_to_tools

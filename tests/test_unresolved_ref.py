@@ -33,8 +33,8 @@ TYPO_KEY = "generated_volume_mesh__mesh_base64"
 @pytest.fixture(autouse=True)
 def _state():
     ds = DesignState()
-    ds.data_store[REAL_KEY] = "TkRJTUU9Mw=="  # stand-in payload
-    ds.data_store["export_component_mesh__mesh_base64"] = "c29saWQg"
+    ds.data_store[REAL_KEY] = "TkRJTUU9Mw==" * 200  # realistic payload size
+    ds.data_store["export_component_mesh__mesh_base64"] = "c29saWQg" * 200
     init_data_plane(ds, TOOL_SERVER_MAP)
     yield ds
     init_data_plane(DesignState(), TOOL_SERVER_MAP)

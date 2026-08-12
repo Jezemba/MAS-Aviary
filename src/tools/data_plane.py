@@ -1029,9 +1029,34 @@ def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
         if reason is None and not _REF_SHAPE_RE.match(value.strip()):
             continue
 
-        available = sorted(k for k in store if isinstance(k, str) and "__" in k)
+        # Offer only refs that actually hold a PAYLOAD. Filtering on "__" alone
+        # surfaced internal bookkeeping keys: an agent that skipped
+        # generate_volume_mesh was told its available reference was
+        # 'analysis_vars__src' — the typed registry's source map — i.e. invited
+        # to pass a dict of variable provenance as a mesh. Worse than no
+        # suggestion, because it looks actionable.
+        available = sorted(
+            k
+            for k, v in store.items()
+            if isinstance(k, str)
+            and "__" in k
+            and isinstance(v, str)
+            and len(v) >= _MIN_PAYLOAD_CHARS
+        )
         if not available:
-            continue
+            # Nothing stored can satisfy this argument. Say so plainly and name
+            # the step that produces it, rather than inventing a substitute.
+            return {
+                "success": False,
+                "error_code": "UNRESOLVED_REF",
+                "error": (
+                    f"Argument '{key}' needs a stored payload, but none exists yet "
+                    f"(got '{value.strip()[:60]}'). Nothing has produced a payload in "
+                    "this session — run the step that generates it first (for a mesh, "
+                    "generate_volume_mesh), then pass the reference it returns. Do NOT "
+                    "type the payload yourself. This call was NOT sent to the server."
+                ),
+            }
 
         import difflib
 
