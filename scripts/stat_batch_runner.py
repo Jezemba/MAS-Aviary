@@ -443,8 +443,19 @@ def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cov
         from src.runners.batch_runner import run_combination
 
         result = run_combination(combo, task, config, session_id=session_id)
+        # The result alone is NOT enough. The design ledger's authoritative
+        # coupling check reads the data-plane state via get_design_state() in
+        # the PARENT, and that state lives in THIS process. Send a bounded
+        # snapshot back with the result, or the parent scores every run with the
+        # cruise_cd heuristic it flags as unreliable.
         try:
-            pipe.send(("ok", result))
+            from src.tools.data_plane import export_state_summary
+
+            state_summary = export_state_summary()
+        except Exception:
+            state_summary = {}
+        try:
+            pipe.send(("ok", result, state_summary))
         except Exception as exc:
             # The run itself succeeded; only the handoff failed. Say exactly
             # that, so a serialisation problem is never mistaken for a failed
@@ -518,7 +529,16 @@ def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=N
             f"(exitcode={proc.exitcode}). This is an infrastructure failure, "
             "not a failed design run -- check for an OOM kill."
         )
-    kind, value = payload
+    kind, value = payload[0], payload[1]
+    if kind == "ok":
+        # Restore the child's data-plane state before the caller writes the
+        # ledger; without this the run's coupling is unmeasurable.
+        try:
+            from src.tools.data_plane import install_state_summary
+
+            install_state_summary(payload[2] if len(payload) > 2 else {})
+        except Exception:  # pragma: no cover - never fail a good run on this
+            pass
     if kind == "error":
         raise value
     if kind == "unsendable":

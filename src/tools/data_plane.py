@@ -186,6 +186,62 @@ def get_design_state():
     return _design_state
 
 
+# A DesignState may hold mesh payloads of tens of MB, so state that has to
+# cross a process boundary is bounded by SIZE rather than by a hand-written key
+# list. Hand-enumerating keys is how `_PAYLOAD_ARGS` came to miss `initial_mesh`
+# earlier today; a rule cannot fall behind the code the same way.
+_MAX_EXPORT_CHARS = 4096
+
+
+def export_state_summary() -> dict:
+    """Small, picklable snapshot of the data-plane state.
+
+    B16 moved each run into a subprocess so a timed-out run's GPU memory could
+    actually be reclaimed. That severed a channel nobody had written down: the
+    design ledger's authoritative coupling check calls ``get_design_state()`` in
+    the PARENT, after the run returns, while the state now lives and dies in the
+    CHILD. Verified directly -- a child that sets ``aero_coupling_status`` leaves
+    the parent reading ``None`` -- so every run fell back to the cruise_cd
+    heuristic the ledger itself flags as unreliable, and the coupling column of
+    an entire sweep became unusable.
+
+    Returning the result was never sufficient; the state the ledger reads has to
+    come back too.
+    """
+    if _design_state is None:
+        return {}
+    out: dict = {}
+    for key, value in (getattr(_design_state, "data_store", {}) or {}).items():
+        if value is None or isinstance(value, (int, float, bool)):
+            out[key] = value
+        elif isinstance(value, str):
+            if len(value) <= _MAX_EXPORT_CHARS:
+                out[key] = value
+        elif isinstance(value, (list, dict)):
+            try:
+                if len(json.dumps(value, default=str)) <= _MAX_EXPORT_CHARS:
+                    out[key] = value
+            except Exception:  # pragma: no cover - never fail while exporting
+                continue
+    return out
+
+
+def install_state_summary(summary: dict) -> None:
+    """Merge a child's state snapshot into this process's DesignState.
+
+    Called by the parent after a subprocess run returns, so `append_record` sees
+    what actually happened instead of an empty state.
+    """
+    global _design_state
+    if not summary:
+        return
+    if _design_state is None:
+        from src.coordination.design_state import DesignState
+
+        _design_state = DesignState()
+    _design_state.data_store.update(summary)
+
+
 def reset_design_state():
     """Drop the process-global DesignState so the NEXT link starts clean.
 
