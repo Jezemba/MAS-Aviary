@@ -105,11 +105,20 @@ class TestCanonicalNumericsInjected:
             assert re.match(r"^[A-Z][A-Z0-9_]*$", str(k)), f"non-SU2 key injected: {k}"
 
     def test_agent_supplied_overrides_are_respected(self):
+        """The caller's value wins -- but no longer by DISPLACING canonical.
+
+        This asserted `overrides == {"ITER": 7}`, i.e. the caller's dict
+        replaced the pinned baseline wholesale. That is the B41 defect: any
+        caller override silently dropped the cruise state the experiment pins.
+        Canonical is now a floor, so the caller's value wins on its own key and
+        everything else survives.
+        """
         out = resolve_request(
             "configure_from_cpacs",
             {"cpacs_file_path": "/tmp/f25.xml", "overrides": {"ITER": 7}},
         )
-        assert out["overrides"] == {"ITER": 7}
+        assert out["overrides"]["ITER"] == 7
+        assert "CONV_NUM_METHOD_FLOW" in out["overrides"]
 
 
 class TestOtherToolsUnaffected:
@@ -162,7 +171,12 @@ class TestSessionCreationGetsTheSameInjections:
             "create_su2_session", {"base_name": "f25", "ref_area": 200.0, "overrides": {"ITER": 7}}
         )
         assert out["ref_area"] == 200.0
-        assert out["overrides"] == {"ITER": 7}
+        # Canonical is a floor (B41): the caller's ITER wins on its own key,
+        # while the pinned numerics it did not mention survive. Asserting
+        # equality here encoded the replace semantics that silently dropped the
+        # cruise state.
+        assert out["overrides"]["ITER"] == 7
+        assert "CONV_NUM_METHOD_FLOW" in out["overrides"]
 
     def test_no_su2_metadata_leaks_in(self):
         """`ref_from_upstream` is a directive, not an SU2 option."""
@@ -232,3 +246,53 @@ class TestMeshIsInjectedIntoSessionCreation:
         self._store_mesh()
         out = resolve_request("run_su2_solver", {"session_id": "s"})
         assert "initial_mesh" not in out
+
+
+class TestCanonicalIsAFloorNotAFallback:
+    """Agent-supplied overrides must not displace the pinned baseline.
+
+    B41. The canonical su2_config was injected only when `overrides` was EMPTY,
+    so any caller-supplied overrides bypassed it entirely -- hand-writing config
+    THROUGH the tool built to prevent hand-written config. Observed live
+    2026-08-12:
+
+        overrides={'MACH': 0.78, 'PHYSICAL_PROBLEM': 'EULER', 'SOLVER': 'EULER'}
+
+    six config rejections and no solve; and on calls that DID configure, the
+    pinned cruise state was silently replaced. The experiment's premise is
+    identical numerics across every combo, so a run whose numerics were quietly
+    swapped is not comparable -- the same class of defect as B20.
+    """
+
+    def test_canonical_survives_a_caller_override(self):
+        out = resolve_request(
+            "configure_from_cpacs",
+            {"cpacs_file_path": "/tmp/f25.xml", "overrides": {"ITER": 7}},
+        )
+        ov = out["overrides"]
+        assert ov["ITER"] == 7, "the caller's deliberate override must win"
+        for pinned in ("CONV_NUM_METHOD_FLOW", "TIME_DISCRE_FLOW", "CFL_NUMBER",
+                       "FREESTREAM_PRESSURE", "MACH_NUMBER"):
+            assert pinned in ov, f"{pinned} was dropped by a caller override"
+
+    def test_the_observed_override_no_longer_drops_the_cruise_state(self):
+        out = resolve_request(
+            "configure_from_cpacs",
+            {"cpacs_file_path": "/tmp/f25.xml",
+             "overrides": {"MACH": 0.78, "SOLVER": "EULER"}},
+        )
+        ov = out["overrides"]
+        assert "FREESTREAM_PRESSURE" in ov and "FREESTREAM_TEMPERATURE" in ov
+        assert ov["SOLVER"] == "EULER"
+
+    def test_same_floor_applies_to_session_creation(self):
+        out = resolve_request(
+            "create_su2_session", {"base_name": "f25", "overrides": {"ITER": 3}}
+        )
+        ov = out["overrides"]
+        assert ov["ITER"] == 3
+        assert "CONV_NUM_METHOD_FLOW" in ov
+
+    def test_no_caller_overrides_still_gets_canonical(self):
+        ov = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/f25.xml"})["overrides"]
+        assert "CONV_NUM_METHOD_FLOW" in ov

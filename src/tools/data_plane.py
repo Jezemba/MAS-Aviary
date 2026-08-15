@@ -987,7 +987,20 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             if _mac:
                 resolved["ref_length"] = float(_mac)
                 logger.info("Injected computed REF_LENGTH=%.3f into %s", _mac, tool_name)
-        if not resolved.get("overrides"):
+        # Canonical is a FLOOR, not a fallback. This used to inject only when
+        # `overrides` was empty, so any agent-supplied overrides bypassed the
+        # canonical baseline entirely -- hand-writing config THROUGH the tool
+        # built to prevent hand-written config. Observed live 2026-08-12:
+        #   overrides={'MACH': 0.78, 'PHYSICAL_PROBLEM': 'EULER', ...}
+        # six config rejections, no solve, and on the calls that DID configure,
+        # the pinned cruise state was silently replaced. The experiment's premise
+        # is identical numerics across every combo, so a run whose numerics were
+        # quietly swapped is not comparable -- the same class as B20.
+        #
+        # Canonical is applied underneath; the caller's values layer on top, so a
+        # deliberate override still works but omissions cannot drop a pinned
+        # control.
+        if True:
             try:
                 import json as _json
 
@@ -1002,10 +1015,14 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 # exists to eliminate.
                 _su2 = _json.loads(render_snippets()["SU2_CONFIG"])
                 if _su2:
-                    resolved["overrides"] = _su2
+                    caller = resolved.get("overrides") or {}
+                    merged = dict(_su2)
+                    merged.update(caller)
+                    resolved["overrides"] = merged
                     logger.info(
-                        "Injected canonical su2_config (%d keys) into %s",
-                        len(_su2), tool_name,
+                        "Applied canonical su2_config (%d keys) under %d caller "
+                        "override(s) for %s",
+                        len(_su2), len(caller), tool_name,
                     )
             except Exception:  # canonical is a convenience here, never a blocker
                 pass
