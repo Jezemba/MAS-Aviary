@@ -1,4 +1,15 @@
-"""Declared phases must actually run before a run can be called complete.
+"""The orchestrator must be TOLD about an unrun phase -- not forced to run it.
+
+Working out the stage order is precisely what an orchestrated structure is being
+measured on, so enforcing it in the framework would replace the variable under
+study with our own sequencing. orchestrated+graph_routed already couples 4/6
+because its GRAPH supplies that structure legitimately, while
+orchestrated+iterative_feedback (0/8) and orchestrated+staged_pipeline (0/7)
+must infer it -- and the same handlers couple 6/8 and 2/6 under sequential.
+
+So the feedback fires ONCE and hands the turn back. If the orchestrator concludes
+anyway, the run ends and `_phase_gap_ignored` records that it was told and chose
+to finish -- a coordination observation, not a defect to paper over.
 
 `required_tool_phases` in the orchestrator agents YAML names the phases a run
 must complete and the tools each needs. It was used ONLY to build a prompt hint;
@@ -52,14 +63,17 @@ def _strategy():
     s._phase = "creation"
     s._termination_keyword = "TASK_COMPLETE"
     s._pending_phase_note = None
+    s._phase_gap_reported = False
+    s._phase_gap_pending = None
+    s._phase_gap_ignored = None
     s._max_turns = 100
     s._context = _Ctx()
     return s
 
 
-class TestCompletionIsRefusedWhilePhasesRemain:
-    def test_the_observed_failure_is_now_refused(self):
-        """Geometry + aero done, mission never run -> not complete."""
+class TestTheOrchestratorIsInformedOnce:
+    def test_first_completion_attempt_is_handed_back(self):
+        """Geometry + aero done, mission never run -> one chance to reconsider."""
         s = _strategy()
         history = [
             _msg("geo", ["open_cpacs", "generate_volume_mesh"]),
@@ -68,7 +82,19 @@ class TestCompletionIsRefusedWhilePhasesRemain:
         ]
         assert s.is_complete(history, {}) is False
 
-    def test_the_refusal_names_the_missing_phase_and_its_tools(self):
+    def test_a_second_attempt_is_allowed_through(self):
+        """Told once, the orchestrator may still decide to finish -- and that
+        decision is the measurement."""
+        s = _strategy()
+        history = [
+            _msg("geo", ["open_cpacs", "generate_volume_mesh"]),
+            _msg("TASK_COMPLETE"),
+        ]
+        assert s.is_complete(history, {}) is False      # informed
+        assert s.is_complete(history, {}) is True       # its call
+        assert s._phase_gap_ignored == "aerodynamic_analysis"
+
+    def test_the_note_names_the_missing_phase_and_its_tools(self):
         s = _strategy()
         history = [
             _msg("geo", ["open_cpacs", "generate_volume_mesh"]),

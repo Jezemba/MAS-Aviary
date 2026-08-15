@@ -105,6 +105,9 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._worker_max_steps: int = 8
         self._termination_keyword: str = "TASK_COMPLETE"
         self._pending_phase_note: str | None = None
+        self._phase_gap_reported: bool = False
+        self._phase_gap_pending: str | None = None
+        self._phase_gap_ignored: str | None = None
         self._max_turns: int = 30
         self._stall_threshold: int = 2  # consecutive no-progress turns before terminating
 
@@ -412,14 +415,37 @@ class OrchestratedStrategy(CoordinationStrategy):
                 # orchestrated failure too (B1-ORCH: everything assigned up front,
                 # mission executing before geometry and aero exist).
                 pending, tools = self._next_required_phase(history)
-                if pending is not None and len(history) < self._max_turns:
+                # Only worth saying while a turn remains to act on it. (This
+                # guard was originally added for the enforcing version, where it
+                # was wrong -- it disabled the check exactly when it mattered.
+                # For advisory feedback it is right: informing an orchestrator
+                # that cannot act only delays termination.)
+                _turns_left = len(history) < self._max_turns
+                if pending is not None and not self._phase_gap_reported and _turns_left:
+                    # INFORM, then let the orchestrator decide. Working out the
+                    # stage order is precisely what an orchestrated structure is
+                    # being measured on, so enforcing it here would replace the
+                    # variable under study with the framework's own sequencing --
+                    # and orchestrated+graph_routed already couples 4/6 because
+                    # its GRAPH supplies that structure legitimately.
+                    #
+                    # So this fires ONCE: the orchestrator is told what is
+                    # missing and given the turn back. If it concludes anyway,
+                    # the run ends and `phase_gap_ignored` records that it was
+                    # told and chose to finish -- which is a coordination
+                    # observation, not a defect to paper over.
+                    self._phase_gap_reported = True
+                    self._phase_gap_pending = pending
                     self._pending_phase_note = (
-                        f"Not complete: the '{pending}' phase has not run. It "
-                        f"requires {', '.join(tools)}. Delegate that phase before "
-                        "finishing; phases are listed in dependency order, so "
-                        "this is the next one to do."
+                        f"Before concluding: the '{pending}' phase has not run "
+                        f"(it uses {', '.join(tools)}), so the result will be "
+                        "missing its output. Phases are listed in dependency "
+                        "order. Delegate it if the task needs it, or state why "
+                        "you are finishing without it."
                     )
                     return False
+                if pending is not None:
+                    self._phase_gap_ignored = pending
                 return True
 
         # Check max turns.
@@ -769,6 +795,24 @@ class OrchestratedStrategy(CoordinationStrategy):
               next one. The orchestrator's choice is implicit in
               which agent_name it assign_tasks for next."""
         parts: list[str] = []
+        # Phase status must appear in BOTH context builders. It was added only
+        # to _format_context_for_orchestrator, and staged_pipeline runs in
+        # per_stage lifecycle mode and never calls that one -- so the feedback
+        # never arrived (B42). This is information for the orchestrator to act
+        # on, not a constraint: deciding the stage order is what the structure
+        # is being measured on.
+        if self._pending_phase_note:
+            parts.append(self._pending_phase_note)
+            self._pending_phase_note = None
+        _phases = (self._context.required_tool_phases if self._context else None) or {}
+        if _phases:
+            _done = self._phases_done(history)
+            _pending, _ = self._next_required_phase(history)
+            parts.append(
+                "PHASES run so far: "
+                + (", ".join(p for p in _phases if p in _done) or "none")
+                + ("; not yet run: " + _pending if _pending else "; all phases have run")
+            )
         stages = self._pipeline_stage_names or []
         total = len(stages)
 
@@ -1187,8 +1231,8 @@ class OrchestratedStrategy(CoordinationStrategy):
             done = self._phases_done(history)
             pending, _ = self._next_required_phase(history)
             lines.append(
-                "PHASES done: " + (", ".join(p for p in phases if p in done) or "none")
-                + ("; next: " + pending if pending else "; all required phases complete")
+                "PHASES run so far: " + (", ".join(p for p in phases if p in done) or "none")
+                + ("; not yet run: " + pending if pending else "; all phases have run")
             )
         for msg in history:
             if not isinstance(msg, AgentMessage):
