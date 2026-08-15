@@ -119,8 +119,16 @@ mdo_f25_graph:
 
         1. Call create_su2_session(base_name="f25_cruise") → SU2_SESSION_ID.
         2. Call set_mesh(session_id=<SU2_SESSION_ID>,
-             mesh_base64=<MESH_BASE64 ref from GEOMETRY_SETUP>,
+             mesh_base64="generate_volume_mesh__mesh_base64",
              mesh_file_name="mesh.su2", update_config=True).
+             # Pass that reference KEY verbatim, in quotes. It is not a
+             # placeholder to fill in. This line used to read
+             # `<MESH_BASE64 ref from GEOMETRY_SETUP>` and agents typed it
+             # literally -- observed repeatedly on 2026-08-12, and every graph
+             # revisit to this state re-introduced it, so the loop multiplied
+             # the mistake. The data plane also supplies the mesh to
+             # create_su2_session automatically (B36), so this call is a
+             # fallback, not the primary path.
         3. Call configure_from_cpacs(session_id=<SU2_SESSION_ID>,
              cpacs_file_path=<the CPACS you opened>):
              # Do NOT hand-write the SU2 config. SU2 rejected 80-91% of

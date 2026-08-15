@@ -100,8 +100,13 @@ mdo_f25_pipeline:
 
         Required tool sequence:
           1. create_su2_session(base_name="f25_cruise")
-          2. set_mesh(session_id=<su2 sid>, mesh_base64=<MESH_BASE64 ref
-             from previous stage's output>, update_config=True)
+          2. set_mesh(session_id=<su2 sid>,
+             mesh_base64="generate_volume_mesh__mesh_base64", update_config=True)
+             # Pass that reference KEY verbatim, in quotes -- it is not a
+             # placeholder to fill in. The angle-bracket form here was typed
+             # literally by agents (observed 2026-08-12); the data plane also
+             # supplies the mesh to create_su2_session automatically (B36), so
+             # this call is a fallback rather than the primary path.
           3. configure_from_cpacs(session_id=<su2 sid>,
              cpacs_file_path=<the CPACS you opened>):
              # Do NOT hand-write the SU2 config. SU2 rejected 80-91% of
