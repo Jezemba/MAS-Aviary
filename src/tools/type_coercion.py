@@ -318,6 +318,15 @@ def apply_coercion_to_tools(tools: list[Tool]) -> list[Tool]:
     Call this after loading tools from MCP but before passing them
     to agents.  Modifies tools in-place.
     """
+    # Give the data plane the live tool objects. It knows tool NAMES from the
+    # server map, but creating a missing session means actually invoking
+    # create_session -- see data_plane._auto_create_session.
+    try:
+        from src.tools.data_plane import register_tools
+
+        register_tools(tools)
+    except Exception:  # pragma: no cover - registration must never block loading
+        pass
     for tool in tools:
         _fix_schema_types(tool)
         wrap_tool_with_middleware(tool)

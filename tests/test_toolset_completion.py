@@ -111,3 +111,44 @@ class TestItDoesNotOverreach:
         )
         assert added == []
         assert tools == ["open_cpacs"]
+
+
+class TestMissionWorkerGetsItsPrerequisite:
+    """`create_session` was missing from the mission required set.
+
+    Measured (final4 run 1/8): a worker given only run_simulation/get_results
+    never created a session, invented "aviary_session_1", and made 11 calls
+    against it -- configure_mission, set_aircraft_parameters x6, run_simulation
+    x4. Every one failed; the run recorded zero fuel.
+
+    Supplying a capability while omitting its prerequisite is the same mistake as
+    wiring the CPACS path into create_su2_session without the numerics.
+    """
+
+    def test_create_session_is_added(self):
+        tools, added, disc = _complete_toolset(
+            "simulation_executor", "Responsible for running simulations",
+            ["run_simulation", "get_results"],
+            dict(AVAILABLE, create_session=object()),
+        )
+        assert "create_session" in added
+        assert disc == "mission"
+
+    def test_the_exact_observed_toolset_is_repaired(self):
+        tools, _, _ = _complete_toolset(
+            "simulation_executor", "Responsible for running simulations and retrieving results.",
+            ["run_simulation", "get_results"],
+            dict(AVAILABLE, create_session=object()),
+        )
+        assert {"create_session", "set_aircraft_parameters"} <= set(tools)
+
+
+class TestNoteWording:
+    def test_singular_when_one_tool_added(self):
+        """'cannot complete its task without them' reads wrong for one tool."""
+        import inspect
+
+        from src.tools import orchestrator_tools
+
+        src = inspect.getsource(orchestrator_tools)
+        assert 'plural = "them" if len(added_tools) > 1 else "it"' in src

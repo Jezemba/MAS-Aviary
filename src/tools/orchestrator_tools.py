@@ -367,10 +367,11 @@ class CreateAgent(Tool):
         }
         if added_tools:
             result["tools_added"] = added_tools
+            plural = "them" if len(added_tools) > 1 else "it"
             result["note"] = (
                 f"Added {', '.join(added_tools)} -- a {discipline} worker cannot "
-                "complete its task without them. Assign the task as planned; the "
-                "agent now has what it needs."
+                f"complete its task without {plural}. Assign the task as planned; "
+                "the agent now has what it needs."
             )
         return json.dumps(result)
 
@@ -420,7 +421,13 @@ _DISCIPLINE_REQUIRED_TOOLS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] =
     ),
     "mission": (
         ("mission", "aviary", "trajectory", "fuel", "simulat", "performance"),
-        ("set_aircraft_parameters", "run_simulation", "get_results"),
+        # create_session first: without it every other aviary call runs against
+        # a session that does not exist. Measured (final4 run 1/8): a worker
+        # given only run_simulation/get_results invented "aviary_session_1" and
+        # made 11 calls against it. Omitting it here was the same mistake as
+        # wiring the CPACS path into create_su2_session without the numerics --
+        # supplying a capability while leaving out its prerequisite.
+        ("create_session", "set_aircraft_parameters", "run_simulation", "get_results"),
     ),
 }
 

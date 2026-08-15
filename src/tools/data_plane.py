@@ -174,12 +174,29 @@ def _summarize_payload(value: Any, store_key: str) -> dict:
 
 _design_state = None
 _tool_server_map: dict[str, str] = {}
+_registered_tools: dict = {}
 
 
 def init_data_plane(design_state, tool_server_map: dict[str, str]) -> None:
     global _design_state, _tool_server_map
     _design_state = design_state
     _tool_server_map = dict(tool_server_map)
+
+
+def register_tools(tools) -> None:
+    """Record the live tool objects so the data plane can call one itself.
+
+    Needed for session auto-creation: the plane knows tool NAMES from
+    `tool_server_map`, but creating a missing session means actually invoking
+    `create_session`. Registration is best-effort and additive -- several
+    `load_tools_for_agent` calls happen per link, one per agent, and they must
+    not clobber each other.
+    """
+    global _registered_tools
+    for tool in tools or []:
+        name = getattr(tool, "name", None)
+        if name:
+            _registered_tools[name] = tool
 
 
 def get_design_state():
@@ -747,6 +764,50 @@ def _extract_ref_key(value) -> str | None:
     return None
 
 
+
+# MCPs whose session can be created on demand, and the tool that creates one.
+# Only servers where session creation is side-effect-free and parameterless
+# belong here: an auto-created session must never silently differ from what the
+# caller would have made.
+_AUTO_SESSION_TOOLS = {"aviary": "create_session"}
+
+
+def _auto_create_session(mcp_name: str) -> str | None:
+    """Create a missing session so dependent calls are not sent into the void.
+
+    Returns the new session id, or None if creation was not possible. Never
+    raises: a failure here must degrade to the previous behaviour (the call
+    proceeds and the server reports the real problem), not break the run.
+    """
+    tool_name = _AUTO_SESSION_TOOLS.get(mcp_name)
+    if not tool_name or _design_state is None:
+        return None
+    tool = (_registered_tools or {}).get(tool_name)
+    if tool is None:
+        return None
+    try:
+        raw = tool.forward()
+        data = _json_loads_safe(raw)
+        sid = (data or {}).get("session_id")
+        if sid:
+            _design_state.sessions[mcp_name] = sid
+            logger.info(
+                "Auto-created %s session %s (%s was never called)",
+                mcp_name, sid, tool_name,
+            )
+            return sid
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("Auto-create of %s session failed: %s", mcp_name, exc)
+    return None
+
+
+def _json_loads_safe(raw):
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return None
+
+
 def resolve_request(tool_name: str, kwargs: dict) -> dict:
     """Pre-process tool call arguments — resolve data-store refs that
     the LLM may have produced in any of several formats (see
@@ -791,6 +852,21 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # previous-stage context and pass the correct UUID.
     if _design_state and mcp_name and tool_name not in _NO_SESSION_TOOLS:
         stored_sid = _design_state.sessions.get(mcp_name)
+
+        # The override below CORRECTS a wrong session id but cannot CREATE a
+        # missing one, and everything past this point is skipped when no session
+        # was ever captured. Measured 2026-08-12 (final4 run 1/8): the mission
+        # worker never called create_session, invented "aviary_session_1", and
+        # configure_mission / set_aircraft_parameters x6 / run_simulation x4 all
+        # went to the server against a session that did not exist. The run
+        # recorded zero fuel.
+        #
+        # Every other prerequisite in this pipeline is now supplied rather than
+        # requested -- CPACS path, SU2 numerics, mesh payload, session config --
+        # so the session the whole mission depends on is supplied too.
+        if not stored_sid and mcp_name in _AUTO_SESSION_TOOLS:
+            stored_sid = _auto_create_session(mcp_name)
+
         if stored_sid:
             provided = resolved.get("session_id")
             if provided is None or provided == "":
