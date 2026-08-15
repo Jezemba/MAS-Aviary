@@ -104,6 +104,7 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._max_orchestrator_turns: int = 5
         self._worker_max_steps: int = 8
         self._termination_keyword: str = "TASK_COMPLETE"
+        self._pending_phase_note: str | None = None
         self._max_turns: int = 30
         self._stall_threshold: int = 2  # consecutive no-progress turns before terminating
 
@@ -348,6 +349,41 @@ class OrchestratedStrategy(CoordinationStrategy):
 
         return action
 
+
+    # -- Required-phase enforcement --------------------------------------------
+
+    def _phases_done(self, history: list) -> set:
+        """Which declared phases have actually executed, from observed calls."""
+        phases = (self._context.required_tool_phases if self._context else None) or {}
+        if not phases:
+            return set()
+        called: set = set()
+        for msg in history or []:
+            for tc in getattr(msg, "tool_calls", None) or []:
+                name = getattr(tc, "tool_name", None) or getattr(tc, "name", None)
+                if name:
+                    called.add(name)
+        return {
+            phase for phase, tools in phases.items()
+            if tools and all(tool in called for tool in tools)
+        }
+
+    def _next_required_phase(self, history: list):
+        """The first declared phase, IN ORDER, that has not executed.
+
+        `required_tool_phases` is an ordered mapping in the agents YAML, and that
+        order IS the dependency order: geometry before aero (aero needs a mesh),
+        aero before mission (the mission needs the coefficients). Returning the
+        FIRST unexecuted phase therefore answers both "are we done?" and "what
+        comes next?" with one lookup.
+        """
+        phases = (self._context.required_tool_phases if self._context else None) or {}
+        done = self._phases_done(history)
+        for phase, tools in phases.items():
+            if phase not in done:
+                return phase, tools
+        return None, None
+
     def is_complete(self, history: list, current_state: dict) -> bool:
         """Check if the orchestration is finished."""
         if self._phase == "done":
@@ -360,6 +396,30 @@ class OrchestratedStrategy(CoordinationStrategy):
             last = history[-1]
             content = last.content if isinstance(last, AgentMessage) else str(last)
             if signals_completion(content, self._termination_keyword):
+                # `required_tool_phases` declares the phases a run must complete
+                # and the tools each needs, but was only ever used to build a
+                # prompt hint -- nothing checked that a declared phase ran.
+                #
+                # Measured 2026-08-12, both orchestrated_staged_pipeline runs
+                # (49 and 50 steps, ZERO errors): the orchestrator re-assigned
+                # structures 3x and aero 2x, never assigned mission_setup or
+                # simulation, and the run finished reporting zero fuel. The
+                # framework knew mission_setup was required, watched it never
+                # happen, and called the run complete.
+                #
+                # Declaration order is dependency order, so the first unexecuted
+                # phase is also the one to do next -- which addresses the other
+                # orchestrated failure too (B1-ORCH: everything assigned up front,
+                # mission executing before geometry and aero exist).
+                pending, tools = self._next_required_phase(history)
+                if pending is not None and len(history) < self._max_turns:
+                    self._pending_phase_note = (
+                        f"Not complete: the '{pending}' phase has not run. It "
+                        f"requires {', '.join(tools)}. Delegate that phase before "
+                        "finishing; phases are listed in dependency order, so "
+                        "this is the next one to do."
+                    )
+                    return False
                 return True
 
         # Check max turns.
@@ -1112,6 +1172,24 @@ class OrchestratedStrategy(CoordinationStrategy):
             return ""
 
         lines = []
+        # A refused completion must say WHY and what remains, or the orchestrator
+        # re-issues the same finish and burns turns. Placed first so it is not
+        # buried under the worker transcript.
+        if self._pending_phase_note:
+            lines.append(self._pending_phase_note)
+            self._pending_phase_note = None
+        # Standing progress line: which declared phases are done, and which is
+        # next in dependency order. Both orchestrated failures were bookkeeping
+        # -- re-running finished phases, and assigning the mission before its
+        # inputs existed -- so the orchestrator is told the state it kept losing.
+        phases = (self._context.required_tool_phases if self._context else None) or {}
+        if phases:
+            done = self._phases_done(history)
+            pending, _ = self._next_required_phase(history)
+            lines.append(
+                "PHASES done: " + (", ".join(p for p in phases if p in done) or "none")
+                + ("; next: " + pending if pending else "; all required phases complete")
+            )
         for msg in history:
             if not isinstance(msg, AgentMessage):
                 lines.append(str(msg))
