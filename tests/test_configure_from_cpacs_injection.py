@@ -169,3 +169,66 @@ class TestSessionCreationGetsTheSameInjections:
         ov = resolve_request("create_su2_session", {"base_name": "f25"}).get("overrides") or {}
         assert "ref_from_upstream" not in ov
         assert "REF_FROM_UPSTREAM" not in {str(k).upper() for k in ov}
+
+
+class TestMeshIsInjectedIntoSessionCreation:
+    """A session that arrives configured but MESH-LESS still cannot solve.
+
+    B36, measured in remaining5c run 4/10: the auto-config was accepted (zero
+    config_errors) and SU2 then failed with
+
+        "The SU2 mesh file named wing_mesh.su2 was not found."
+
+    The caller named a mesh in create_su2_session and never called set_mesh, so
+    nothing was stored under that name. Third instalment of one lesson -- a
+    caller that must make N calls in order will make fewer than N -- so the mesh
+    is supplied the same way the CPACS path and the numerics now are.
+    """
+
+    def _store_mesh(self, key="generate_volume_mesh__mesh_base64", size=4000):
+        from src.tools.data_plane import get_design_state
+
+        get_design_state().data_store[key] = "TkRJTUU9Mw==" * (size // 12)
+
+    def test_mesh_payload_is_injected(self):
+        self._store_mesh()
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert out.get("initial_mesh"), "the session must arrive with its mesh"
+        assert len(out["initial_mesh"]) > 512
+
+    def test_filename_is_pinned_so_config_and_mesh_agree(self):
+        """The observed failure was a caller-invented name (wing_mesh.su2) that
+        nothing was ever stored under."""
+        self._store_mesh()
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert out["mesh_file_name"] == "mesh.su2"
+
+    def test_export_component_mesh_is_also_accepted(self):
+        self._store_mesh(key="export_component_mesh__mesh_base64")
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert out.get("initial_mesh")
+
+    def test_caller_supplied_mesh_wins(self):
+        self._store_mesh()
+        out = resolve_request(
+            "create_su2_session", {"base_name": "f25", "initial_mesh": "CALLER"}
+        )
+        assert out["initial_mesh"] == "CALLER"
+
+    def test_no_mesh_yet_means_no_injection(self):
+        """Before generate_volume_mesh runs there is nothing to supply, and we
+        must not invent one."""
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert not out.get("initial_mesh")
+
+    def test_a_too_small_payload_is_not_treated_as_a_mesh(self):
+        from src.tools.data_plane import get_design_state
+
+        get_design_state().data_store["generate_volume_mesh__mesh_base64"] = "tiny"
+        out = resolve_request("create_su2_session", {"base_name": "f25"})
+        assert not out.get("initial_mesh")
+
+    def test_other_tools_unaffected(self):
+        self._store_mesh()
+        out = resolve_request("run_su2_solver", {"session_id": "s"})
+        assert "initial_mesh" not in out

@@ -873,6 +873,31 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # CONV_NUM_METHOD_FLOW option", the caller was told to call
     # configure_from_cpacs, and it returned final_answer instead. Wiring the
     # path in without the overrides made the session better but still unusable.
+    # B36: a session that arrives configured but MESH-LESS still cannot solve.
+    # Measured (remaining5c run 4/10): the auto-config was accepted -- zero
+    # config_errors -- and SU2 then failed with "The SU2 mesh file named
+    # wing_mesh.su2 was not found", because the caller named a mesh and never
+    # called set_mesh. Third instalment of one lesson: a caller that must make N
+    # calls in order will make fewer than N, so do not require the ordering.
+    if tool_name == "create_su2_session" and _design_state and not resolved.get("initial_mesh"):
+        _mesh_key = next(
+            (k for k in ("generate_volume_mesh__mesh_base64",
+                         "export_component_mesh__mesh_base64")
+             if isinstance(_design_state.data_store.get(k), str)
+             and len(_design_state.data_store[k]) >= _MIN_PAYLOAD_CHARS),
+            None,
+        )
+        if _mesh_key:
+            resolved["initial_mesh"] = _design_state.data_store[_mesh_key]
+            # Keep the session's filename and the config's MESH_FILENAME in step:
+            # su2-mcp writes the mesh under mesh_file_name and points the config
+            # at the same name, so a caller-invented name cannot desync them.
+            resolved.setdefault("mesh_file_name", "mesh.su2")
+            logger.info(
+                "Injected mesh payload (%s, %d chars) into create_su2_session",
+                _mesh_key, len(resolved["initial_mesh"]),
+            )
+
     if tool_name in ("configure_from_cpacs", "create_su2_session") and _design_state:
         from src.tools import coupling as _cpl
 
