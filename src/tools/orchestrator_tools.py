@@ -326,6 +326,11 @@ class CreateAgent(Tool):
                     f"Tool '{tn}' not found. Available: {sorted(ctx.available_tools.keys())}",
                 )
 
+        # Complete the toolset for the worker's discipline before building it.
+        tool_names, added_tools, discipline = _complete_toolset(
+            name, persona, tool_names, ctx.available_tools
+        )
+
         # Resolve tool objects.
         tool_objects = [ctx.available_tools[tn] for tn in tool_names]
 
@@ -353,15 +358,99 @@ class CreateAgent(Tool):
         if ctx.on_delegation_change:
             ctx.on_delegation_change()
 
-        return json.dumps(
-            {
-                "success": True,
-                "agent_name": name,
-                "persona": persona,
-                "tools_assigned": tool_names,
-                "error": None,
-            }
-        )
+        result = {
+            "success": True,
+            "agent_name": name,
+            "persona": persona,
+            "tools_assigned": tool_names,
+            "error": None,
+        }
+        if added_tools:
+            result["tools_added"] = added_tools
+            result["note"] = (
+                f"Added {', '.join(added_tools)} -- a {discipline} worker cannot "
+                "complete its task without them. Assign the task as planned; the "
+                "agent now has what it needs."
+            )
+        return json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# Discipline toolset completion
+# ---------------------------------------------------------------------------
+
+# A worker whose toolset cannot perform its role fails two steps later, as a
+# missing artifact, far from the cause. Measured 2026-08-12:
+#
+#   B33  the aero worker was created with
+#        ['create_su2_session', 'set_mesh', 'run_su2_solver'] and no way to
+#        configure the solver. Responses named configure_from_cpacs five times;
+#        the worker returned final_answer each time. Zero fuel.
+#   B37  the geometry worker was created without generate_volume_mesh, which its
+#        own graph state declares in TOOLS. It tried 10 times --
+#        "Unknown tool generate_volume_mesh, should be one of: open_cpacs, ..."
+#        -- then gave up. No mesh, so no solve, so no aero.
+#
+# create_agent already validated that requested tools EXIST; nothing checked that
+# the set could do the job. These are the tools without which a role cannot
+# complete at all -- not everything it might use.
+#
+# The response reports what was added rather than erroring, because an error here
+# asks the caller to compose a different toolset, and the measured behaviour on a
+# missing capability is abandonment, not correction (B33/B37 above). Supplying it
+# is the same choice the data plane makes for session config and mesh payloads.
+_DISCIPLINE_REQUIRED_TOOLS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    # discipline: (name/persona keywords, tools it cannot work without)
+    "geometry": (
+        ("geometry", "geometric", "cpacs", "airframe", "wing_design"),
+        ("open_cpacs", "generate_volume_mesh", "set_high_level_parameters"),
+    ),
+    "aero": (
+        ("aero", "aerodynam", "cfd", "su2", "drag", "lift"),
+        ("create_su2_session", "set_mesh", "configure_from_cpacs",
+         "run_su2_solver", "read_history_csv"),
+    ),
+    "structures": (
+        ("structur", "mass", "weight", "stress"),
+        ("estimate_mass",),
+    ),
+    "propulsion": (
+        ("propuls", "engine", "cycle", "thrust", "pycycle"),
+        ("create_cycle_model", "run_cycle"),
+    ),
+    "mission": (
+        ("mission", "aviary", "trajectory", "fuel", "simulat", "performance"),
+        ("set_aircraft_parameters", "run_simulation", "get_results"),
+    ),
+}
+
+
+def _complete_toolset(name: str, persona: str, tool_names: list[str],
+                      available: dict) -> tuple[list[str], list[str], str | None]:
+    """Add the tools the worker's role cannot function without.
+
+    Returns (tool_names, added, discipline). Only tools that actually exist in
+    ``available`` are added, and only when the worker already carries at least
+    one tool of that discipline -- so a deliberately narrow helper agent is not
+    silently promoted into a full discipline worker.
+    """
+    haystack = f"{name} {persona}".lower()
+    present = set(tool_names)
+    added: list[str] = []
+    matched: str | None = None
+
+    for discipline, (keywords, required) in _DISCIPLINE_REQUIRED_TOOLS.items():
+        by_keyword = any(k in haystack for k in keywords)
+        by_tools = any(r in present for r in required)
+        if not (by_keyword and by_tools):
+            continue
+        matched = discipline
+        for tool in required:
+            if tool not in present and tool in available:
+                tool_names.append(tool)
+                present.add(tool)
+                added.append(tool)
+    return tool_names, added, matched
 
 
 class AssignTask(Tool):

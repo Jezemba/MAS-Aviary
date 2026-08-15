@@ -403,7 +403,20 @@ class TestHandlerIntegration:
         assert "WORKFLOW CONTEXT" in ctx
 
     def test_max_transitions_safety_valve(self):
-        """Execution stops at max_transitions."""
+        """A revisit-only loop is stopped by the TOTAL-steps ceiling.
+
+        The cap is two-tier since 2026-08-12. `max_transitions` charges only
+        PROGRESS -- entering a state for the first time -- so that a graph which
+        legitimately iterates is not truncated mid-pipeline (both
+        networked_graph_routed runs terminated tidily after the aero and before
+        the mission under a flat cap of 25). Revisits are still counted, because
+        misroute_rate is computed from them.
+
+        This graph loops A -> A forever, so it makes progress exactly once and
+        `max_transitions` can never fire. `max_total_steps` is the backstop that
+        keeps it terminating -- cleanly, with a result, rather than being killed
+        by the wall clock with nothing recorded.
+        """
         graph_data = {
             "initial_state": "A",
             "terminal_states": ["DONE"],
@@ -423,6 +436,7 @@ class TestHandlerIntegration:
             {
                 "_graph_data": graph_data,
                 "max_transitions": 5,
+                "max_total_steps": 5,
             }
         )
         agents = {"worker": _MockAgent("looping")}
@@ -431,7 +445,7 @@ class TestHandlerIntegration:
             agents,
             logger=None,
         )
-        assert len(msgs) <= 6  # at most 5 transitions + 1 final agent
+        assert len(msgs) <= 6  # at most 5 total steps + 1 final agent
 
     def test_llm_graph_mode_with_mock(self):
         """LLM graph mode generates and uses a valid graph."""

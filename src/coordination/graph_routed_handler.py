@@ -350,6 +350,12 @@ class GraphRoutedHandler(ExecutionHandler):
         # A guard that cannot fire converts recoverable runs into total losses,
         # so the default now fits a realistic budget. Configs may still override.
         self._max_transitions: int = cfg.get("max_transitions", 25)
+        # Ceiling on TOTAL state entries, revisits included. `max_transitions`
+        # now charges only progress, so a graph that ping-pongs between two
+        # states would otherwise never reach it. This is the backstop that keeps
+        # such a graph terminating -- cleanly, with a result -- rather than being
+        # killed by the wall clock with nothing recorded.
+        self._max_total_steps: int = cfg.get("max_total_steps", 60)
         self._internal_representations: bool = (
             cfg.get(
                 "internal_representations",
@@ -459,12 +465,30 @@ class GraphRoutedHandler(ExecutionHandler):
             self._state_dict["session_id"] = self._session_id
 
         current_state = graph.initial_state
+        # `transition_count` is what the cap CHARGES; it advances only when the
+        # graph enters a state it has not been in before. Revisits are still
+        # counted -- in `revisit_count` and in states_visited -- because
+        # misroute_rate is computed from them and is a real coordination metric.
+        #
+        # A flat count could not separate the two failure modes: at 50 the wall
+        # clock always fired first and the process was killed with no result at
+        # all, and at 25 both networked_graph_routed runs terminated tidily after
+        # the aero and before the mission. Charging only progress lets a graph
+        # that legitimately iterates keep working, while `_max_total_steps` still
+        # stops a graph that is only ping-ponging.
         transition_count = 0
+        revisit_count = 0
+        total_steps = 0
+        seen_states: set[str] = set()
 
         # 4. Main loop.
         while current_state not in graph.terminal_states:
             if transition_count >= self._max_transitions:
                 break
+            # Absolute ceiling so unproductive cycling still terminates.
+            if total_steps >= self._max_total_steps:
+                break
+            total_steps += 1
 
             state_def = graph.states.get(current_state)
             if state_def is None:
@@ -582,7 +606,11 @@ class GraphRoutedHandler(ExecutionHandler):
                             timestamp=time.time(),
                         )
                     )
-                    transition_count += 1
+                    if next_state in seen_states:
+                        revisit_count += 1
+                    else:
+                        seen_states.add(next_state)
+                        transition_count += 1
                     current_state = next_state
                     continue
 
@@ -671,7 +699,11 @@ class GraphRoutedHandler(ExecutionHandler):
                     timestamp=time.time(),
                 )
             )
-            transition_count += 1
+            if next_state in seen_states:
+                revisit_count += 1
+            else:
+                seen_states.add(next_state)
+                transition_count += 1
             current_state = next_state
 
         # Signal graph completion in the last message's metadata so
