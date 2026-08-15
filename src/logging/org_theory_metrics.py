@@ -593,8 +593,20 @@ def _graph_routed_metrics(
     sequence. Graph-routed messages have agent names matching graph role names
     (e.g. "classifier", "coder", "executor").
     """
-    # State sequence from agent_names (preserves transitions including revisits)
-    state_sequence = [_get(m, "agent_name", "") for m in messages]
+    # The state sequence is the graph's OWN states, from
+    # metadata["graph_state"], which GraphRoutedHandler sets on every message.
+    #
+    # This read `agent_name`, so every metric below was computed over role names
+    # (geometry_engineer, aerodynamics_analyst) rather than graph states
+    # (GEOMETRY_SETUP, AERO_ANALYSIS). Revisits, routing_accuracy and
+    # misroute_rate measured which AGENT spoke, not where the graph went, so a
+    # loop back to GEOMETRY_SETUP was invisible -- and two agents serving one
+    # state, or one agent serving two, corrupted the count either way.
+    # agent_name stays as the fallback for runs predating the metadata.
+    state_sequence = [
+        (_get(m, "metadata", None) or {}).get("graph_state") or _get(m, "agent_name", "")
+        for m in messages
+    ]
     total_transitions = max(len(state_sequence) - 1, 0)
 
     # Count times each state was visited
@@ -684,6 +696,14 @@ def _graph_routed_metrics(
         "resource_utilization": resource_utilization,
         "context_utilization": context_utilization,
         "complexity_escalations": complexity_escalations if complexities_seen else None,
+        # The graph's actual path, in order, with revisits preserved. Without it
+        # a run that looped three times through GEOMETRY_SETUP looked identical
+        # to one that went straight through, and diagnosing a timeout meant
+        # regexing state names out of the log -- which also matches the prompt
+        # text, so the trace could not be trusted.
+        "states_visited": state_sequence,
+        "state_visit_counts": state_hist,
+        "states_revisited": sorted(s for s, n in state_hist.items() if n > 1),
         # Omission vs Commission
         "total_transitions": total_transitions,
         "misroute_rate": round(misroute_rate, 4) if misroute_rate is not None else None,

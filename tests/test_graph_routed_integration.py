@@ -365,7 +365,13 @@ class TestHandlerIntegration:
         cfg = load_yaml("config/graph_routed.yaml")
         assert "graph_routed" in cfg
         assert cfg["graph_routed"]["graph_mode"] == "predefined"
-        assert cfg["graph_routed"]["max_transitions"] == 50
+        # 50 was unreachable inside the run budget, so the guard never bound and
+        # the wall-clock timeout fired instead -- and those are not equivalent:
+        # max_transitions breaks the loop and the run RETURNS a result, while the
+        # timeout kills the process and yields nothing. Measured 2026-08-12
+        # (sequential_graph_routed, Qwen3-32B): 95 steps, 74.5 min, killed with a
+        # successful SU2 solve in hand and no data recorded.
+        assert cfg["graph_routed"]["max_transitions"] == 25
 
     def test_internal_representations_toggle(self):
         """Mental model context appears when toggle is on."""

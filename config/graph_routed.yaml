@@ -48,4 +48,4 @@ graph_routed:
 
   # --- Global Limits ---
   # Absolute maximum state transitions (safety valve)
-  max_transitions: 50
+  max_transitions: 25

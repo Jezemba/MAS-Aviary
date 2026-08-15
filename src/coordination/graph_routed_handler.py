@@ -338,7 +338,18 @@ class GraphRoutedHandler(ExecutionHandler):
             "allow_graph_modification",
             False,
         )
-        self._max_transitions: int = cfg.get("max_transitions", 50)
+        # 50 was unreachable inside the run budget, so the guard never bound and
+        # the wall-clock timeout fired instead. Those outcomes are NOT
+        # equivalent: hitting max_transitions breaks the loop cleanly and the
+        # run RETURNS A RESULT, while hitting the timeout kills the process and
+        # yields nothing -- no result, no ledger row. Measured 2026-08-12
+        # (sequential_graph_routed on Qwen3-32B): 95 steps, 74.5 min, 5 mesh
+        # generations and 6 mission simulations, killed at the cap with a
+        # successful SU2 solve already in hand and no data recorded.
+        #
+        # A guard that cannot fire converts recoverable runs into total losses,
+        # so the default now fits a realistic budget. Configs may still override.
+        self._max_transitions: int = cfg.get("max_transitions", 25)
         self._internal_representations: bool = (
             cfg.get(
                 "internal_representations",
