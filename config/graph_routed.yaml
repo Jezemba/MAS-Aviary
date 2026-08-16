@@ -23,14 +23,18 @@ graph_routed:
   # --- Internal Representations ---
   # Whether to add mental model instructions to agent prompts.
   #
-  # ENABLED 2026-08-16. This was false, and it is the ONLY channel that carries
-  # "The system has N passes remaining" to the agent. Measured (sweep_final5
-  # run 6, orchestrated_graph_routed): the ResourceManager tracked passes
-  # correctly for the whole run and the agent was told ZERO times, so it kept
-  # exploring until the wall clock killed it with no result. max_passes stays 8;
-  # what changed is that the agent can now see the budget it is spending.
+  # BACK TO false (2026-08-16). Briefly enabled to get the budget to the agent,
+  # then reverted: _build_mental_model emits "The system has N passes remaining"
+  # on EVERY turn, and a running count is a continuous pacing signal that only
+  # graph_routed can produce -- three of eight combinations would get a
+  # coordination input the others never see, contaminating the comparison.
+  # It also differs from the condition the existing dataset was collected under.
+  #
+  # The budget still reaches the agent, but only as a THRESHOLD warning at 2/1/0
+  # passes (_format_budget_warning), which is deliberately NOT gated on this flag
+  # -- a run-ending warning must not depend on a display setting.
   internal_representations:
-    enabled: true
+    enabled: false
 
   # --- Condition Evaluation ---
   # How error types are extracted from tool call stderr

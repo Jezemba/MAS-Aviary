@@ -781,14 +781,27 @@ class GraphRoutedHandler(ExecutionHandler):
         return graph
 
     def _format_budget_warning(self) -> str:
-        """Tell the agent where it stands, and warn it to wrap up before the
-        budget is gone. Empty string when there is nothing worth saying."""
+        """Warn the agent ONLY when the budget is nearly gone. Silent otherwise.
+
+        Deliberately a threshold warning, not a running count. A per-turn
+        "N of M passes remaining" line is a continuous pacing signal, and only
+        the graph_routed handler has a ResourceManager at all -- so broadcasting
+        it every turn would give three of the eight combinations a coordination
+        input the others never receive, contaminating the comparison the
+        experiment exists to make.
+
+        A threshold warning keeps rough parity instead: iterative_feedback has
+        had a second-to-last-ATTEMPT notice all along
+        (iterative_feedback_handler.py:566), so "you are near the end, wrap up"
+        is a signal both handlers give. What differs is only the unit (passes vs
+        attempts), which is intrinsic to the handler.
+        """
         if self._resource_mgr is None:
             return ""
         rs = self._resource_mgr.state
         left, total = rs.passes_remaining, getattr(rs, "passes_max", None)
-        if left is None:
-            return ""
+        if left is None or left > 2:
+            return ""   # silent while the budget is comfortable
         budget = f"BUDGET: {left} of {total} passes remaining." if total else f"BUDGET: {left} passes remaining."
         if left <= 0:
             return (budget + " This is your FINAL output. Report the best design you"
@@ -802,7 +815,7 @@ class GraphRoutedHandler(ExecutionHandler):
             return (budget + " This is your second-to-last pass. Plan to converge:"
                     " if the next change does not improve the result, report the best"
                     " design you have so far rather than continuing to search.")
-        return budget
+        return ""
 
     def _build_agent_context(
         self,

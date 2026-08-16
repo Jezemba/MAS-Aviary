@@ -33,13 +33,29 @@ def _handler(remaining, total=8):
     return h
 
 
-class TestTheBudgetIsStated:
-    def test_plenty_left_states_the_budget_plainly(self):
-        msg = _handler(6)._format_budget_warning()
-        assert "6 of 8 passes remaining" in msg
+class TestItIsSilentUntilTheThreshold:
+    """No running countdown. Jessica, 2026-08-16: a per-turn "N of M passes
+    remaining" line is a continuous pacing signal, and ONLY graph_routed has a
+    ResourceManager -- broadcasting it every turn hands three of the eight
+    combinations a coordination input the other five never receive, which
+    contaminates the comparison the experiment exists to make.
+
+    A threshold warning keeps rough parity: iterative_feedback has had a
+    second-to-last-ATTEMPT notice all along, so "you are near the end" is a
+    signal both handlers give.
+    """
+
+    @pytest.mark.parametrize("left", [25, 10, 6, 4, 3])
+    def test_comfortable_budget_says_nothing_at_all(self, left):
+        assert _handler(left, 25)._format_budget_warning() == ""
 
     def test_no_resource_manager_is_silent_not_a_crash(self):
         assert _handler(None)._format_budget_warning() == ""
+
+    def test_the_count_appears_only_once_warning(self):
+        """The number is fine INSIDE the warning -- it is the per-turn drip that
+        is the confound, not the figure itself."""
+        assert "2 of 25" in _handler(2, 25)._format_budget_warning()
 
 
 class TestItWarnsBeforeTheBudgetIsGone:
