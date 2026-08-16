@@ -989,6 +989,18 @@ def run_stat_batch(
                 except Exception as e:
                     last_error = f"{type(e).__name__}: {e}"
                     print(f"  attempt {attempt}/{max_retries} failed: {last_error}")
+                    # B50. A timeout is not a transient fault. The retry restarts
+                    # from the SAME deterministic chain start with the SAME
+                    # config, so a run that cannot fit the budget will not fit it
+                    # on attempt 2 or 3 -- measured 3/3 identical in sweep_final5
+                    # run 6, which burned SIX HOURS and produced no ledger row
+                    # despite completing 14 SU2 solves and 67 mission runs.
+                    # Retrying a crash is worth 20 minutes; retrying an exhausted
+                    # clock costs two more full timeouts to learn nothing.
+                    if isinstance(e, TimeoutError):
+                        print("  timeout is not retryable (B50): "
+                              "same start + same config would exhaust the clock again")
+                        break
                     if attempt < max_retries:
                         try:
                             _aggressive_gpu_cleanup()
