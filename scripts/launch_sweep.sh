@@ -50,10 +50,15 @@ except Exception as e:
 fi
 
 LOG="logs/${TAG}_$(date +%Y%m%d_%H%M%S).log"
+# SWEEP_LOG_PATH lets the runner stream live progress to W&B while a run is in
+# flight. Without it every wandb.log sits at a run boundary, so a 2-3 hour run
+# shows nothing until it ends -- and a run killed by the wall clock shows nothing
+# at all, which is the case most worth seeing.
 setsid nohup env \
     PYTHONPATH="$MAS" \
     WANDB_API_KEY="$KEY" \
     WANDB_MODE=online \
+    SWEEP_LOG_PATH="$MAS/$LOG" \
     ../.venv/bin/python scripts/stat_batch_runner.py "$@" \
     > "$LOG" 2>&1 < /dev/null &
 disown

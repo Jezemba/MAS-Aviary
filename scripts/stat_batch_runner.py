@@ -467,6 +467,73 @@ def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cov
         pipe.close()
 
 
+# ---------------------------------------------------------------------------
+# Live progress -> W&B
+# ---------------------------------------------------------------------------
+
+_LIVE_STATE: dict[str, object] = {"combo": "", "link": -1, "attempt": 0, "t0": 0.0}
+
+
+def _start_live_heartbeat(wb_run, interval_s: int = 60):
+    """Stream progress to W&B WHILE a run is in flight, not only when it ends.
+
+    Every `wandb.log` call in this file sits at a run boundary, so a 2-3 hour run
+    left the dashboard empty until it finished -- and a run killed by the wall
+    clock logged nothing at all, which is precisely the case you most want to see.
+
+    The run itself executes in a spawned subprocess (see _run_with_timeout), so
+    the parent cannot read its counters directly. It CAN read the sweep log that
+    both processes write to, which is passed in as SWEEP_LOG_PATH by
+    scripts/launch_sweep.sh. Counting there is cheap and needs no coupling to the
+    child.
+
+    Passive: it only reads a file and logs. It cannot change agent behaviour, so
+    it is not the kind of signal that would confound the coordination comparison.
+    """
+    import threading
+
+    log_path = os.environ.get("SWEEP_LOG_PATH", "")
+    stop = threading.Event()
+    if wb_run is None or not log_path:
+        return stop
+
+    patterns = {
+        "live/mission_solves": "Calling tool: 'run_simulation'",
+        "live/su2_solves": "Calling tool: 'run_su2_solver'",
+        "live/param_sets": "Calling tool: 'set_aircraft_parameters'",
+        "live/design_state_lookups": "Calling tool: 'get_design_state'",
+        "live/agent_steps": "\u2501 Step ",
+    }
+
+    def _tick():
+        while not stop.wait(interval_s):
+            try:
+                with open(log_path, "r", errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            data = {k: text.count(v) for k, v in patterns.items()}
+            # Latest budget line, so the pass burn-down is visible live.
+            m = re.findall(r"BUDGET: (\d+) of (\d+) passes remaining", text)
+            if m:
+                data["live/passes_remaining"] = int(m[-1][0])
+                data["live/passes_max"] = int(m[-1][1])
+            data["live/su2_config_rejections"] = text.count("invalid option name")
+            data["live/session_errors"] = text.count("Unknown session_id")
+            t0 = float(_LIVE_STATE.get("t0") or 0)
+            if t0:
+                data["live/elapsed_min"] = round((time.time() - t0) / 60, 1)
+            data["live/chain_link"] = _LIVE_STATE.get("link", -1)
+            data["live/attempt"] = _LIVE_STATE.get("attempt", 0)
+            try:
+                wandb.log(data)
+            except Exception:
+                pass   # telemetry must never take down a run
+
+    threading.Thread(target=_tick, daemon=True, name="wandb-heartbeat").start()
+    return stop
+
+
 def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=None):
     """Run a combination with a wall-clock timeout, in a killable subprocess.
 
@@ -696,6 +763,8 @@ def run_stat_batch(
             },
             resume="allow",
         )
+    _hb_stop = _start_live_heartbeat(wb_run)
+
     # Weave auto-traces all smolagents agent.run() calls
     if HAS_WEAVE:
         weave.init(project_name=wb_project)
@@ -809,7 +878,9 @@ def run_stat_batch(
             timeout_sec = timeout_minutes * 60
             last_error = None
             attempts_used = 0
+            _LIVE_STATE.update({"combo": combo.name, "link": repeat_idx, "t0": time.time()})
             for attempt in range(1, max_retries + 1):
+                _LIVE_STATE["attempt"] = attempt
                 try:
                     result = _run_with_timeout(
                         combo,
