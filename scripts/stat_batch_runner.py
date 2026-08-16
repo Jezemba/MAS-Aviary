@@ -475,6 +475,47 @@ def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cov
 _LIVE_STATE: dict[str, object] = {"combo": "", "link": -1, "attempt": 0, "t0": 0.0}
 
 
+_CONSOLE_TAIL_BYTES = 400_000
+_console_registered = False
+
+
+def _mirror_console(text: str, wb_run) -> None:
+    """Put the agent console where W&B can show it.
+
+    W&B's Logs tab is the PARENT process's captured stdout. Since B16 each run
+    executes in a spawned subprocess (so a timeout can actually reclaim the GPU),
+    and the child writes to the shell-redirected sweep log -- never through the
+    parent's patched stdout. Result: output.log stops a few lines in, at the run
+    header, and everything the agents actually do is invisible in W&B. It used to
+    appear because the run was in-process.
+
+    Rather than re-plumb the subprocess's stdout through the parent (which would
+    mean re-printing into the same file the parent already writes to), mirror the
+    tail into the run's own files directory and register it once with
+    policy="live", which W&B keeps synced. It lands under Files rather than Logs,
+    which is the honest trade: no change to the process model that B16 exists to
+    protect.
+
+    Tail-bounded: these logs reach tens of MB and the whole point is to watch a
+    run in flight, not to archive it.
+    """
+    global _console_registered
+    if wb_run is None:
+        return
+    run_dir = getattr(wb_run, "dir", None)
+    if not run_dir:
+        return
+    dest = os.path.join(run_dir, "agent_console.log")
+    tail = text[-_CONSOLE_TAIL_BYTES:]
+    if len(text) > _CONSOLE_TAIL_BYTES:
+        tail = f"[... truncated, showing the last {_CONSOLE_TAIL_BYTES} bytes ...]\n" + tail
+    with open(dest, "w", errors="replace") as fh:
+        fh.write(tail)
+    if not _console_registered:
+        wandb.save(dest, base_path=run_dir, policy="live")
+        _console_registered = True
+
+
 def _live_metrics(text: str, patterns: dict) -> dict:
     """Compute the live metric dict from the sweep log text.
 
@@ -544,6 +585,10 @@ def _start_live_heartbeat(wb_run, interval_s: int = 60):
                 wandb.log(data)
             except Exception:
                 pass   # telemetry must never take down a run
+            try:
+                _mirror_console(text, wb_run)
+            except Exception:
+                pass
 
     threading.Thread(target=_tick, daemon=True, name="wandb-heartbeat").start()
     return stop

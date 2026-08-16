@@ -110,3 +110,40 @@ class TestItCannotTakeDownARun:
         monkeypatch.setenv("SWEEP_LOG_PATH", str(tmp_path / "does-not-exist.log"))
         stop = runner._start_live_heartbeat(object(), interval_s=1)
         stop.set()   # no exception on start or stop
+
+
+class TestConsoleMirror:
+    """The agent console must be visible in W&B while the run happens.
+
+    W&B's Logs tab shows the PARENT's stdout. Since B16 each run executes in a
+    spawned subprocess, so the child's output goes to the shell-redirected sweep
+    log and never through the parent -- output.log froze at 2,102 bytes, at the
+    run header, while the run went on for hours. It used to work because the run
+    was in-process.
+    """
+
+    class _Run:
+        def __init__(self, d): self.dir = str(d)
+
+    def test_it_writes_the_tail_into_the_run_directory(self, runner, tmp_path):
+        runner._console_registered = True   # skip the wandb.save call
+        runner._mirror_console("hello agent output", self._Run(tmp_path))
+        assert (tmp_path / "agent_console.log").read_text() == "hello agent output"
+
+    def test_a_huge_log_is_tail_bounded_and_says_so(self, runner, tmp_path):
+        runner._console_registered = True
+        big = "x" * (runner._CONSOLE_TAIL_BYTES + 5000)
+        runner._mirror_console(big, self._Run(tmp_path))
+        written = (tmp_path / "agent_console.log").read_text()
+        assert "truncated" in written
+        assert len(written) < len(big)
+
+    def test_no_run_is_a_no_op_not_a_crash(self, runner):
+        runner._mirror_console("text", None)   # must not raise
+
+    def test_it_keeps_the_END_of_the_log_not_the_start(self, runner, tmp_path):
+        """Watching a live run means seeing what just happened."""
+        runner._console_registered = True
+        text = "OLD" + "x" * runner._CONSOLE_TAIL_BYTES + "NEWEST_LINE"
+        runner._mirror_console(text, self._Run(tmp_path))
+        assert (tmp_path / "agent_console.log").read_text().endswith("NEWEST_LINE")
