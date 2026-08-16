@@ -35,6 +35,18 @@ OUTCOME_RE = re.compile(r"(?:\u2192|->)\s+(success|failed)\s*\||FAILED after \d+
 FAILED_RE = re.compile(r"FAILED after \d+ attempts?: (.+)")
 
 
+def _row_touched(row: dict) -> bool:
+    """Did this run modify the aircraft? (B32)
+
+    Rows written before B32 carry no `design_touched` key, and `.get()` would
+    quietly report every one of them as untouched -- turning an absent field
+    into a finding. `design_applied` is present on every row ever written, so
+    derive from that when the flag is missing.
+    """
+    v = (row.get("objective") or {}).get("design_touched")
+    return bool(row.get("design_applied")) if v is None else bool(v)
+
+
 def split_runs(log_text: str, finished_only: bool = True) -> list[tuple[str, str]]:
     """Split the sweep log into (combo, text) per run, in order.
 
@@ -165,7 +177,8 @@ def main() -> None:
         print()
 
     # ---- per combo -------------------------------------------------------
-    hdr = f"{'combo':44} {'lk':>2} {'coupled':>7} {'capture':>13} {'fuel':>8} {'cons':>5} {'noop':>5}"
+    hdr = (f"{'combo':44} {'lk':>2} {'coupled':>7} {'capture':>13} {'fuel':>8} "
+           f"{'dfuel':>7} {'cons':>5} {'noop':>5} {'design':>6}")
     print(hdr)
     print("-" * len(hdr))
     noop_total = coupled_total = 0
@@ -179,9 +192,15 @@ def main() -> None:
             noop_total += noop
             cap = capture_source(texts[i]) if i < len(texts) else "?"
             fuel = o.get("fuel_burned_kg")
+            # B32: `fuel` alone ranks a run that changed nothing above one that
+            # explored, so show the design flag and the delta against this
+            # link's own start state next to it.
+            dfuel = ob.get("fuel_delta_vs_start")
             print(f"{combo[:44]:44} {ch.get('link', '?'):>2} {str(coupled):>7} "
                   f"{cap:>13} {(f'{fuel:.0f}' if fuel else 'None'):>8} "
-                  f"{ob['constraints_passed']}/{ob['constraints_total']:<3} {str(noop):>5}")
+                  f"{(f'{dfuel:+.0f}' if dfuel is not None else '-'):>7} "
+                  f"{ob['constraints_passed']}/{ob['constraints_total']:<3} {str(noop):>5} "
+                  f"{('yes' if _row_touched(d) else 'NO'):>6}")
 
     # ---- coupling, split by whether it was actually MEASURED -------------
     # `cd_threshold_fallback` is not a measurement. It is the mis-calibrated
@@ -247,6 +266,33 @@ def main() -> None:
           "   [these carry no information -- B32]")
     empty_design = sum(1 for r in rows if not r.get("design_applied"))
     print(f"runs with empty design_applied: {empty_design}   [B32]")
+
+    # ---- B32: is the fuel figure even a design-optimisation result? ------
+    # Rows written before B32 have no `design_touched` key, and `.get()` would
+    # quietly report every one of them as untouched -- turning an absent field
+    # into a finding. `design_applied` is present on every row ever written, so
+    # derive from that when the flag is missing.
+    scoreable = [r for r in rows if _row_touched(r)]
+    untouched = [r for r in rows if not _row_touched(r)]
+    print(f"\ndesign actually modified: {len(scoreable)}/{len(rows)} runs")
+    if untouched:
+        uf = [r["outcomes"]["fuel_burned_kg"] for r in untouched
+              if r["outcomes"].get("fuel_burned_kg")]
+        sf = [r["outcomes"]["fuel_burned_kg"] for r in scoreable
+              if r["outcomes"].get("fuel_burned_kg")]
+        print(f"  {len(untouched)} run(s) never called a design tool yet still "
+              f"produced a fuel figure and can pass constraints.")
+        if uf and sf:
+            print(f"  mean fuel  untouched {sum(uf)/len(uf):8.0f} kg   "
+                  f"vs modified {sum(sf)/len(sf):8.0f} kg")
+            print("  A fuel-ordered table is therefore topped by runs that did no "
+                  "design work; rank on design_touched runs only.")
+    deltas = [r["objective"]["fuel_delta_vs_start"] for r in rows
+              if r["objective"].get("fuel_delta_vs_start") is not None]
+    if deltas:
+        print(f"\nfuel delta vs own start state (n={len(deltas)}, link>0 only): "
+              f"mean {sum(deltas)/len(deltas):+.0f} kg, "
+              f"improved {sum(1 for d in deltas if d > 0)}/{len(deltas)}")
 
     def fuels(want: bool):
         return [r["outcomes"]["fuel_burned_kg"] for r in rows

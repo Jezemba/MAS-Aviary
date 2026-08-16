@@ -127,6 +127,12 @@ class IterativeFeedbackHandler(ExecutionHandler):
         self._aspiration_threshold = cfg.get("aspiration_threshold")
         self._human_mode: str = cfg.get("human_feedback_mode", "none")
         self._human_guidance: str | None = cfg.get("human_guidance")
+        # Declared phases + the tools observed so far, for the phase status line
+        # (B43). Read from the same config key the orchestrated strategy uses, so
+        # the two report identically; absent for configs that declare none, in
+        # which case the status is simply omitted.
+        self._required_tool_phases: dict = cfg.get("_required_tool_phases") or {}
+        self._tools_seen: set = set()
         self._human_skip_keyword: str = cfg.get("human_skip_keyword", "SKIP")
         self._termination_keyword: str = cfg.get("termination_keyword", "TASK_COMPLETE")
         self._stuck_threshold: int = cfg.get("stuck_threshold", 3)
@@ -199,6 +205,25 @@ class IterativeFeedbackHandler(ExecutionHandler):
                 )
                 self._upstream_errors.append(note)
                 return
+
+
+    def _format_phase_status(self) -> str:
+        """Report which declared phases have run. Empty when none are declared."""
+        phases = getattr(self, "_required_tool_phases", None) or {}
+        if not phases:
+            return ""
+        called = getattr(self, "_tools_seen", None) or set()
+        done = [p for p, tools in phases.items()
+                if tools and all(tool in called for tool in tools)]
+        pending = next((p for p in phases if p not in done), None)
+        line = "PHASES run so far: " + (", ".join(done) or "none")
+        if pending:
+            line += f"; not yet run: {pending}"
+            line += (" (phases are listed in dependency order -- later ones "
+                     "consume earlier outputs)")
+        else:
+            line += "; all phases have run"
+        return line
 
     def _format_upstream_errors(self) -> str:
         """Format accumulated upstream errors for context injection."""
@@ -352,6 +377,9 @@ class IterativeFeedbackHandler(ExecutionHandler):
                     content = ""
                     duration = time.monotonic() - start
                     tool_calls = _extract_tool_calls(agent)
+                    self._tools_seen.update(
+                        tc.tool_name for tc in tool_calls if getattr(tc, "tool_name", None)
+                    )
                     msg = AgentMessage(
                         agent_name=assignment.agent_name,
                         content=content,
@@ -388,6 +416,9 @@ class IterativeFeedbackHandler(ExecutionHandler):
 
                 duration = time.monotonic() - start
                 tool_calls = _extract_tool_calls(agent)
+                self._tools_seen.update(
+                    tc.tool_name for tc in tool_calls if getattr(tc, "tool_name", None)
+                )
                 token_count = _extract_token_count(agent, content)
                 msg = AgentMessage(
                     agent_name=assignment.agent_name,
@@ -492,6 +523,26 @@ class IterativeFeedbackHandler(ExecutionHandler):
         upstream = self._format_upstream_errors()
         if upstream:
             parts.append(upstream)
+
+        # Which declared phases have run, and which has not (B43).
+        #
+        # This handler builds its own context and holds no reference to the
+        # strategy, so the phase status added to OrchestratedStrategy never
+        # reached it. Measured 2026-08-12, one sweep, same model, same code --
+        # the ONLY difference being whether the status reached the prompt:
+        #
+        #   orchestrated + staged_pipeline    status arrives   0/7 -> 2/2 coupled
+        #   orchestrated + iterative_feedback status absent    0/8 -> 0/2
+        #
+        # and iterative_feedback kept flying the mission BEFORE the aero existed.
+        #
+        # INFORMATION ONLY. Working out the stage order is what an orchestrated
+        # structure is measured on, so this must not constrain the choice -- and
+        # this handler is shared, with sequential+iterative_feedback already
+        # coupling 6/8 without it.
+        phase_status = self._format_phase_status()
+        if phase_status:
+            parts.append(phase_status)
 
         # Task + previous agent context.
         if previous_output:

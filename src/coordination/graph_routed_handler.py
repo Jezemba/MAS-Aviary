@@ -355,7 +355,14 @@ class GraphRoutedHandler(ExecutionHandler):
         # states would otherwise never reach it. This is the backstop that keeps
         # such a graph terminating -- cleanly, with a result -- rather than being
         # killed by the wall clock with nothing recorded.
-        self._max_total_steps: int = cfg.get("max_total_steps", 60)
+        # 60 was ~120 min at ~2 min per state entry on the local model -- the
+        # same as the wall clock -- so the guard could never fire first and the
+        # run was killed with NO result, which is the outcome it exists to
+        # prevent. Measured (final4d run 5/8, orchestrated_graph_routed): 170
+        # steps, 4 SU2 solves, 16 run_simulation calls, the full pipeline
+        # working, timed out at 120 min and nothing recorded.
+        # 30 leaves headroom to terminate cleanly and RETURN a result.
+        self._max_total_steps: int = cfg.get("max_total_steps", 30)
         self._internal_representations: bool = (
             cfg.get(
                 "internal_representations",

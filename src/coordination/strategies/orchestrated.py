@@ -252,6 +252,13 @@ class OrchestratedStrategy(CoordinationStrategy):
         graph_roles = config.get("_graph_roles")
         if graph_roles:
             orch_tools.append(ListGraphRoles(graph_roles=graph_roles))
+        else:
+            # Without roles there is no tool, so the orchestrator must not be
+            # told it exists -- it called list_graph_roles 4 times across the
+            # 2026-08-12 sweeps and got "Unknown tool" each time. The prompt is
+            # built from the tools actually attached, so simply not attaching it
+            # is sufficient; this comment marks that the omission is deliberate.
+            pass
 
         for tool in orch_tools:
             orchestrator_agent.tools[tool.name] = tool

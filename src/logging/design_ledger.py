@@ -80,6 +80,26 @@ def _applied_design(traces: dict[str, Any]) -> dict[str, float]:
     return out
 
 
+
+def _fuel_delta_vs_start(result_dict: dict[str, Any], ec: dict[str, Any]) -> float | None:
+    """Fuel improvement relative to this chain link's OWN starting design.
+
+    Absolute fuel compares a run against the baseline aircraft, which rewards
+    doing nothing. The like-for-like question is whether the run improved on the
+    design it was handed. Returns None when the start state carries no fuel
+    figure (link 0 of a chain has no predecessor result), so callers can tell
+    "no improvement" from "not comparable".
+    """
+    fuel = ec.get("fuel_burned_kg")
+    start_fuel = result_dict.get("chain_start_fuel_kg")
+    if fuel is None or start_fuel in (None, 0):
+        return None
+    try:
+        return round(float(start_fuel) - float(fuel), 3)
+    except (TypeError, ValueError):
+        return None
+
+
 def _controls_applied(traces: dict[str, Any]) -> dict[str, Any]:
     """Every pinned discipline-control value the agent passed, with a deviation
     flag if ANY of them disagrees with the canonical baseline.
@@ -271,6 +291,7 @@ def _discipline_outputs(traces: dict[str, Any]) -> dict[str, float]:
 def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[str, Any]:
     ec = result_dict.get("eval_classification") or {}
     tb = result_dict.get("token_breakdown") or {}
+    design = _applied_design(traces)
     return {
         "combo": result_dict.get("name"),
         "org_structure": result_dict.get("org_structure"),
@@ -283,11 +304,12 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
         # link 0 starts at the shared anchor; link k>0 starts at link k-1's end-state.
         "chain": {
             "link": result_dict.get("chain_link"),
+            "start_fuel_burned_kg": result_dict.get("chain_start_fuel_kg"),
             "start_params": result_dict.get("chain_start_params"),
             "end_params": result_dict.get("chain_end_params"),
         },
         # design the agents actually applied (from tool-call args)
-        "design_applied": _applied_design(traces),
+        "design_applied": design,
         # pinned discipline controls the agent passed + deviation flag (must be constant)
         "controls_applied": _controls_applied(traces),
         # was SU2 aero coupled into aviary? (fully-coupled run vs default-drag fallback)
@@ -309,6 +331,25 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
             "eval_result": ec.get("result"),
             "constraints_passed": sum(1 for k, v in ec.items() if k.endswith("_pass") and v),
             "constraints_total": sum(1 for k in ec if k.endswith("_pass")),
+            # B32. Absolute fuel rewards runs that did NOTHING: the untouched
+            # baseline is already well optimised (aviary's default-aircraft
+            # benchmark is 6975 kg), so a run that changed no parameters lands
+            # near it, while runs that genuinely explored the design space score
+            # 12,000-23,000. Measured 2026-08-12: a run with
+            # `set_high_level_parameters: 0` and `design_applied: {}` recorded
+            # 5/5 constraints and `eval: success`, and two of the three best
+            # fuel figures in the dataset come from runs that never touched the
+            # aircraft. Any fuel-ordered table would be topped by them.
+            #
+            # These fields are ADDITIVE -- absolute fuel is untouched, so no
+            # existing row is invalidated and the paper can choose.
+            #   design_touched     : did the run modify the aircraft at all?
+            #   fuel_delta_vs_start: improvement against THIS chain's own start
+            #                        state, which is the like-for-like question
+            #   scoreable          : a design-optimisation data point at all?
+            "design_touched": bool(design),
+            "fuel_delta_vs_start": _fuel_delta_vs_start(result_dict, ec),
+            "scoreable": bool(design),
         },
         # cost / efficiency
         "cost": {

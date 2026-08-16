@@ -61,6 +61,13 @@ class OrchestratorContext:
     lifecycle_mode: str = "active"
 
 
+# NOTE: `list_graph_roles` is only PROVISIONED when `_graph_roles` is configured
+# (see OrchestratedStrategy), so naming it here unconditionally told the
+# orchestrator about a tool it did not have -- 4 wasted calls across the
+# 2026-08-12 sweeps, each answered "Unknown tool list_graph_roles". Same
+# declared-vs-provisioned split as B37, just cheap instead of fatal. The name is
+# kept in the set because it identifies an orchestrator-owned tool for filtering
+# worker toolsets; membership here must not be read as "the orchestrator has it".
 ORCHESTRATOR_TOOL_NAMES = frozenset(
     {
         "list_available_tools",

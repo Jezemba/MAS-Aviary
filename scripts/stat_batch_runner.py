@@ -724,11 +724,18 @@ def run_stat_batch(
         chain_feedback: str | None = None  # prior link's assessment, fed to the next link
         # Resume support: if earlier links of this combo already completed, advance the
         # chain to the last completed link's end-state so a resumed run continues.
+        # Fuel the PREVIOUS link ended at, so this link can be scored against the
+        # design it was handed rather than against the untouched baseline (B32).
+        chain_start_fuel: float | None = None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
                 chain_params = dict(done["chain_end_params"])
                 chain_feedback = done.get("chain_feedback") or chain_feedback
+                chain_start_fuel = (
+                    (done.get("eval_classification") or {}).get("fuel_burned_kg")
+                    or chain_start_fuel
+                )
 
         for repeat_idx in range(n_repeats):
             key = run_key(repeat_idx, combo.name)
@@ -855,8 +862,14 @@ def run_stat_batch(
                     # chain_end_params: the design the agents LEFT — seeds the NEXT link.
                     result_dict["chain_link"] = repeat_idx
                     result_dict["chain_start_params"] = _start
+                    # None on link 0 -- there is no predecessor, so "improvement
+                    # vs the design handed over" is undefined rather than zero.
+                    result_dict["chain_start_fuel_kg"] = chain_start_fuel
                     end_state = read_end_state_design(tool_map, session_id)
                     result_dict["chain_end_params"] = end_state
+                    _fuel_now = (result_dict.get("eval_classification") or {}).get("fuel_burned_kg")
+                    if _fuel_now is not None:
+                        chain_start_fuel = _fuel_now
                     if end_state:
                         chain_params = dict(end_state)
                         moved = sum(1 for k in end_state if abs(float(end_state[k]) - float(_start.get(k, end_state[k]))) > 1e-9)

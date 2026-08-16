@@ -228,6 +228,15 @@ class Coordinator:
                 if ifb_path:
                     ifb_yaml = load_yaml(ifb_path)
                     ifb_config = ifb_yaml.get("iterative_feedback", ifb_yaml)
+            # The handler builds its own worker context and needs the declared
+            # phases to report progress (B43). `ifb_config` is the
+            # `iterative_feedback` SUB-dict, so a key set on coord_config does
+            # not reach it -- passing it explicitly. Without this the phase
+            # status silently renders as nothing, which is the very failure B43
+            # describes.
+            if coord_config.get("_required_tool_phases"):
+                ifb_config = dict(ifb_config)
+                ifb_config["_required_tool_phases"] = coord_config["_required_tool_phases"]
             execution_handler = IterativeFeedbackHandler(ifb_config)
 
         if handler_name == "graph_routed":
