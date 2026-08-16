@@ -36,8 +36,44 @@ class TestItDoesNotStartWithoutWhatItNeeds:
 
 
 class TestItCountsWhatMatters:
-    """Counted straight from the log text, so the assertions below mirror what
-    the heartbeat computes."""
+    """Runs the REAL metric function against log text.
+
+    The first version of these tests only mirrored the counting logic and checked
+    that starting the thread did not raise -- so the thread body was never
+    executed, and `re.findall` without a module-level `import re` reached a live
+    run and died there with "NameError: name 're' is not defined". The metric
+    computation is now a separate function precisely so a test can call it.
+    """
+
+    PATTERNS = {
+        "live/mission_solves": "Calling tool: 'run_simulation'",
+        "live/su2_solves": "Calling tool: 'run_su2_solver'",
+        "live/design_state_lookups": "Calling tool: 'get_design_state'",
+    }
+
+    def _metrics(self, runner):
+        return runner._live_metrics(self.LOG, self.PATTERNS)
+
+    def test_the_real_function_runs_without_a_missing_import(self, runner):
+        """The regression: this exact call raised NameError in production."""
+        assert self._metrics(runner)["live/mission_solves"] == 3
+
+    def test_budget_is_parsed_by_the_real_function(self, runner):
+        d = self._metrics(runner)
+        assert d["live/passes_remaining"] == 5 and d["live/passes_max"] == 25
+
+    def test_failure_counters_from_the_real_function(self, runner):
+        d = self._metrics(runner)
+        assert d["live/su2_config_rejections"] == 4
+        assert d["live/session_errors"] == 2
+
+    def test_lookup_tool_counter_from_the_real_function(self, runner):
+        assert self._metrics(runner)["live/design_state_lookups"] == 1
+
+    def test_empty_log_does_not_raise(self, runner):
+        d = runner._live_metrics("", self.PATTERNS)
+        assert d["live/mission_solves"] == 0
+        assert "live/passes_remaining" not in d
 
     LOG = (
         "Calling tool: 'run_simulation'\n" * 3

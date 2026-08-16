@@ -46,6 +46,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -474,6 +475,32 @@ def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cov
 _LIVE_STATE: dict[str, object] = {"combo": "", "link": -1, "attempt": 0, "t0": 0.0}
 
 
+def _live_metrics(text: str, patterns: dict) -> dict:
+    """Compute the live metric dict from the sweep log text.
+
+    Split out of the heartbeat thread so it is actually EXERCISED by a test. The
+    first version lived inside the thread body, and the unit tests only checked
+    counting logic in isolation and that starting the thread did not raise -- so
+    `re.findall` running without a module-level `import re` reached a live run
+    and died there with "NameError: name 're' is not defined". A function-local
+    import elsewhere in this file had been hiding the missing top-level one.
+    """
+    data = {k: text.count(v) for k, v in patterns.items()}
+    # Latest budget line, so the pass burn-down is visible live.
+    m = re.findall(r"BUDGET: (\d+) of (\d+) passes remaining", text)
+    if m:
+        data["live/passes_remaining"] = int(m[-1][0])
+        data["live/passes_max"] = int(m[-1][1])
+    data["live/su2_config_rejections"] = text.count("invalid option name")
+    data["live/session_errors"] = text.count("Unknown session_id")
+    t0 = float(_LIVE_STATE.get("t0") or 0)
+    if t0:
+        data["live/elapsed_min"] = round((time.time() - t0) / 60, 1)
+    data["live/chain_link"] = _LIVE_STATE.get("link", -1)
+    data["live/attempt"] = _LIVE_STATE.get("attempt", 0)
+    return data
+
+
 def _start_live_heartbeat(wb_run, interval_s: int = 60):
     """Stream progress to W&B WHILE a run is in flight, not only when it ends.
 
@@ -512,20 +539,8 @@ def _start_live_heartbeat(wb_run, interval_s: int = 60):
                     text = fh.read()
             except OSError:
                 continue
-            data = {k: text.count(v) for k, v in patterns.items()}
-            # Latest budget line, so the pass burn-down is visible live.
-            m = re.findall(r"BUDGET: (\d+) of (\d+) passes remaining", text)
-            if m:
-                data["live/passes_remaining"] = int(m[-1][0])
-                data["live/passes_max"] = int(m[-1][1])
-            data["live/su2_config_rejections"] = text.count("invalid option name")
-            data["live/session_errors"] = text.count("Unknown session_id")
-            t0 = float(_LIVE_STATE.get("t0") or 0)
-            if t0:
-                data["live/elapsed_min"] = round((time.time() - t0) / 60, 1)
-            data["live/chain_link"] = _LIVE_STATE.get("link", -1)
-            data["live/attempt"] = _LIVE_STATE.get("attempt", 0)
             try:
+                data = _live_metrics(text, patterns)
                 wandb.log(data)
             except Exception:
                 pass   # telemetry must never take down a run
