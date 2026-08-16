@@ -808,6 +808,7 @@ def run_stat_batch(
             # Retry loop
             timeout_sec = timeout_minutes * 60
             last_error = None
+            attempts_used = 0
             for attempt in range(1, max_retries + 1):
                 try:
                     result = _run_with_timeout(
@@ -988,6 +989,7 @@ def run_stat_batch(
 
                 except Exception as e:
                     last_error = f"{type(e).__name__}: {e}"
+                    attempts_used = attempt
                     print(f"  attempt {attempt}/{max_retries} failed: {last_error}")
                     # B50. A timeout is not a transient fault. The retry restarts
                     # from the SAME deterministic chain start with the SAME
@@ -1019,14 +1021,21 @@ def run_stat_batch(
                             print(f"  pre-hook retry failed: {re_e}")
 
             if last_error:
+                # Report the attempts that RAN, not the configured maximum. B50
+                # stops after the first TimeoutError, so `max_retries` here read
+                # "FAILED after 3 attempts" for a run that made one -- misreporting
+                # exactly the waste B50 exists to prevent, to anyone reading the log.
+                _used = attempts_used or max_retries
                 checkpoint["failed"][key] = {
                     "repeat_index": repeat_idx,
                     "combo_name": combo.name,
                     "error": last_error,
-                    "attempts": max_retries,
+                    "attempts": _used,
+                    "max_attempts": max_retries,
                 }
                 save_checkpoint(ckpt_path, checkpoint)
-                print(f"  FAILED after {max_retries} attempts: {last_error}")
+                _plural = "attempt" if _used == 1 else "attempts"
+                print(f"  FAILED after {_used} {_plural} (max {max_retries}): {last_error}")
                 if wb_run:
                     wandb.log(
                         {
