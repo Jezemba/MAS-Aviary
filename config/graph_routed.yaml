@@ -21,9 +21,16 @@ graph_routed:
   allow_graph_modification: false
 
   # --- Internal Representations ---
-  # Whether to add mental model instructions to agent prompts
+  # Whether to add mental model instructions to agent prompts.
+  #
+  # ENABLED 2026-08-16. This was false, and it is the ONLY channel that carries
+  # "The system has N passes remaining" to the agent. Measured (sweep_final5
+  # run 6, orchestrated_graph_routed): the ResourceManager tracked passes
+  # correctly for the whole run and the agent was told ZERO times, so it kept
+  # exploring until the wall clock killed it with no result. max_passes stays 8;
+  # what changed is that the agent can now see the budget it is spending.
   internal_representations:
-    enabled: false
+    enabled: true
 
   # --- Condition Evaluation ---
   # How error types are extracted from tool call stderr

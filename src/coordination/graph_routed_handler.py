@@ -780,6 +780,30 @@ class GraphRoutedHandler(ExecutionHandler):
         validate_graph_strict(graph)
         return graph
 
+    def _format_budget_warning(self) -> str:
+        """Tell the agent where it stands, and warn it to wrap up before the
+        budget is gone. Empty string when there is nothing worth saying."""
+        if self._resource_mgr is None:
+            return ""
+        rs = self._resource_mgr.state
+        left, total = rs.passes_remaining, getattr(rs, "passes_max", None)
+        if left is None:
+            return ""
+        budget = f"BUDGET: {left} of {total} passes remaining." if total else f"BUDGET: {left} passes remaining."
+        if left <= 0:
+            return (budget + " This is your FINAL output. Report the best design you"
+                    " have reached and the results you have measured -- do not start"
+                    " new analysis.")
+        if left == 1:
+            return (budget + " This is your LAST pass. Finish the current step, then"
+                    " report the best design you have reached and its results. Do not"
+                    " begin a new design iteration.")
+        if left == 2:
+            return (budget + " This is your second-to-last pass. Plan to converge:"
+                    " if the next change does not improve the result, report the best"
+                    " design you have so far rather than continuing to search.")
+        return budget
+
     def _build_agent_context(
         self,
         task: str,
@@ -788,6 +812,22 @@ class GraphRoutedHandler(ExecutionHandler):
     ) -> str:
         """Build the context string for an agent at a given state."""
         parts: list[str] = [task]
+
+        # Budget warning, mirroring the iterative_feedback handler's
+        # second-to-last-attempt notice, which graph_routed never had.
+        #
+        # Deliberately NOT inside _build_mental_model: that is gated on
+        # `internal_representations`, and a run-ending warning must not depend on
+        # a display flag. Measured (sweep_final5 run 6, orchestrated_graph_routed):
+        # `passes_remaining` was tracked correctly the whole time but reached the
+        # agent ZERO times, because the mental model was the only channel and it
+        # was disabled -- the run then spent its budget exploring and was killed
+        # by the wall clock with no result at all.
+        #
+        # Denominated in PASSES, not seconds: an iteration budget is what the
+        # agent can reason about and what the ResourceManager actually enforces.
+        parts.append(self._format_budget_warning())
+        parts = [p for p in parts if p]
 
         # Previous output as context.
         last_output = self._state_dict.get("last_agent_output", "")
