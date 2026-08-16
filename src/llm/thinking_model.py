@@ -413,5 +413,42 @@ class ThinkingModel(TransformersModel):
 
 
 def strip_think_blocks(text: str) -> str:
-    """Remove all ``<think>...</think>`` blocks from *text*."""
+    """Remove all ``<think>...</think>`` blocks from *text*, after RECORDING them.
+
+    Stripping is necessary -- reasoning traces confuse the JSON extractor -- but
+    discarding them left the logs with tool calls and observations and no WHY.
+    Debugging a run that calls run_simulation over and over then means inferring
+    motive from behaviour, which is guessing: an agent exploring a design space
+    and an agent stuck in a loop look identical from the outside.
+
+    So the reasoning is emitted to the logger before it is dropped. It reaches
+    the sweep log (and from there the W&B console mirror) without re-entering the
+    model's context, so it changes nothing the agent sees -- purely an
+    observability change, not a behavioural one.
+    """
+    blocks = _THINK_RE.findall(text or "")
+    for block in blocks:
+        inner = block[len("<think>"):-len("</think>")].strip()
+        if inner:
+            _log_reasoning(inner)
     return _THINK_RE.sub("", text).strip()
+
+
+# Reasoning can be long and repetitive; a bounded excerpt keeps the sweep log
+# readable while still answering "what did it think it was doing?".
+_REASONING_CHARS = 700
+
+
+def _log_reasoning(text: str) -> None:
+    """Print, do not logger.info.
+
+    The batch runner configures logging at WARNING, so an INFO record is dropped
+    and the reasoning would be as invisible as before -- the same trap that made
+    two earlier monitor patterns match nothing. stdout is how agent output
+    already reaches the sweep log and, from there, the W&B console mirror.
+    """
+    excerpt = text if len(text) <= _REASONING_CHARS else text[:_REASONING_CHARS] + " ...[truncated]"
+    try:
+        print(f"REASONING: {excerpt}", flush=True)
+    except Exception:
+        pass   # never let observability break a run
