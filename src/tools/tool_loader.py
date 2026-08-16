@@ -10,6 +10,23 @@ from src.tools.type_coercion import apply_coercion_to_tools
 _active_connectors: list = []
 
 
+def _with_design_state(tools: list) -> list:
+    """Append the shared-state read tool, once.
+
+    Every worker gets it, in every combination: it is a DISCOVERY tool, so it
+    must not privilege one coordination structure over another. Without it the
+    design state -- which already records the correct session id for each server
+    -- is unreachable, and a worker's only source is the task preamble, which
+    hands it the aviary session id and the aviary parameter names regardless of
+    which server it is about to call (B53/B54/B55).
+    """
+    from src.tools.design_state_tool import GetDesignState
+
+    if any(getattr(t, "name", None) == GetDesignState.name for t in tools):
+        return tools
+    return list(tools) + [GetDesignState()]
+
+
 def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]:
     """Load tool instances for an agent based on config mode.
 
@@ -46,7 +63,7 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
     _init_data_plane_if_needed(connector)
 
     if not tool_names:
-        return apply_coercion_to_tools(all_tools)
+        return apply_coercion_to_tools(_with_design_state(all_tools))
 
     # Resolve tool names, supporting server-scoped patterns.
     has_server_patterns = any("." in name for name in tool_names)
@@ -60,7 +77,7 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
                 if t.name not in seen:
                     result.append(t)
                     seen.add(t.name)
-        return apply_coercion_to_tools(result)
+        return apply_coercion_to_tools(_with_design_state(result))
 
     # Simple name-based lookup (backward compatible).
     tool_map = {t.name: t for t in all_tools}
