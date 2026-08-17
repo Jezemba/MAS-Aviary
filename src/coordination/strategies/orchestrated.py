@@ -1218,6 +1218,47 @@ class OrchestratedStrategy(CoordinationStrategy):
         assignment = assignments[self._execution_index]
         self._execution_index += 1
 
+        # A staged pipeline runs forwards only (B57).
+        #
+        # This guard lives HERE, in active lifecycle mode, because that is the
+        # mode orchestrated+staged_pipeline actually runs in -- config/orchestrated.yaml
+        # sets `lifecycle_mode: active`. An earlier version of this fix was placed
+        # in _per_stage_execution and never executed: I had inferred per_stage was
+        # active because PHASES lines appeared in the log, but B40 added those to
+        # _format_context_for_orchestrator too, so they appear in BOTH modes.
+        #
+        # _transition_to_execution reorders the INITIAL assignment batch into
+        # pipeline order, but assignments the orchestrator adds afterwards are
+        # appended and consumed in whatever order it chose. Measured 2026-08-17:
+        # after completing stages 1-4 it re-assigned geometry_engineer (stage 1),
+        # spending 9 of 30 turns without ever reaching stages 5-7 -- no mission,
+        # no verdict, no fuel figure.
+        #
+        # Retrying the CURRENT stage stays allowed (a failed stage should re-run)
+        # and skipping FORWARD stays allowed (the orchestrator may judge a stage
+        # unnecessary); only going BACKWARDS is refused.
+        if self._pipeline_stage_names:
+            try:
+                _idx = self._pipeline_stage_names.index(assignment["agent_name"])
+            except (ValueError, KeyError, TypeError):
+                _idx = None
+            if _idx is not None:
+                if _idx < self._max_stage_reached:
+                    _cur = self._pipeline_stage_names[self._max_stage_reached]
+                    _nxt = (self._pipeline_stage_names[self._max_stage_reached + 1]
+                            if self._max_stage_reached + 1 < len(self._pipeline_stage_names)
+                            else None)
+                    self._pending_phase_note = (
+                        f"REJECTED: {assignment['agent_name']} is stage {_idx + 1}, but the "
+                        f"pipeline has already completed stage {self._max_stage_reached + 1} "
+                        f"({_cur}). A staged pipeline runs forwards only -- you may re-run "
+                        f"{_cur} or move on to "
+                        + (f"{_nxt}." if _nxt else "the final stage.")
+                        + " Assign the next stage, not an earlier one."
+                    )
+                    return self._retry_via_orchestrator(history)
+                self._max_stage_reached = max(self._max_stage_reached, _idx)
+
         # Graph-routed handoff — see the matching block in
         # _setup_only_execution. Hand the handler the RAW user task so
         # its per-state prompts (not the orchestrator's per-agent task)

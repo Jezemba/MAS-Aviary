@@ -185,3 +185,90 @@ class TestTheGuardItself:
         action = s._per_stage_execution([], {"task": "t"})
         assert action.agent_name == "propulsion_analyst"
         assert s._max_stage_reached == 3
+
+
+class TestTheGuardInActiveMode:
+    """The mode orchestrated+staged_pipeline ACTUALLY runs in.
+
+    The first version of this fix was placed in _per_stage_execution and never
+    executed once: config/orchestrated.yaml sets `lifecycle_mode: active`. I had
+    inferred per_stage from PHASES lines in the log, but B40 added those to
+    _format_context_for_orchestrator as well, so they appear in BOTH modes -- a
+    symptom common to both branches read as proof of one.
+
+    These tests drive _active_execution, which is where the worker is dispatched.
+    """
+
+    @staticmethod
+    def _ctx(assignments):
+        class _C:
+            pass
+        c = _C()
+        c.assignments = list(assignments)
+        c.turn_counter = 1
+        c.required_tool_phases = {}
+        c.required_result_signals = []
+        c.created_agents = []
+        c.available_tools = {}
+        c.agents = {}
+        # _active_execution consults result_signals once past the first
+        # assignment; the stub needs it or the guard test dies before reaching
+        # the guard.
+        c.result_signals = {}
+        return c
+
+    def _strategy(self, reached, assignments, exec_index=0):
+        s = OrchestratedStrategy()
+        s._pipeline_stage_names = list(STAGES)
+        s._max_stage_reached = reached
+        s._context = self._ctx(assignments)
+        s._phase = "execution"
+        s._lifecycle_mode = "active"
+        s._orchestrator_name = "orchestrator"
+        s._agents = {}
+        s._execution_index = exec_index
+        s._graph_roles = None
+        return s
+
+    def test_backward_assignment_is_not_dispatched(self):
+        s = self._strategy(3, [{"agent_name": "geometry_engineer", "task": "redo"}])
+        action = s._active_execution([], {"task": "t"})
+        assert action.agent_name != "geometry_engineer"
+
+    def test_the_orchestrator_is_told_which_stage_to_assign(self):
+        s = self._strategy(3, [{"agent_name": "geometry_engineer", "task": "redo"}])
+        s._active_execution([], {"task": "t"})
+        note = s._pending_phase_note or ""
+        assert "REJECTED" in note
+        assert "propulsion_analyst" in note     # where the pipeline is
+        assert "mission_architect" in note      # what to assign next
+
+    def test_forward_assignment_dispatches_and_advances_the_mark(self):
+        s = self._strategy(3, [{"agent_name": "mission_architect", "task": "configure"}])
+        action = s._active_execution([], {"task": "t"})
+        assert action.agent_name == "mission_architect"
+        assert s._max_stage_reached == 4
+
+    def test_same_stage_retry_still_dispatches(self):
+        s = self._strategy(3, [{"agent_name": "propulsion_analyst", "task": "retry"}])
+        action = s._active_execution([], {"task": "t"})
+        assert action.agent_name == "propulsion_analyst"
+        assert s._max_stage_reached == 3
+
+    def test_the_observed_sequence_is_now_blocked(self):
+        """The exact order from the failing run: stages 1,2,3,4 then back to 1."""
+        s = self._strategy(0, [])
+        for name in ("geometry_engineer", "aerodynamics_analyst",
+                     "structures_analyst", "propulsion_analyst"):
+            s._context.assignments.append({"agent_name": name, "task": "x"})
+            act = s._active_execution([], {"task": "t"})
+            assert act.agent_name == name, f"{name} should have run"
+        s._context.assignments.append({"agent_name": "geometry_engineer", "task": "rewind"})
+        act = s._active_execution([], {"task": "t"})
+        assert act.agent_name != "geometry_engineer", "the rewind was not blocked"
+
+    def test_a_non_pipeline_agent_is_unaffected(self):
+        """Workers outside the pipeline must not be caught by the guard."""
+        s = self._strategy(3, [{"agent_name": "some_helper", "task": "x"}])
+        action = s._active_execution([], {"task": "t"})
+        assert action.agent_name == "some_helper"
