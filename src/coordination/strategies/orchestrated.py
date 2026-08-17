@@ -130,6 +130,14 @@ class OrchestratedStrategy(CoordinationStrategy):
         # + staged_pipeline where the orchestrator can't reliably
         # plan all 7 disciplines' tool needs upfront.
         self._current_stage_idx: int = 0
+        # Furthest pipeline stage the run has reached. A staged pipeline is a
+        # LINEAR sequence, so progression must be monotonic: retry the current
+        # stage yes, skip forward yes, go BACKWARDS no. Measured 2026-08-17
+        # (B57): after completing stages 1-4 the orchestrator re-assigned
+        # geometry_engineer (stage 1) and the cursor simply followed it, turning
+        # the pipeline into a free-form loop -- 9 of 30 turns spent without ever
+        # reaching stages 5-7, so no mission, no verdict and no fuel figure.
+        self._max_stage_reached: int = 0
 
         # Delegation progress tracking (detects stalls / direct completion).
         self._prev_created_count: int = 0
@@ -306,6 +314,7 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._prev_assignment_count = 0
         self._stall_turns = 0
         self._current_stage_idx = 0
+        self._max_stage_reached = 0
         self._signals_scanned_up_to = 0
         self._signal_retry_count = 0
 
@@ -998,14 +1007,44 @@ class OrchestratedStrategy(CoordinationStrategy):
             self._orchestrator_turns_used = 0
             return self._creation_step(history, current_state)
 
+        # Refuse to move BACKWARDS through the pipeline (B57).
+        #
+        # The cursor used to be set to whatever stage the orchestrator named,
+        # with no comparison to where the pipeline already was, so an assignment
+        # to an earlier stage silently rewound it. Retrying the CURRENT stage is
+        # legitimate (a stage that failed should be re-run) and skipping FORWARD
+        # is a decision the orchestrator is entitled to make; going back to a
+        # completed stage is neither, and it is what separates
+        # orchestrated_staged_pipeline from sequential_staged_pipeline running
+        # the same experiment.
+        try:
+            _idx = self._pipeline_stage_names.index(match["agent_name"])
+        except ValueError:
+            _idx = None
+        if _idx is not None and _idx < self._max_stage_reached:
+            _cur = self._pipeline_stage_names[self._max_stage_reached]
+            _next = (self._pipeline_stage_names[self._max_stage_reached + 1]
+                     if self._max_stage_reached + 1 < len(self._pipeline_stage_names)
+                     else None)
+            self._pending_phase_note = (
+                f"REJECTED: {match['agent_name']} is stage {_idx + 1} and the pipeline has "
+                f"already completed stage {self._max_stage_reached + 1} ({_cur}). A staged "
+                f"pipeline runs forwards only -- you may re-run {_cur} or move on to "
+                + (f"{_next}." if _next else "the final stage.")
+                + " Assign the next stage, not an earlier one."
+            )
+            # Drop it, or the same assignment is re-selected forever.
+            if self._context and match in self._context.assignments:
+                self._context.assignments.remove(match)
+            self._phase = "creation"
+            self._orchestrator_turns_used = 0
+            return self._creation_step(history, current_state)
+
         # Sync cursor to whatever stage we're about to run, so other
         # code paths (logs, metadata) see the correct stage.
-        try:
-            self._current_stage_idx = self._pipeline_stage_names.index(
-                match["agent_name"]
-            )
-        except ValueError:
-            pass  # match not in stages — shouldn't happen given the filter
+        if _idx is not None:
+            self._current_stage_idx = _idx
+            self._max_stage_reached = max(self._max_stage_reached, _idx)
 
         # Build worker input. Just task + previous-stage output. NO
         # SESSION_ID injection (workers confuse it with file paths;
