@@ -81,6 +81,38 @@ def _applied_design(traces: dict[str, Any]) -> dict[str, float]:
 
 
 
+# The integrator's VERDICT, parsed from its final text.
+#
+# Since 2026-08-16 EVERY verdict ends the run (RESULTS_REVIEW -> COMPLETE), so the
+# verdict is no longer just a routing key -- it IS the run's quality signal, and
+# the only place the integrator's own judgement survives. Before that change a
+# non-passing verdict sent the graph round another design cycle; now it is
+# recorded and the next chain link acts on RECOMMENDED_CHANGE via chain_feedback.
+_VERDICT_RE = re.compile(r"['\"]?VERDICT['\"]?\s*[:=]\s*['\"]?(PASSED|MINOR_ISSUES|MAJOR_ISSUES)",
+                         re.IGNORECASE)
+
+
+def _integrator_verdict(traces: dict[str, Any]) -> str | None:
+    """Last verdict the integrator stated, or None if it never stated one.
+
+    None is meaningful and must not be conflated with a failing verdict: a run
+    that never reached the review stage is a different outcome from one that
+    reached it and judged the design inadequate.
+    """
+    found = None
+    for body in (traces or {}).values():
+        if not isinstance(body, dict):
+            continue
+        for st in body.get("steps", []) or []:
+            for key in ("output", "observations", "content", "model_output"):
+                text = st.get(key)
+                if not isinstance(text, str):
+                    continue
+                for m in _VERDICT_RE.finditer(text):
+                    found = m.group(1).upper()
+    return found
+
+
 def _fuel_delta_vs_start(result_dict: dict[str, Any], ec: dict[str, Any]) -> float | None:
     """Fuel improvement relative to this chain link's OWN starting design.
 
@@ -347,6 +379,11 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
             #   fuel_delta_vs_start: improvement against THIS chain's own start
             #                        state, which is the like-for-like question
             #   scoreable          : a design-optimisation data point at all?
+            # The integrator's own judgement of the design. Since every verdict
+            # now ends the run, this is the run's quality signal rather than a
+            # routing key. None = the review stage was never reached, which is a
+            # different outcome from a failing verdict.
+            "integrator_verdict": _integrator_verdict(traces),
             "design_touched": bool(design),
             "fuel_delta_vs_start": _fuel_delta_vs_start(result_dict, ec),
             "scoreable": bool(design),

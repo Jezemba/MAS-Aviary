@@ -796,9 +796,14 @@ class GraphRoutedHandler(ExecutionHandler):
         is a signal both handlers give. What differs is only the unit (passes vs
         attempts), which is intrinsic to the handler.
         """
-        if self._resource_mgr is None:
+        # getattr, not attribute access: _build_agent_context is exercised by
+        # tests (and reachable in code paths) where the handler was constructed
+        # without _initialize having run, so the attribute may not exist yet. A
+        # budget warning must never be the thing that breaks context building.
+        mgr = getattr(self, "_resource_mgr", None)
+        if mgr is None:
             return ""
-        rs = self._resource_mgr.state
+        rs = mgr.state
         left, total = rs.passes_remaining, getattr(rs, "passes_max", None)
         if left is None or left > 2:
             return ""   # silent while the budget is comfortable

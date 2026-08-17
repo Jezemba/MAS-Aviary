@@ -440,13 +440,35 @@ mdo_f25_graph:
       # (propulsion's SFC/Fn feeds nothing downstream, so gate it here
       # so the verdict still reflects a completed propulsion discipline).
       depends_on: ["SIMULATION_RUN", "PROPULSION_SIZING"]
+      # ANY verdict ends the run (changed 2026-08-16). It used to loop
+      # minor/major_issues back to GEOMETRY_SETUP for another design cycle, and
+      # that loop could not terminate on its own: COMPLETE needs
+      # VERDICT: PASSED, which needs fuel <= 15000, and COUPLED runs land at
+      # 17,900-20,500 kg because real SU2 drag is in the mission (uncoupled runs
+      # sit near 7,000 and pass trivially). So the better the physics coupling,
+      # the more certain the non-termination -- every coupled graph_routed run
+      # was killed by the transition cap or the wall clock instead of finishing.
+      #
+      # Refinement is NOT lost: it already happens across cumulative chain links,
+      # where link k+1 starts from link k's end-state design (chain_end_params).
+      # The within-run loop was a second, redundant refinement stacked on it.
+      #
+      # It also removes a confound. Combos differed in how many within-run cycles
+      # they could fit before the cap or clock -- sequential fit several,
+      # orchestrated fewer because it pays orchestrator turns between stages -- so
+      # part of what the fuel numbers measured was "how many cycles fit", not
+      # coordination quality. One cycle per run makes all eight comparable, and
+      # the chain iterates on equal terms for everyone.
+      #
+      # The verdict is still the run's quality signal: it is recorded in the
+      # ledger, and RECOMMENDED_CHANGE feeds the next link via chain_feedback.
       transitions:
         - condition: "review_verdict == 'passed'"
           target: "COMPLETE"
         - condition: "review_verdict == 'minor_issues'"
-          target: "GEOMETRY_SETUP"
+          target: "COMPLETE"
         - condition: "review_verdict == 'major_issues'"
-          target: "GEOMETRY_SETUP"
+          target: "COMPLETE"
 
     ERROR_CLASSIFICATION:
       agent: null
