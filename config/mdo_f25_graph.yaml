@@ -221,8 +221,20 @@ mdo_f25_graph:
       transitions:
         - condition: "execution_success == true"
           target: "PROPULSION_SIZING"
+        # Retry the stage that FAILED, not the whole pipeline (B62).
+        #
+        # This used to send a mass failure back to GEOMETRY_SETUP. Geometry is not
+        # what failed, so the restart regenerates a mesh that was already correct
+        # and the run returns to the same failing stage with nothing changed.
+        # Measured 2026-08-17 (all7 run 13): generate_volume_mesh ran 17 times,
+        # every one SUCCEEDING at ~77 s, while the run made no progress and
+        # eventually exhausted GPU memory -- the OOM was a symptom of the repeated
+        # passes, not an infrastructure ceiling.
+        #
+        # AERO_ANALYSIS and GEOMETRY_SETUP already self-retry; this makes
+        # MASS_ESTIMATION consistent with them.
         - condition: "execution_success == false"
-          target: "GEOMETRY_SETUP"
+          target: "MASS_ESTIMATION"
 
     PROPULSION_SIZING:
       agent: "propulsion_analyst"

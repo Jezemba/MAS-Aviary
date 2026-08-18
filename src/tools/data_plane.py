@@ -128,6 +128,23 @@ def _is_large_structured_payload(value: Any) -> bool:
     return False
 
 
+# A listing counts as REFERENCE data when it is short strings -- variable names,
+# option names, component UIDs. Those are cheap to return whole and expensive to
+# withhold. Anything larger (dicts of results, base64 blobs, trajectories) still
+# gets the preview + ref treatment.
+_REFERENCE_MAX_ITEMS = 200
+_REFERENCE_MAX_ITEM_CHARS = 120
+
+
+def _is_reference_listing(value: list) -> bool:
+    """True when a list is a small set of short strings, i.e. names to choose from."""
+    if not value or len(value) > _REFERENCE_MAX_ITEMS:
+        return False
+    return all(
+        isinstance(v, str) and len(v) <= _REFERENCE_MAX_ITEM_CHARS for v in value
+    )
+
+
 def _summarize_payload(value: Any, store_key: str) -> dict:
     """Build a compact summary of a large structured payload.
 
@@ -138,6 +155,30 @@ def _summarize_payload(value: Any, store_key: str) -> dict:
     resolve_request.
     """
     if isinstance(value, list):
+        # A REFERENCE listing is returned whole (B58).
+        #
+        # Interception exists to bound context, and for bulk payloads -- meshes,
+        # config dumps, trajectories -- that is right. A list of NAMES is the
+        # opposite case: it is small, it is pure reference data, and it is exactly
+        # what stops the caller guessing. Measured 2026-08-17: an agent stated
+        # "First, I need to check the list_variables output to confirm the exact
+        # names", received 5 of 50, guessed `fan.BPR`, and pycycle answered with
+        # string-similarity near-misses (balance.hpt_PR, balance.lpt_PR, perf.OPR)
+        # that are all semantically wrong.
+        #
+        # The `ref` escape hatch was documented in the note, but using it needs a
+        # SECOND call the agent did not make -- and "a caller that must make N
+        # calls in order will make fewer than N" is this project's most repeated
+        # lesson. Truncating a name list to save context spends far more context
+        # on the retry loop that follows.
+        if _is_reference_listing(value):
+            return {
+                "_intercepted": False,
+                "kind": "list",
+                "total_count": len(value),
+                "items": value,
+                "note": "Reference listing returned in full — no second call needed.",
+            }
         return {
             "_intercepted": True,
             "ref": store_key,
