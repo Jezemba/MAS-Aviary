@@ -88,8 +88,27 @@ def _applied_design(traces: dict[str, Any]) -> dict[str, float]:
 # the only place the integrator's own judgement survives. Before that change a
 # non-passing verdict sent the graph round another design cycle; now it is
 # recorded and the next chain link acts on RECOMMENDED_CHANGE via chain_feedback.
-_VERDICT_RE = re.compile(r"['\"]?VERDICT['\"]?\s*[:=]\s*['\"]?(PASSED|MINOR_ISSUES|MAJOR_ISSUES)",
-                         re.IGNORECASE)
+# Each handler asks for a DIFFERENT verdict vocabulary, so a single alternation
+# silently reports None for most of the matrix. Measured 2026-08-17: the ledger
+# recorded a verdict for graph_routed only, and the traces "contained no verdict"
+# -- but sequential_staged_pipeline's integrator had said
+# "Verdict: CONTINUE", which is exactly what that handler's own
+# `verdict_patterns` config asks for (CONTINUE / RETRY / COMPLETE / CONVERGED),
+# while the graph asks for PASSED / MINOR_ISSUES / MAJOR_ISSUES.
+_VERDICT_RE = re.compile(
+    r"['\"]?VERDICT['\"]?\s*[:=]\s*['\"]?"
+    r"(PASSED|MINOR_ISSUES|MAJOR_ISSUES|CONTINUE|RETRY|COMPLETE|CONVERGED)",
+    re.IGNORECASE,
+)
+
+# Cross-combo comparison needs one scale. The raw token is kept as well, because
+# "CONTINUE" and "MINOR_ISSUES" are not the same statement even if they route the
+# same way, and the paper should be able to quote what the agent actually said.
+_VERDICT_NORMAL = {
+    "PASSED": "pass", "COMPLETE": "pass", "CONVERGED": "pass",
+    "MINOR_ISSUES": "continue", "CONTINUE": "continue",
+    "MAJOR_ISSUES": "issues", "RETRY": "issues",
+}
 
 
 def _integrator_verdict(traces: dict[str, Any]) -> str | None:
@@ -384,6 +403,8 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
             # routing key. None = the review stage was never reached, which is a
             # different outcome from a failing verdict.
             "integrator_verdict": _integrator_verdict(traces),
+            "integrator_verdict_class": _VERDICT_NORMAL.get(
+                _integrator_verdict(traces) or "", None),
             "design_touched": bool(design),
             "fuel_delta_vs_start": _fuel_delta_vs_start(result_dict, ec),
             "scoreable": bool(design),
