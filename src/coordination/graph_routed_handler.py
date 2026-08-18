@@ -678,17 +678,36 @@ class GraphRoutedHandler(ExecutionHandler):
                 self._sync_resource_state()
 
             # Evaluate transitions.
+            #
+            # NOTE: this is a SECOND, inlined copy of the logic in
+            # _evaluate_transitions() -- and it is the copy that actually runs in
+            # execute(). The duplication is why several fixes and one trace landed
+            # in dead code on 2026-08-17/18: there is no single place where
+            # transitions are decided, so "I put the guard where the decision
+            # happens" was true of the other copy. Both are traced until they are
+            # unified; do not remove one without checking which callers reach it.
             matched_condition = None
             next_state = None
             for trans in state_def.transitions:
                 try:
                     result = evaluate_condition(trans.condition, self._state_dict)
-                except ConditionParseError:
+                except ConditionParseError as exc:
+                    print(f"TRANSITION: {current_state} | condition={trans.condition!r}"
+                          f" | UNPARSEABLE ({exc}) -- skipped", flush=True)
                     continue
                 if result.matched:
                     next_state = trans.target
                     matched_condition = trans.condition
+                    print(f"TRANSITION: {current_state} -> {next_state}"
+                          f" | matched={matched_condition!r}"
+                          f" | execution_success={self._state_dict.get('execution_success')}",
+                          flush=True)
                     break
+            if next_state is None:
+                print(f"TRANSITION: {current_state} -> (none matched)"
+                      f" | execution_success={self._state_dict.get('execution_success')}"
+                      f" | tried={[tr.condition for tr in state_def.transitions]}",
+                      flush=True)
 
             if next_state is None:
                 # No matching transition — stuck.
