@@ -955,14 +955,37 @@ class GraphRoutedHandler(ExecutionHandler):
             self._state_dict["last_error"] = ""
 
     def _evaluate_transitions(self, state_def: Any) -> str | None:
-        """Evaluate transitions from a state and return the next state."""
+        """Evaluate transitions from a state and return the next state.
+
+        Every decision is TRACED. Without this the handler chose a transition and
+        recorded nothing about why, so the only way to reconstruct a routing loop
+        was to grep state names out of the log -- and those names also appear in
+        prompt text, which produced three confident wrong diagnoses on 2026-08-17
+        (a phantom AERO->GEOMETRY oscillation, a misattributed substring
+        classifier, and B57's guard "not firing" when the guarded path was never
+        the one running).
+
+        Printed, not logger.debug: the batch runner configures logging at WARNING,
+        so a debug record would be dropped and the trace would be as invisible as
+        what it replaces. stdout reaches the sweep log and the W&B console mirror.
+        """
         for trans in state_def.transitions:
             try:
                 result = evaluate_condition(trans.condition, self._state_dict)
-            except ConditionParseError:
+            except ConditionParseError as exc:
+                print(f"TRANSITION: {state_def.name} | condition={trans.condition!r} "
+                      f"| UNPARSEABLE ({exc}) -- skipped", flush=True)
                 continue
             if result.matched:
+                _es = self._state_dict.get("execution_success")
+                print(f"TRANSITION: {state_def.name} -> {trans.target} "
+                      f"| matched={trans.condition!r} | execution_success={_es}",
+                      flush=True)
                 return trans.target
+        _es = self._state_dict.get("execution_success")
+        print(f"TRANSITION: {state_def.name} -> (none matched) "
+              f"| execution_success={_es} | tried="
+              f"{[tr.condition for tr in state_def.transitions]}", flush=True)
         return None
 
     def _sync_resource_state(self) -> None:
