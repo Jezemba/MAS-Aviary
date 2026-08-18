@@ -90,6 +90,25 @@ def _inject_skill_reference(orchestrator_agent, skill_loader) -> None:
         mem.system_prompt = (str(sp_holder) if sp_holder else "") + appendix
 
 
+def _unassessed_note(phases, done) -> str:
+    """Warn when the FINAL declared phase -- the assessment -- has not run.
+
+    Without it a run ends with a fuel number and no verdict, and no
+    RECOMMENDED_CHANGE for the next chain link. Measured 2026-08-17:
+    orchestrated_staged_pipeline never reached mdo_integrator in EITHER link, so
+    both produced fuel figures with no assessment behind them.
+
+    Information, not a gate: working out the stage order is precisely what an
+    orchestrated structure is measured on, so this must not constrain the choice.
+    """
+    names = list(phases or [])
+    if not names or names[-1] in (done or set()):
+        return ""
+    return (f"NOTE: the design has NOT been assessed -- the final phase "
+            f"({names[-1]}) has not run, so this run will end without a verdict "
+            f"or a recommendation for the next iteration.\n")
+
+
 class OrchestratedStrategy(CoordinationStrategy):
     """Dynamic team-creation strategy with orchestrator agent."""
 
@@ -1318,7 +1337,8 @@ class OrchestratedStrategy(CoordinationStrategy):
             done = self._phases_done(history)
             pending, _ = self._next_required_phase(history)
             lines.append(
-                "PHASES run so far: " + (", ".join(p for p in phases if p in done) or "none")
+                _unassessed_note(phases, done)
+                + "PHASES run so far: " + (", ".join(p for p in phases if p in done) or "none")
                 + ("; not yet run: " + pending if pending else "; all phases have run")
             )
         for msg in history:

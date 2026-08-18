@@ -221,6 +221,15 @@ class IterativeFeedbackHandler(ExecutionHandler):
             line += f"; not yet run: {pending}"
             line += (" (phases are listed in dependency order -- later ones "
                      "consume earlier outputs)")
+            # The final declared phase is the assessment. Without it the run ends
+            # with a fuel number and no verdict, and nothing to carry into the
+            # next chain link. Measured 2026-08-17: orchestrated_staged_pipeline
+            # never reached mdo_integrator in either link. Information, not a gate.
+            _names = list(phases)
+            if _names and pending == _names[-1]:
+                line += (". NOTE: the design has NOT been assessed -- until "
+                         f"{pending} runs this run ends without a verdict or a "
+                         "recommendation for the next iteration.")
         else:
             line += "; all phases have run"
         return line
