@@ -8,6 +8,7 @@ Supports multiple named MCP servers with:
 - Graceful degradation when individual servers are unavailable
 - Tool-to-server lookup for call routing
 - Backward compatibility with single-server configs
+- Restoring optional-argument status that the smolagents MCP adapter drops (B64)
 """
 
 import logging
@@ -17,6 +18,85 @@ from smolagents import Tool, ToolCollection
 from src.config.loader import MCPConfig, MCPServerConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _fetch_required_arguments(url: str, transport: str) -> dict[str, set[str]] | None:
+    """Ask the server directly which arguments each of its tools requires.
+
+    This is the ground truth that `mcpadapt` throws away. Returns None when it
+    cannot be fetched (unsupported transport, server hiccup), so the caller can
+    fall back to inferring from schema defaults.
+    """
+    if transport != "streamable-http":
+        return None
+    try:
+        import asyncio
+
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        async def collect() -> dict[str, set[str]]:
+            async with streamablehttp_client(url) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    listing = await session.list_tools()
+            return {
+                tool.name: set((tool.inputSchema or {}).get("required", []) or [])
+                for tool in listing.tools
+            }
+
+        return asyncio.run(collect())
+    except Exception as e:  # noqa: BLE001 - degrade to the heuristic, never break connect()
+        logger.warning("B64: could not read required-argument schema from %s: %s", url, e)
+        return None
+
+
+def _restore_optional_arguments(
+    tools: list[Tool],
+    server_name: str,
+    required_map: dict[str, set[str]] | None,
+) -> int:
+    """Re-mark optional arguments as optional (B64).
+
+    `mcpadapt.smolagents_adapter` builds a smolagents `Tool` with
+    `inputs=input_schema["properties"]` and discards the JSON-Schema `required`
+    array. `smolagents.tools.validate_tool_arguments` then treats every input
+    lacking `nullable` as mandatory, so it raises
+    `ValueError: Argument <x> is required` for arguments the server declared
+    optional. The agent sees a fresh "required" complaint on each retry and
+    fills one argument in at a time, burning a turn per argument. Measured
+    before this fix: 85 optional arguments across 60 tools on five servers were
+    presented as mandatory, worst `generate_volume_mesh` at 1 truly required
+    argument shown as 11.
+
+    `required_map` is what the server itself declares and is authoritative.
+    Without it, an argument carrying a `default` is treated as optional; that
+    agrees with the declared `required` array on all 60 real tools, but not on
+    every tool (`pycycle.ping` declares no required arguments yet gives its
+    `args` no default), which is why the declared array is preferred.
+
+    Returns the number of arguments restored, for logging.
+    """
+    restored = 0
+    for tool in tools:
+        inputs = getattr(tool, "inputs", None)
+        if not isinstance(inputs, dict):
+            continue
+        required = None if required_map is None else required_map.get(tool.name)
+        for arg_name, schema in inputs.items():
+            if not isinstance(schema, dict) or schema.get("nullable", False):
+                continue
+            if required is None:
+                optional = "default" in schema
+            else:
+                optional = arg_name not in required
+            if optional:
+                schema["nullable"] = True
+                restored += 1
+                logger.debug(
+                    "B64: %s.%s.%s marked optional", server_name, tool.name, arg_name
+                )
+    return restored
 
 
 class MCPConnector:
@@ -86,7 +166,19 @@ class MCPConnector:
         )
         collection = collection_cm.__enter__()
         self._collections.append(collection_cm)
-        return list(collection.tools)
+        tools = list(collection.tools)
+
+        server_name = server.name or server.url
+        required_map = _fetch_required_arguments(server.url, server.transport)
+        restored = _restore_optional_arguments(tools, server_name, required_map)
+        if restored:
+            logger.info(
+                "B64: restored %d optional argument(s) across %d tool(s) from %s",
+                restored,
+                len(tools),
+                server_name,
+            )
+        return tools
 
     def disconnect(self) -> None:
         """Close all MCP server connections."""
