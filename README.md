@@ -3,7 +3,7 @@
 **Multi-Agent Coordination for Aircraft Design Optimization**
 
 MAS-Aviary is a multi-agent LLM framework for aircraft design optimization
-using NASA's OpenMDAO/Aviary simulation. Autonomous agents powered by Qwen3-8B
+using NASA's OpenMDAO/Aviary simulation. Autonomous agents powered by Qwen3-32B
 coordinate via the Model Context Protocol (MCP) to optimize aircraft parameters
 such as fuel burn, gross weight, and wing mass. The framework systematically
 explores eight distinct coordination strategies spanning three organizational
@@ -14,6 +14,27 @@ multi-agent approaches on a real-world engineering optimization problem.
 |------------|-------------|
 | **MAS-Aviary** (this repo) | Multi-agent LLM framework (client) |
 | [Aviary](https://github.com/cmudrc/aviary-mcp) | MCP server wrapping NASA OpenMDAO/Aviary (backend) |
+
+---
+
+## Status — 2026-08-19
+
+**The full matrix runs end to end.** All eight coordination combinations execute the complete
+pipeline — geometry → aerodynamics → structures → propulsion → mission → simulation → MDO
+integrator — against five live MCP servers on a local Qwen3-32B. Latest results: 14 of 16 runs,
+in [`Coupled.md`](Coupled.md).
+
+Typical run: **7–42 minutes**. Chains that improve their design across links:
+`sequential_graph_routed` (+1,788 kg) and `orchestrated_graph_routed` (+1,540 kg).
+
+Getting here required fixing a defect in the MCP tool layer that had been distorting every run:
+`mcpadapt` discarded the JSON-Schema `required` array, so **85 optional arguments across 60 tools**
+were enforced as mandatory. Agents burned entire runs retrying calls that could not succeed —
+`generate_volume_mesh` rebuilt an identical mesh up to 17 times per run. Fixed at
+`MCPConnector._connect_server`; rebuilds dropped to 1 and several apparent *coordination* failures
+disappeared with it.
+
+Bug tracker: [`../.claude/BUGS.md`](../.claude/BUGS.md) · narrative: [`../.claude/CHANGELOG.md`](../.claude/CHANGELOG.md)
 
 ---
 
@@ -32,7 +53,7 @@ Strategy ──────── Sequential | Orchestrated | Networked
 Handler ────────── Iterative Feedback | Staged Pipeline | Graph-Routed
   |
   v
-Agent(s) ───────── Qwen3-8B via smolagents ToolCallingAgent
+Agent(s) ───────── Qwen3-32B via smolagents ToolCallingAgent
   |
   v
 MCP Server ─────── Streamable HTTP, tool-based interface
@@ -78,7 +99,7 @@ structures and three task-handling paradigms:
 ## Prerequisites
 
 - **Python**: 3.12 or later
-- **GPU**: NVIDIA GPU with CUDA 12.x (for Qwen3-8B inference)
+- **GPU**: NVIDIA GPU with CUDA 12.x (Qwen3-32B NF4 needs ~18 GB; runs on dual RTX 5090)
 - **OS**: Linux (tested on Ubuntu 22.04)
 
 ---
