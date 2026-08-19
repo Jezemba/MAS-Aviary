@@ -1,113 +1,116 @@
-# Coupling Results — 7-Combo Sweep, Qwen3-32B (2026-08-17)
+# Coupling Results — 8-Combo Matrix, Qwen3-32B, POST-FIX (2026-08-18/19)
 
-Sweep: `logs/all7_20260817_095456.log` · W&B run `rrnlyp8p` · 14 runs (7 combos x 2 chain
-links) · 13 hours · 150-min cap per run.
+Supersedes the 2026-08-17 pre-fix results (kept below for comparison). All runs on the LOCAL
+Qwen3-32B; no paid-API runs.
 
-Code under test: Option A (agent owns AREA/SCALE_FACTOR), B50 (timeout not retried), B51
-(solver-owned disclosure), B54 (dotted names rejected), B56 (any verdict terminates),
-threshold-only budget warning, reasoning capture.
+Sources — each sweep's own `stat_summary.csv`, **not** the append-only design ledger. The ledger
+spans sweeps, and reading its tail silently mixes old rows into new results (that trap produced a
+wrong table once already).
 
-## Results
+- main sweep: `logs/stat_results/1787078892/` · log `all8_postfix_20260818_144811.log` · W&B `16ehrrlg`
+- graph re-run: `logs/stat_results/1787156210/` · log `graph_rerun_20260819_121649.log` · W&B `7259tmgn`
 
-| combo | link | coupled | fuel (kg) | Δ vs start | constraints | verdict |
-|---|---|---|---|---|---|---|
-| sequential_iterative_feedback | 0 | False | 16,066 | — | 3/5 | — |
-| sequential_iterative_feedback | 1 | **True** | 23,820 | −7,754 | 2/5 | — |
-| sequential_staged_pipeline | 0 | **True** | 20,380 | — | 1/5 | — |
-| sequential_staged_pipeline | 1 | **True** | 20,380 | **+0** | 1/5 | — |
-| sequential_graph_routed | 0 | **True** | 23,666 | — | 2/5 | MAJOR_ISSUES |
-| sequential_graph_routed | 1 | **True** | 21,922 | **+1,745** | 2/5 | MAJOR_ISSUES |
-| orchestrated_staged_pipeline | 0 | — | TIMEOUT | — | — | — |
-| orchestrated_staged_pipeline | 1 | False | 14,613 | — | 4/5 | — |
-| orchestrated_iterative_feedback | 0 | False | 8,378 | — | 4/5 | — |
-| orchestrated_iterative_feedback | 1 | False | 17,870 | −9,492 | 1/5 | — |
-| networked_iterative_feedback | 0 | **True** | 9,568 | — | 4/5 | — |
-| networked_iterative_feedback | 1 | **True** | 10,215 | −647 | 4/5 | — |
-| networked_graph_routed | 0 | — | TIMEOUT | — | — | — |
-| networked_graph_routed | 1 | False | 7,864 | — | 4/5 | — |
+## Results — 14 of 16 runs
 
-12 successes, 2 timeouts.
+| combo | link | eval | fuel (kg) | Δ chain | opt gap % | conv | min |
+|---|---|---|---|---|---|---|---|
+| sequential_iterative_feedback | 0 | omission | 23,193 | — | 0.0 | ✓ | 32 |
+| sequential_iterative_feedback | 1 | omission | 16,066 | **+7,127** | 0.0 | ✓ | 33 |
+| sequential_staged_pipeline | 0 | **sim_fail** | 28,151 | — | 0.0 | ✗ | 28 |
+| sequential_staged_pipeline | 1 | omission | 22,834 | +5,317 | 0.0 | ✓ | 30 |
+| sequential_graph_routed | 0 | omission | 23,666 | — | 5.50 | ✓ | 21 |
+| sequential_graph_routed | 1 | omission | 21,878 | **+1,788** | 3.07 | ✓ | 24 |
+| orchestrated_staged_pipeline | 0 | omission | 14,613 | — | 20.77 | ✓ | 25 |
+| orchestrated_staged_pipeline | 1 | omission | 23,275 | −8,662 | 92.35 | ✓ | 25 |
+| orchestrated_iterative_feedback | 0 | **commission** | 7,987 | — | 0.0 | ✓ | 20 |
+| orchestrated_iterative_feedback | 1 | **commission** | 9,020 | −1,033 | 0.0 | ✓ | 12 |
+| orchestrated_graph_routed | 0 | **commission** | 21,498 | — | 77.80 | ✓ | 29 |
+| orchestrated_graph_routed | 1 | **commission** | 19,958 | **+1,540** | 61.50 | ✓ | 42 |
+| networked_iterative_feedback | 0 | omission | 8,650 | — | 0.0 | ✓ | 7 |
+| networked_graph_routed | 0 | omission | 7,148 | — | 0.0 | ✓ | 38 |
 
-## Coupling rate: 7 coupled / 3 uncoupled / 4 UNMEASURED
+**Missing (2 of 16):** `networked_iterative_feedback` link 1 and `networked_graph_routed` link 1 —
+both timed out. The networked structure runs concurrent peers against ONE local model, so inference
+serialises and context grows with peer count; both timeouts are in that structure.
 
-The headline "7 of 14" understates it. The uncoupled rows are two different things:
+## What changed post-fix
 
-| detection | rows | meaning |
+**B64 was the dominant defect.** `mcpadapt` discarded the JSON-Schema `required` array, so **85
+optional arguments across 60 tools** were enforced as mandatory. Worst hit: `generate_volume_mesh`
+(1 declared required, 11 enforced), `create_su2_session` (0 declared, 8 enforced), `estimate_mass`
+(7, including the three pinned experimental controls).
+
+| | pre-fix | post-fix |
 |---|---|---|
-| `data_plane`, `MISSING_no_su2_aero` | 3 | reliably measured as uncoupled |
-| `cd_threshold_fallback`, `status=None` | 4 | **not measured** — the mis-calibrated heuristic the ledger itself flags as unreliable |
+| mesh rebuilds per run | 9–17, all succeeding | **1** |
+| optional-arg errors | 11–104 per run | **0** (only genuinely-required args now raise) |
+| typical run duration | 25–57 min | **7–42 min** |
+| `orchestrated_iterative_feedback` | 0-for-N, never coupled | completes both links (20, 12 min) |
 
-Among rows we can trust: **7 coupled / 10 measured = 70%**.
+**`orchestrated_graph_routed` reversed direction.** Pre-fix its chain went 20,462 → 24,105 (worse);
+post-fix 21,498 → 19,958 (**+1,540 kg better**). Same seed, same anchor.
 
-## Why the uncoupled runs were uncoupled
+**Verdict capture (B61) works across handlers.** Pre-fix the field was `None` for every combo except
+graph_routed. Post-fix, `CONTINUE`, `RETRY`, `MAJOR_ISSUES` and `COMPLETE` are all captured —
+different handlers ask for different vocabularies, which one alternation could never cover.
 
-Traced end-to-end for `orchestrated_iterative_feedback` (both links, `MISSING_no_su2_aero`):
+## Findings that hold
 
-```
-geometry_engineer ran, HAD generate_volume_mesh in its toolset, called it 0 times
-  -> set_mesh            -> "success": false
-     -> run_su2_solver   -> "mesh file named mesh.su2 was not found"  (x9 across the runs)
-        -> no CL/CD, read_history_csv never called
-           -> MISSING_no_su2_aero -> UNCOUPLED
-```
+- **Chains that improve:** `sequential_graph_routed` (+1,788) and `orchestrated_graph_routed`
+  (+1,540) — both graph_routed, both consistently. `sequential_iterative_feedback` (+7,127) and
+  `sequential_staged_pipeline` (+5,317) also improved, but see the coupling caveat below.
+- **Chains that regressed:** `orchestrated_staged_pipeline` (−8,662, and its optimality gap went
+  20.8% → 92.4%) and `orchestrated_iterative_feedback` (−1,033).
+- **`commission` is concentrated in the orchestrated structure** — 4 of the 5 commission rows.
+  An agent reviewed a design missing its thresholds and approved it. That is a coordination failure
+  with a distinct signature; `omission` merely means nobody checked.
+- **The pipeline is deterministic.** Identical seed/anchor/design reproduces fuel to 10+ decimals
+  across sweeps (observed 3 times). Differences between combos are attributable to structure rather
+  than run-to-run noise, for runs that complete cleanly.
+- **`sim_fail` explained:** `sequential_staged_pipeline` link 0 set `area_m2 = 61.39` against a
+  declared range of 100–160 m². The mission solver could not converge. Link 1 corrected to 100.006
+  and converged. Under Option A the agent genuinely owns AREA, and `set_aircraft_parameters` only
+  WARNS on out-of-range values — so a doomed run is not detected for 28 minutes.
 
-The agents were not confused about the aero sequence. Their own reasoning states it
-correctly: *"create an SU2 session, generate a volume mesh, configure the session from
-the CPACS file, and run the SU2 solver"* and *"run the solver, and then read the history
-CSV for aerodynamic data."*
+## Caveats — do not skip these
 
-**The geometry worker never got that far.** Its task was "open a CPACS file and set
-high-level parameters", and it spent its turns on two obstacles:
+- **Coupling status is not in these tables.** It lives in the design ledger, which spans sweeps;
+  joining it safely requires matching on run identity, not position. Pre-fix coupling was
+  7 coupled / 3 uncoupled / 4 unmeasured (`cd_threshold_fallback` is not a measurement).
+- **Δ chain is only meaningful when both links share coupling status.** Where coupling flips, the
+  change is mostly the physics being added, not the design improving. Coupled runs sit at
+  17,900–24,100 kg; uncoupled at 7,100–16,100.
+- **Two networked link-1 runs are missing.** The networked structure is under-sampled.
+- **`orchestrated_graph_routed` link 1 appears in both sweeps** (15,811 main / 19,958 rerun). The
+  rerun value is used, so both its links come from identical conditions.
+- **tigl died silently mid-sweep**, costing 2 combos (11 connect failures). The launcher checks all
+  five ports before starting and never again. A per-run health check is not yet implemented.
 
-1. **Session-id mismatch** (B53/B55) — from its reasoning: *"The session ID provided is
-   d73ba2fc-… but the observation from open_cpacs shows a different session ID:
-   a0596bed-…. Hmm, maybe the initial SESSION_ID was a typo"*.
-2. **Wrong component UID** — tried `wing_1`, got *"component wasn't found. The available
-   UIDs are Fuselage1, Wing1, Wing2H, Wing3V"*. It recovered: this error names the
-   correct values, which is the remedy class that works.
+## Open bugs
 
-It finished without generating a mesh, and every downstream aero step failed as a
-consequence. **Root cause is upstream of aerodynamics, not in it.**
+| id | summary |
+|---|---|
+| B65 | mesh repetition — RESOLVED by B64; handoff kept for the method |
+| B57/B60 | orchestrated_staged_pipeline pipeline rewind — did NOT recur post-fix; may have been a B64 symptom |
+| B63 | CUDA OOM with NO repetition observed post-fix → a genuine context ceiling in the networked structure; compaction now justified |
+| B53/B55 | `get_design_state` still called 0 times despite the preamble hint — wording alone did not fix discovery |
+| — | tigl silent death; no per-run server health check |
+| — | out-of-range design values warn but do not reject (cost one 28-min `sim_fail`) |
 
-## Verified findings
+---
 
-- **`orchestrated_staged_pipeline` never reached `mdo_integrator`** — 0 runs of that
-  stage in BOTH links. Pass 1 stopped at stage 5, restarted at stage 1, pass 2 stopped at
-  stage 6. No verdict, no `RECOMMENDED_CHANGE` for the next link. (B57 / B60)
-- **`networked_graph_routed` hit GPU memory limits** — `CUDA out of memory` x12,
-  "Tried to allocate 1.38 GiB. GPU 1 has 31.37 GiB of which 721.75 MiB is free". The
-  networked structure runs many concurrent peers against one model, so KV cache grows
-  with peer count. Its link-0 timeout is a resource failure, not coordination.
-- **`orchestrated_staged_pipeline` link-0 timeout was NOT coordination** — 3 workers, no
-  revisiting, 19 min of step time in a 150-min window. `run_su2_solver` blocked 131 min
-  on a 600 s cap. (B59)
-- **`sequential_staged_pipeline` ran a textbook forward pass both times** — all 7 stages
-  once each, reaching `mdo_integrator`. The clean control against the orchestrated variant.
+# PRE-FIX RESULTS (2026-08-17) — superseded, kept for comparison
 
-## Comparisons that hold, and ones that don't
+Measured while 85 optional arguments were wrongly enforced as required.
 
-- **`sequential_graph_routed` is the only chain that genuinely improved**: 23,666 →
-  21,922 kg, both links coupled, so like-for-like. **+1,745 kg**.
-- **`networked_iterative_feedback` is the strongest overall**: both links coupled, 4/5
-  constraints on both, lowest coupled fuel (9,568 / 10,215).
-- **`sequential_staged_pipeline` link 1 repeated link 0 exactly** — identical design to 14
-  decimal places, `Δ +0`. The chain carried the design forward and the second link
-  explored nothing. Absolute fuel would hide this; the relative metric catches it.
-- **Δ is only meaningful where both links share coupling status.** Three chains qualify.
-  Where coupling flips (e.g. `sequential_iterative_feedback` 16,066 uncoupled → 23,820
-  coupled) the change is mostly *the physics being added*, not the design degrading.
-  Coupled runs sit at 17,900–24,100 kg; uncoupled at 7,800–17,900.
-- **`integrator_verdict` is present for `graph_routed` only** (B61) — missing for 5 of 7
-  combos, including runs that demonstrably reached the integrator. The quality signal B56
-  made primary is absent for most of the matrix.
+| combo | link | coupled | fuel | Δ | cons |
+|---|---|---|---|---|---|
+| sequential_iterative_feedback | 0/1 | F / T | 16,066 / 23,820 | −7,754 | 3/5, 2/5 |
+| sequential_staged_pipeline | 0/1 | T / T | 20,380 / 20,380 | +0 | 1/5 |
+| sequential_graph_routed | 0/1 | T / T | 23,666 / 21,922 | +1,745 | 2/5 |
+| orchestrated_staged_pipeline | 1 | F | 14,613 | — | 4/5 |
+| orchestrated_iterative_feedback | 0/1 | F / F | 8,378 / 17,870 | −9,492 | 4/5, 1/5 |
+| networked_iterative_feedback | 0/1 | T / T | 9,568 / 10,215 | −647 | 4/5 |
+| networked_graph_routed | 1 | F | 7,864 | — | 4/5 |
 
-## Open bugs from this sweep
-
-| id | summary | priority |
-|---|---|---|
-| B61 | verdict captured only on the graph_routed path | first — verifiable against these logs, no new runs |
-| B59 | `run_su2_solver` blocks past `max_runtime_seconds` (PIPE held by forked ranks) | high — cost 150 min here, real money on API models |
-| B60 | a new pipeline iteration must be earned by finishing, not taken mid-pass | high — why orchestrated_staged never produced a verdict |
-| B57 | pipeline rewind guard — **three failed fix attempts**, instrument before a fourth | see attempt log in BUGS.md |
-| B58 | interception truncates `list_variables`, so the agent guesses names | medium |
-| B53/B55 | one session id broadcast to five servers; `get_design_state` unused by agents | medium — visible in the geometry reasoning above |
+12 successes, 2 timeouts. Coupling 7 / 3 / 4-unmeasured.
