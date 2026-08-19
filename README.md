@@ -19,10 +19,16 @@ multi-agent approaches on a real-world engineering optimization problem.
 
 ## Status — 2026-08-19
 
-**The full matrix runs end to end.** All eight coordination combinations execute the complete
-pipeline — geometry → aerodynamics → structures → propulsion → mission → simulation → MDO
-integrator — against five live MCP servers on a local Qwen3-32B. Latest results: 14 of 16 runs,
-in [`Coupled.md`](Coupled.md).
+**All eight coordination combinations execute the complete pipeline** — geometry →
+aerodynamics → structures → propulsion → mission → simulation → MDO integrator — against five live
+MCP servers on a local Qwen3-32B, and each produces a result. Latest results in
+[`Coupled.md`](Coupled.md).
+
+**Not yet complete: 6 of 8 combos finish a full 2-link chain.** Both exceptions are the *networked*
+structure — `networked_iterative_feedback` (link 1 timed out at 150 min) and
+`networked_graph_routed` (link 1 produced no fuel output after 3 attempts). Two failures, two
+different handlers, one structure: networked runs concurrent peers against a single local model, so
+inference serialises and context accumulates, and a second chain link starts with more of it.
 
 Typical run: **7–42 minutes**. Chains that improve their design across links:
 `sequential_graph_routed` (+1,788 kg) and `orchestrated_graph_routed` (+1,540 kg).
