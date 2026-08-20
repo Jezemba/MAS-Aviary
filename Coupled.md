@@ -1,5 +1,38 @@
 # Coupling Results — 8-Combo Matrix, Qwen3-32B, POST-FIX (2026-08-18/19)
 
+> ## ⚠ DATA INTEGRITY WARNING (added 2026-08-20)
+>
+> **Sweep `1787078892` is contaminated from run `[11/16]` onward.** The tigl geometry server (8500)
+> stopped answering during `networked_iterative_feedback` link 1 and never recovered — 11 connect
+> failures, log lines 17344 to 58855 of 60917. Every run after that point executed **without a
+> geometry server**, and the runner recorded some of them as `success` anyway because
+> `MCPConnector.get_tools()` fails soft (`failed_servers` exists and nothing consumes it).
+>
+> **Do not use these rows:**
+>
+> | run | recorded | actually |
+> |---|---|---|
+> | `[11/16]`,`[12/16]` sequential_graph_routed | `error`, 0 turns | tigl unreachable |
+> | `[13/16]` orchestrated_graph_routed L0 | 3× zero fuel | tigl unreachable |
+> | `[14/16]` orchestrated_graph_routed L1 | **`success`, 15,811 kg** | produced with NO geometry |
+> | `[15/16]` networked_graph_routed L0 | **`success`, 7,148 kg** | 8 failed `open_cpacs`, no mesh |
+> | `[16/16]` networked_graph_routed L1 | failed, zero fuel | tigl unreachable |
+>
+> Only `[1/16]`–`[10/16]` ran with all five servers up. The `graph_routed` re-run
+> (`logs/stat_results/1787156210/`, 2026-08-19) was launched after tigl was restarted and IS valid.
+>
+> **Root cause (B69):** `generate_volume_mesh` is a synchronous handler that blocks tigl's entire
+> event loop, and `mesh_size_min` has no lower bound. The agent chose `0.1`; a live probe ran 21
+> minutes with RSS climbing 2.2 → 14.7 GB and never completed. While it blocks, tigl answers
+> nothing — not other tools, not discovery, not new connections.
+>
+> **B68's framing was wrong.** It said "both sequential and orchestrated complete their chains with
+> these same handlers, so the STRUCTURE is the variable." With `graph_routed` they did not — and all
+> of those failures were post-outage. `networked` is still implicated, but through being the only
+> structure that issues CONCURRENT MCP calls (peers race in a ThreadPoolExecutor), so one peer's
+> blocking mesh makes tigl invisible to every other peer.
+
+
 Supersedes the 2026-08-17 pre-fix results (kept below for comparison). All runs on the LOCAL
 Qwen3-32B; no paid-API runs.
 
