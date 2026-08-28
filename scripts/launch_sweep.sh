@@ -50,6 +50,14 @@ except Exception as e:
 fi
 
 LOG="logs/${TAG}_$(date +%Y%m%d_%H%M%S).log"
+# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (B70, 2026-08-28): the
+# networked structure runs a ~30k-token context per call (other structures
+# median ~8-9k), and generation lengths vary wildly. With fixed-size allocator
+# segments that fragments badly -- measured 63 GB resident across both GPUs for
+# an ~18 GB NF4 model + ~7 GB KV cache, and two CUDA OOMs in the first two
+# minutes of the 2026-08-28 networked run. Expandable segments let the allocator
+# grow/shrink a single region instead of stranding freed blocks.
+#
 # SWEEP_LOG_PATH lets the runner stream live progress to W&B while a run is in
 # flight. Without it every wandb.log sits at a run boundary, so a 2-3 hour run
 # shows nothing until it ends -- and a run killed by the wall clock shows nothing
@@ -58,6 +66,7 @@ setsid nohup env \
     PYTHONPATH="$MAS" \
     WANDB_API_KEY="$KEY" \
     WANDB_MODE=online \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     SWEEP_LOG_PATH="$MAS/$LOG" \
     ../.venv/bin/python scripts/stat_batch_runner.py "$@" \
     > "$LOG" 2>&1 < /dev/null &
