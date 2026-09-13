@@ -402,6 +402,56 @@ _DEFAULT_MDO_F25_TASK = (
     "Report the optimality gap versus the F25 reference (MTOM 85700 kg, fuel 12100 kg)."
 )
 
+# The task's HARD constraints, as stated to the agent in _DEFAULT_MDO_F25_TASK.
+# tests/test_chain_feedback_metrics.py asserts the two agree so they cannot drift.
+MDO_F25_CONSTRAINTS = {"fuel_burned_kg": 15000.0, "gtow_kg": 90000.0}
+
+
+def build_quick_metrics(ec: dict | None) -> str:
+    """Render one link's metrics for the NEXT link's task prompt.
+
+    B71 (2026-08-28): this used to print ``constraint <=15000: PASS/FAIL`` from
+    ``fuel_pass`` -- but ``fuel_pass`` is the eval classifier's TWO-SIDED +/-10%
+    band around the F25 reference, not the constraint. A run at 10763.2 kg
+    satisfied ``<= 15000`` and beat the reference by 14.7%, and link 2 was told
+    the constraint FAILED and to fix it. Constraint verdicts are now computed
+    from the constraint itself; the reference comparison is reported as a signed
+    fact with no verdict attached, because the band is a detection net for
+    implausible results (the zero-fuel bug), not a target to steer toward.
+
+    A value of None or 0.0 is reported as not extracted: the classifier writes a
+    0.0 sentinel for metrics it could not find (B72), and none of these masses
+    is ever legitimately zero.
+    """
+    if not ec:
+        return ""
+    from src.logging.eval_classifier import DEFAULT_AVIARY_THRESHOLDS
+
+    reference = DEFAULT_AVIARY_THRESHOLDS.reference
+    lines = []
+    for name in ("fuel_burned_kg", "gtow_kg", "wing_mass_kg"):
+        limit = MDO_F25_CONSTRAINTS.get(name)
+        try:
+            value = float(ec.get(name))
+        except (TypeError, ValueError):
+            value = 0.0
+        if value == 0.0:
+            verdict = f"constraint <= {limit:g}: UNKNOWN" if limit is not None else "no constraint"
+            lines.append(f"  {name} = not extracted ({verdict})")
+            continue
+        verdict = (
+            f"constraint <= {limit:g}: {'PASS' if value <= limit else 'FAIL'}"
+            if limit is not None else "no constraint"
+        )
+        ref = reference.get(name)
+        if ref:
+            pct = (value - ref) / ref * 100.0
+            where = "below" if pct < 0 else "above"
+            verdict += f"; {abs(pct):.1f}% {where} the F25 reference {ref:.1f}"
+        lines.append(f"  {name} = {value:.1f} ({verdict})")
+    return "\n".join(lines)
+
+
 _DEFAULT_TIMEOUT_MINUTES = 20
 
 
@@ -1027,20 +1077,7 @@ def run_stat_batch(
                     # the parsed numbers. Falls back to the parsed eval if no text found. ---
                     _ec = result.eval_classification or {}
 
-                    def _pf(v):
-                        try:
-                            return f"{float(v):.1f}"
-                        except (TypeError, ValueError):
-                            return str(v)
-
-                    _num = (
-                        f"  fuel_burned_kg = {_pf(_ec.get('fuel_burned_kg'))} "
-                        f"(constraint <=15000: {'PASS' if _ec.get('fuel_pass') else 'FAIL'})\n"
-                        f"  gtow_kg = {_pf(_ec.get('gtow_kg'))} "
-                        f"(constraint <=90000: {'PASS' if _ec.get('gtow_pass') else 'FAIL'})\n"
-                        f"  wing_mass_kg = {_pf(_ec.get('wing_mass_kg'))} "
-                        f"({'PASS' if _ec.get('wing_mass_pass') else 'FAIL'})"
-                    ) if _ec else ""
+                    _num = build_quick_metrics(_ec)
 
                     # Pull the integrator's full final text from the last relevant message.
                     _integrator = ""
