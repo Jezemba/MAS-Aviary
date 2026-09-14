@@ -1,5 +1,29 @@
 # Coupling Results — 8-Combo Matrix, Qwen3-32B, POST-FIX (2026-08-18/19)
 
+> ## ⛔ ALL RESULTS IN THIS FILE ARE INVALID FOR COMPARISON (added 2026-09-14, B77)
+>
+> **Every run since 2026-08-15 simulated on a blank aviary session, not the study's.** Each run
+> executes in a spawned child process whose data plane starts empty. Since commit `4bbe47b`
+> (2026-08-15) an empty plane auto-creates a new aviary session on the first mission call and
+> redirects every call to it, so the runner's session (seed-42 design + DLR-F25 mission) was never
+> simulated. Proven with a two-process probe on 2026-09-14: the agent passed the runner's session and
+> the server ran on the plane's. That session held aviary's **defaults**: 1500 nmi, 162 pax, M0.785,
+> FL350.
+>
+> Consequences for every row below:
+> - **The shared seed-42 start never reached the simulator.** Combos did not start from the same
+>   design.
+> - **The mission flown depended on the agents.** Runs whose agents did not call `configure_mission`
+>   flew 1500 nmi (fuel 7.1-11.0 t); runs that did flew 2500 nmi, usually without setting the
+>   passenger count (14.6-28.2 t). Fuel numbers are not comparable across rows.
+> - **No chain link carried a design forward.** 0 of 20 end-states were captured, so every "link 2"
+>   restarted from the same point as link 1.
+>
+> Fixed in MAS-Aviary `f589e74` (branch `fix/b77-child-uses-runner-session`). Runs now record
+> `flown_mission`, `mission_matches_canonical` and `aviary_session_swapped` in `result.json`. **Treat
+> these tables as a record of pipeline debugging, not as coordination results.** Details:
+> `Avion/.claude/BUGS.md` B77.
+
 > ## ⚠ DATA INTEGRITY WARNING (added 2026-08-20)
 >
 > **Sweep `1787078892` is contaminated from run `[11/16]` onward.** The tigl geometry server (8500)
