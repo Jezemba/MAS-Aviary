@@ -17,6 +17,7 @@ Rendered placeholders:
   <<MASS_PARAMS>>        -> wing_mass_method="flops", design_load_factor=2.5, material="aluminum"
   <<PROP_DESIGN_POINT>>  -> design_mach=0.785, design_altitude_ft=35000, ...
   <<MISSION_PARAMS>>     -> cruise_mach=0.785, cruise_altitude_ft=35000, range_nmi=1500, optimizer_max_iter=200
+  <<AVION_PATH_PREFIX>>  -> /home/aipexws3   (first two components of the Avion checkout -- B74)
 """
 from __future__ import annotations
 
@@ -29,6 +30,17 @@ import yaml
 
 _CANONICAL_PATH = Path(__file__).resolve().parents[2] / "config" / "mdo_f25_canonical_baseline.yaml"
 _PLACEHOLDER_RE = re.compile(r"<<([A-Z0-9_]+)>>")
+
+# The Avion checkout (src/config/canonical.py -> MAS-Aviary -> Avion). B74: prompts
+# used to hardcode /home/aipexws3/..., which names a CPACS path that does not exist on
+# any other machine. Derived here so the rendered text is unchanged on the original
+# machine and correct everywhere else.
+AVION_ROOT = Path(__file__).resolve().parents[3]
+
+
+def avion_path_prefix(root: Path = AVION_ROOT) -> str:
+    """First two components of the checkout, e.g. ``/home/aipexws3``."""
+    return "/" + "/".join(root.parts[1:3])
 
 
 @functools.lru_cache(maxsize=1)
@@ -110,6 +122,8 @@ def render_snippets(path: str | None = None) -> dict[str, str]:
             mission,
             ["cruise_mach", "cruise_altitude_ft", "range_nmi", "optimizer_max_iter"],
         ),
+        # machine location (B74)
+        "AVION_PATH_PREFIX": avion_path_prefix(),
     }
 
 

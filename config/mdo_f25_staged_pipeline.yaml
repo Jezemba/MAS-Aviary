@@ -39,7 +39,7 @@ mdo_f25_pipeline:
 
         Required tool sequence:
           1. The TASK above contains the absolute CPACS file path
-             starting with "/home/aipexws3/...D150_simple.xml". Use
+             starting with "<<AVION_PATH_PREFIX>>/...D150_simple.xml". Use
              that EXACT string as the `source` argument:
              open_cpacs(source_type="path", source="<paste the full
              absolute path here>"). Do NOT pass the literal text
@@ -164,7 +164,7 @@ mdo_f25_pipeline:
 
         Required tool sequence (use the actual CPACS path string from
         the TASK above — the same path the geometry stage opened, the
-        full absolute path starting with "/home/aipexws3/..."):
+        full absolute path starting with "<<AVION_PATH_PREFIX>>/..."):
           1. validate_cpacs_inputs(cpacs_file_path="<paste the full
              absolute path string>")
           2. estimate_mass(cpacs_file_path="<paste the same path>",

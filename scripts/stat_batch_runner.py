@@ -394,9 +394,13 @@ _DEFAULT_AVIARY_TASK = (
     "fuel burn. Constraints: fuel_burned_kg <= 8500, gtow_kg <= 72000."
 )
 
+# B74: derived from the checkout instead of hardcoded, so a clone at any path hands the
+# agent a CPACS file that exists. Renders byte-identically on the original machine.
+_D150_FIXTURE = Path(__file__).resolve().parents[2] / "mass-mcp" / "tests" / "fixtures" / "D150_simple.xml"
+
 _DEFAULT_MDO_F25_TASK = (
     "Design a DLR-F25 class aircraft for minimum fuel burn. "
-    "Use CPACS file at /home/aipexws3/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml. "
+    f"Use CPACS file at {_D150_FIXTURE}. "
     "Target: 2500 nmi range, 239 passengers, Mach 0.78 cruise, 33000 ft altitude. "
     "Constraints: fuel_burned_kg <= 15000, gtow_kg <= 90000. "
     "Report the optimality gap versus the F25 reference (MTOM 85700 kg, fuel 12100 kg)."

@@ -18,8 +18,9 @@
 
 set -euo pipefail
 
-MAS=/home/aipexws3/Jessica/Avion/MAS-Aviary
-ENV_FILE=/home/aipexws3/Jessica/Avion/.env
+# B74: resolve from this script's location, not a hardcoded home directory.
+MAS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+ENV_FILE="$(cd "$MAS/.." && pwd -P)/.env"
 cd "$MAS"
 
 if [ $# -lt 1 ]; then
