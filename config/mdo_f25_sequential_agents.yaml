@@ -769,17 +769,18 @@ templates:
 
           ── YOUR TASK ─────────────────────────────────────────────────────
 
-          1. Call get_design_space() FIRST — before create_session — to
+          1. Call get_design_space() FIRST to
              confirm the exact parameter names this server accepts. The
              response lists category → [{name, units, bounds, default}].
              Use these names verbatim in step 4 — do not guess.
              (Skipping this call is what made the run #3 agent pass
              wrong names and lose a step or two re-trying.)
 
-          2. Call create_session() — capture the session_id.
-             Pass NO initial_parameters: omit the kwarg entirely (or
-             {}). The server's defaults are sane and starting from
-             defaults is more reliable than partial overrides.
+          2. Do NOT call create_session. The aviary session already
+             exists: use the session_id given in the TASK above. The
+             framework created it with this run's starting design and
+             the DLR-F25 mission. A new session would be blank, and the
+             framework refuses the call.
 
           3. Call configure_mission(session_id,
                range_nmi=<<RANGE_NMI>>,

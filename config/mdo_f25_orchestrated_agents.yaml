@@ -120,7 +120,9 @@ agents:
          # (aero.cl_cruise / aero.cd_cruise). If set_aircraft_parameters returns an
          # UNCOUPLED_MISSION error, dispatch the aero worker first, then retry.
          get_design_space(category) → 10 parameters with defaults, ranges, units
-         create_session(initial_parameters) → session_id (30-min timeout)
+         create_session(initial_parameters) → NOT NEEDED: the session already exists
+           (session_id in the TASK, with the starting design and mission). The framework
+           refuses a new one. Tell the mission_architect to use the TASK's session_id.
          set_aircraft_parameters(session_id, parameters={"Aircraft.Wing.ASPECT_RATIO": 15.6, ...},
                                  validate_timeout_seconds=30)
            → applies params AND runs validation (static checks + ~5-10s
@@ -168,8 +170,8 @@ agents:
          no design-dial markers; if you rely on it you will guess paths
          like fan.BPR and silently leave BPR unset, producing garbage
          outputs like perf.Fn = -2.6e+19 lbf.)
-      - mission_architect: get_design_space, create_session, set_aircraft_parameters,
-        configure_mission
+      - mission_architect: get_design_space, set_aircraft_parameters, configure_mission
+        (uses the TASK's existing session_id; never create_session)
       - simulation_executor: run_simulation, get_results, get_trajectory
       - mdo_integrator: check_constraints, get_results
 

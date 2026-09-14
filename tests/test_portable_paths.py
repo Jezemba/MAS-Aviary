@@ -58,14 +58,23 @@ def test_task_text_byte_identical_to_pre_b74():
     assert _DEFAULT_MDO_F25_TASK == old
 
 
+B74_BEFORE, B74_AFTER = "ed175ec", "fc9524b"
+
+
 @on_original_machine
 @pytest.mark.parametrize("cfg", sorted(p.name for p in (MAS / "config").glob("*.yaml")))
-def test_every_config_renders_identically_to_pre_b74(cfg):
-    old_text = _git_show(f"ed175ec:config/{cfg}")
-    if old_text is None:
-        pytest.skip(f"{cfg} did not exist at ed175ec")
-    new_text = (MAS / "config" / cfg).read_text()
-    assert substitute_obj(yaml.safe_load(new_text)) == substitute_obj(yaml.safe_load(old_text))
+def test_b74_commit_rendered_every_config_identically(cfg):
+    """The B74 commit itself changed no rendered prompt on the original machine.
+
+    Compares the two historical revisions rather than the working tree, so later
+    INTENTIONAL prompt edits (e.g. the 2026-09-14 create_session wording) do not
+    masquerade as a B74 regression.
+    """
+    before = _git_show(f"{B74_BEFORE}:config/{cfg}")
+    after = _git_show(f"{B74_AFTER}:config/{cfg}")
+    if before is None or after is None:
+        pytest.skip(f"{cfg} not present at both {B74_BEFORE} and {B74_AFTER}")
+    assert substitute_obj(yaml.safe_load(after)) == substitute_obj(yaml.safe_load(before))
 
 
 def test_other_machine_gets_its_own_prefix(monkeypatch):
