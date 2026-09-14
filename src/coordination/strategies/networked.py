@@ -32,6 +32,7 @@ from src.tools.networked_tools import (
     SpawnPeer,
     WriteBlackboard,
 )
+from src.tools.artifact_checks import with_artifact_checks
 
 
 class NetworkedStrategy(CoordinationStrategy):
@@ -682,6 +683,7 @@ class NetworkedStrategy(CoordinationStrategy):
             instructions=self._context.peer_prompt,
             max_steps=self._agent_max_steps,
             add_base_tools=False,
+            final_answer_checks=with_artifact_checks(),  # B31
         )
 
         self._agents[name] = agent

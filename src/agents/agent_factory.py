@@ -8,6 +8,7 @@ from smolagents.models import Model
 from src.agents.agent_registry import AgentRegistry
 from src.config.loader import AppConfig, load_yaml
 from src.tools.tool_loader import load_tools_for_agent
+from src.tools.artifact_checks import with_artifact_checks
 
 
 def create_agent(
@@ -31,7 +32,7 @@ def create_agent(
         instructions=system_prompt,
         max_steps=max_steps,
         add_base_tools=False,
-        final_answer_checks=final_answer_checks,
+        final_answer_checks=with_artifact_checks(final_answer_checks),  # B31
     )
     return agent
 

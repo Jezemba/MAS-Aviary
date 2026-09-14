@@ -167,7 +167,7 @@ templates:
           DESIGN_STATE:
             TIGL_SESSION_ID: <uuid>
             CPACS_FILE: <path>
-            MESH_BASE64: <base64 string or "exported">
+            MESH_BASE64: <the mesh reference returned by generate_volume_mesh>
             WING_SPAN_M: <BASELINE value from step-5 get_wing_summary>
             WING_SWEEP_DEG: <value or null if D150 returns null>
             WING_AREA_M2: <BASELINE value from step-5 get_wing_summary>

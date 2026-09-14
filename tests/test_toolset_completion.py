@@ -113,34 +113,39 @@ class TestItDoesNotOverreach:
         assert tools == ["open_cpacs"]
 
 
-class TestMissionWorkerGetsItsPrerequisite:
-    """`create_session` was missing from the mission required set.
+class TestMissionWorkerSessionPrerequisite:
+    """The mission worker's session prerequisite, before and after 2026-09-14.
 
     Measured (final4 run 1/8): a worker given only run_simulation/get_results
     never created a session, invented "aviary_session_1", and made 11 calls
-    against it -- configure_mission, set_aircraft_parameters x6, run_simulation
-    x4. Every one failed; the run recorded zero fuel.
+    against it. The first fix added create_session to the mission required set.
 
-    Supplying a capability while omitting its prerequisite is the same mistake as
-    wiring the CPACS path into create_su2_session without the numerics.
+    Since B77/B78 the runner creates the session, registers it with the data
+    plane, and refuses agent create_session calls, so the tool is no longer
+    handed out. The original failure is now prevented by the plane: an invented
+    session id is replaced with the registered one.
     """
 
-    def test_create_session_is_added(self):
+    def test_create_session_is_not_handed_to_mission_workers(self):
         tools, added, disc = _complete_toolset(
             "simulation_executor", "Responsible for running simulations",
             ["run_simulation", "get_results"],
             dict(AVAILABLE, create_session=object()),
         )
-        assert "create_session" in added
         assert disc == "mission"
+        assert "create_session" not in added and "create_session" not in tools
+        assert "set_aircraft_parameters" in tools
 
-    def test_the_exact_observed_toolset_is_repaired(self):
-        tools, _, _ = _complete_toolset(
-            "simulation_executor", "Responsible for running simulations and retrieving results.",
-            ["run_simulation", "get_results"],
-            dict(AVAILABLE, create_session=object()),
-        )
-        assert {"create_session", "set_aircraft_parameters"} <= set(tools)
+    def test_the_observed_invented_session_now_resolves_to_the_runner_session(self, monkeypatch):
+        import src.tools.data_plane as dp
+
+        monkeypatch.setattr(dp, "_design_state", None)
+        monkeypatch.setattr(dp, "_presessions", {})
+        monkeypatch.setattr(dp, "_registered_tools", {})
+        monkeypatch.setattr(dp, "_tool_server_map", {"run_simulation": "aviary", "set_aircraft_parameters": "aviary"})
+        dp.register_presession("aviary", "runner-session")
+        for tool in ("run_simulation", "set_aircraft_parameters"):
+            assert dp.resolve_request(tool, {"session_id": "aviary_session_1"})["session_id"] == "runner-session"
 
 
 class TestNoteWording:

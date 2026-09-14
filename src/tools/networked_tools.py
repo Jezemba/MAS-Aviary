@@ -17,6 +17,7 @@ from smolagents import Tool, ToolCallingAgent
 from smolagents.models import Model
 
 from src.coordination.blackboard import Blackboard
+from src.tools.artifact_checks import with_artifact_checks
 
 PEER_TOOL_NAMES = frozenset({
     "read_blackboard",
@@ -242,6 +243,7 @@ class SpawnPeer(Tool):
             instructions=ctx.peer_prompt,
             max_steps=ctx.agent_max_steps,
             add_base_tools=False,
+            final_answer_checks=with_artifact_checks(),  # B31
         )
 
         # Register.

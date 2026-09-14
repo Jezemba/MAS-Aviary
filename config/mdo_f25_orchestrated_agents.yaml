@@ -17,7 +17,9 @@ required_tool_phases:
     - create_cycle_model
     - run_cycle
   mission_setup:
-    - create_session
+    # create_session is NOT listed: the runner creates the aviary session and B78
+    # refuses agent calls to it, so listing it made this phase impossible to
+    # complete and reported "not yet run: mission_setup" for the whole run.
     - configure_mission
   simulation:
     - run_simulation

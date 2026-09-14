@@ -1124,6 +1124,19 @@ def run_stat_batch(
                     if _refused:
                         result_dict["create_session_refused_args"] = (_ds.data_store or {}).get("create_session_refused_args")
                         print(f"  [session] agents tried create_session {_refused}x -- refused, pointed at {session_id[:8]}")
+                    # B31: did the run produce a real volume mesh, and did any agent
+                    # try to finish without one?
+                    _store = (_ds.data_store if _ds else {}) or {}
+                    result_dict["volume_mesh_generated"] = _store.get("_volume_mesh_generated")
+                    result_dict["final_answer_refused_no_mesh"] = int(_store.get("final_answer_refused_no_mesh") or 0)
+                    result_dict["finished_without_mesh"] = list(_store.get("finished_without_mesh") or [])
+                    if result_dict["final_answer_refused_no_mesh"]:
+                        print(f"  [B31] agents tried to finish without a mesh "
+                              f"{result_dict['final_answer_refused_no_mesh']}x -- refused")
+                    if result_dict["volume_mesh_generated"] is False:
+                        print("  [B31] WARNING: no volume mesh was generated in this run"
+                              + (f" (finished without one: {result_dict['finished_without_mesh']})"
+                                 if result_dict["finished_without_mesh"] else ""))
                     _mission = read_flown_mission(tool_map, _end_sid)
                     result_dict["flown_mission"] = _mission.get("flown")
                     result_dict["mission_matches_canonical"] = _mission.get("matches_canonical")

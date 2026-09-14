@@ -366,6 +366,10 @@ def export_state_summary() -> dict:
     _aviary = (getattr(_design_state, "sessions", {}) or {}).get("aviary")
     if _aviary:
         out["_aviary_session_at_end"] = _aviary
+    # B31: whether a real volume mesh was captured. The payload itself is far too
+    # large to export, so its presence is exported as a flag.
+    _mesh = (getattr(_design_state, "data_store", {}) or {}).get("generate_volume_mesh__mesh_base64")
+    out["_volume_mesh_generated"] = isinstance(_mesh, str) and len(_mesh) > 100
     for key, value in (getattr(_design_state, "data_store", {}) or {}).items():
         if value is None or isinstance(value, (int, float, bool)):
             out[key] = value
@@ -947,6 +951,54 @@ def _auto_create_session(mcp_name: str) -> str | None:
     return None
 
 
+_MASS_WORKING_COPY_TOOLS = frozenset({"estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown"})
+
+
+def _mass_working_copy(source: str, *, create: bool) -> str | None:
+    """Per-run copy of ``source`` that mass write-backs go to (G1).
+
+    Keyed by the source's absolute path. Re-copied when the source's size or
+    mtime changed since the copy was taken. Returns None when no copy exists and
+    ``create`` is False, or when copying failed (the call then proceeds on the
+    original path, as before -- a failure here must never break a run).
+    """
+    import shutil
+    import tempfile
+
+    if _design_state is None:
+        return None
+    src = os.path.abspath(source)
+    copies = _design_state.data_store.setdefault("_mass_working_copies", {})
+    try:
+        st = os.stat(src)
+    except OSError:
+        return None
+    entry = copies.get(src)
+    fresh = (
+        entry
+        and os.path.isfile(entry["copy"])
+        and entry["size"] == st.st_size
+        and entry["mtime"] == st.st_mtime
+    )
+    if fresh:
+        return entry["copy"]
+    if src in {e["copy"] for e in copies.values()}:
+        return src  # already a working copy
+    if not create:
+        return entry["copy"] if entry and os.path.isfile(entry["copy"]) else None
+    try:
+        workdir = tempfile.mkdtemp(prefix="avion_mass_")
+        dst = os.path.join(workdir, os.path.basename(src))
+        shutil.copy2(src, dst)
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("G1: could not copy %s for mass write-back: %s", src, exc)
+        return None
+    copies[src] = {"copy": dst, "size": st.st_size, "mtime": st.st_mtime}
+    _design_state.data_store["mass_writeback_cpacs_path"] = dst
+    logger.info("G1: mass write-back for %s goes to working copy %s", src, dst)
+    return dst
+
+
 def _json_loads_safe(raw):
     try:
         return json.loads(raw) if isinstance(raw, str) else raw
@@ -1053,6 +1105,28 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                         cpacs_arg, real_path, tool_name,
                     )
                 resolved["cpacs_file_path"] = real_path
+
+    # G1: estimate_mass writes its breakdown INTO the CPACS file it is given
+    # (write_back_to_cpacs defaults to True in mass-mcp). Given the input CPACS,
+    # that is the git-tracked fixture every later run opens as its start, so one
+    # run's masses leaked into the next -- observed again on the 7960 on
+    # 2026-09-14, within a single run. Write-backs now go to a per-run copy of
+    # whatever file was resolved above, and the mass READ tools follow the copy so
+    # they still see what the run wrote. The copy is refreshed if its source file
+    # changes (a re-exported morphed geometry), so mass always reflects the current
+    # geometry.
+    if tool_name in _MASS_WORKING_COPY_TOOLS and _design_state:
+        target = resolved.get("cpacs_file_path")
+        if isinstance(target, str) and os.path.isfile(target):
+            if tool_name == "estimate_mass":
+                if resolved.get("write_back_to_cpacs", True) is not False:
+                    copy = _mass_working_copy(target, create=True)
+                    if copy:
+                        resolved["cpacs_file_path"] = copy
+            else:
+                copy = _mass_working_copy(target, create=False)
+                if copy:
+                    resolved["cpacs_file_path"] = copy
 
     # Capture cpacs path from open_cpacs REQUEST (the source param)
     if tool_name == "open_cpacs" and _design_state:

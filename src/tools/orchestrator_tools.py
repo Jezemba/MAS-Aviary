@@ -15,6 +15,7 @@ from typing import Callable
 
 from smolagents import Tool, ToolCallingAgent
 from smolagents.models import Model
+from src.tools.artifact_checks import with_artifact_checks
 
 
 @dataclass
@@ -353,7 +354,7 @@ class CreateAgent(Tool):
             instructions=system_prompt,
             max_steps=ctx.worker_max_steps,
             add_base_tools=False,
-            final_answer_checks=ctx.worker_final_answer_checks or None,
+            final_answer_checks=with_artifact_checks(ctx.worker_final_answer_checks),  # B31
         )
 
         # Register in the shared agent pool.
@@ -428,13 +429,12 @@ _DISCIPLINE_REQUIRED_TOOLS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] =
     ),
     "mission": (
         ("mission", "aviary", "trajectory", "fuel", "simulat", "performance"),
-        # create_session first: without it every other aviary call runs against
-        # a session that does not exist. Measured (final4 run 1/8): a worker
-        # given only run_simulation/get_results invented "aviary_session_1" and
-        # made 11 calls against it. Omitting it here was the same mistake as
-        # wiring the CPACS path into create_su2_session without the numerics --
-        # supplying a capability while leaving out its prerequisite.
-        ("create_session", "set_aircraft_parameters", "run_simulation", "get_results"),
+        # create_session is no longer supplied (2026-09-14, B77/B78). It was added
+        # because a worker without it invented "aviary_session_1" (final4 run 1/8),
+        # but the runner now creates the session, registers it with the data
+        # plane, and refuses agent create_session calls. Handing mission workers a
+        # tool they must not use only contradicts their prompt.
+        ("set_aircraft_parameters", "run_simulation", "get_results"),
     ),
 }
 

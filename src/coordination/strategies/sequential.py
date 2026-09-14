@@ -29,6 +29,7 @@ from src.coordination.pipeline_templates import (
     resolve_tools,
 )
 from src.coordination.strategy import CoordinationAction, CoordinationStrategy
+from src.tools.artifact_checks import with_artifact_checks
 
 
 class SequentialStrategy(CoordinationStrategy):
@@ -359,6 +360,7 @@ class SequentialStrategy(CoordinationStrategy):
             instructions=system_prompt,
             max_steps=self._stage_max_steps,
             add_base_tools=False,
+            final_answer_checks=with_artifact_checks(),  # B31
         )
 
         self._agents[stage.name] = agent
