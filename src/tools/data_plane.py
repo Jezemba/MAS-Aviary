@@ -224,6 +224,40 @@ def init_data_plane(design_state, tool_server_map: dict[str, str]) -> None:
     _tool_server_map = dict(tool_server_map)
 
 
+def register_presession(mcp_name: str, session_id: str | None) -> None:
+    """Register a session the runner created OUTSIDE this process (B77).
+
+    The runner's pre-hook creates the aviary session -- seed-42 design plus the
+    canonical DLR-F25 mission -- in the PARENT process, where its data plane
+    captures it. B16 moved every run into a ``spawn``ed child, which starts with
+    an empty data plane. Since 4bbe47b (2026-08-15) an empty plane auto-creates
+    a BLANK aviary session on the first aviary call and then overrides every
+    agent-supplied session id with it. Measured 2026-09-14: the agent passed the
+    runner's session, the server ran on the plane's blank one, which flew
+    aviary's DEFAULT mission (1500 nmi, 162 pax, M0.785, FL350) with no design
+    variables set -- 7864 kg instead of 16774 kg on the real session -- and the
+    parent's end-state read found nothing, so no chain link since 2026-08-15
+    carried a design forward.
+
+    Call this in the child before any tool is loaded. Tool loading reuses an
+    existing DesignState, so the registration survives.
+    """
+    global _design_state
+    if not session_id:
+        return
+    if _design_state is None:
+        from src.coordination.design_state import DesignState
+
+        _design_state = DesignState()
+    previous = _design_state.sessions.get(mcp_name)
+    if previous and previous != session_id:
+        logger.warning(
+            "register_presession: replacing sessions[%s]=%s with the runner's %s",
+            mcp_name, previous, session_id,
+        )
+    _design_state.sessions[mcp_name] = session_id
+
+
 def register_tools(tools) -> None:
     """Record the live tool objects so the data plane can call one itself.
 
@@ -269,6 +303,12 @@ def export_state_summary() -> dict:
     if _design_state is None:
         return {}
     out: dict = {}
+    # B77: which aviary session the run actually ended on. Differs from the
+    # runner's only if an agent created its own session; the parent needs it to
+    # read the design and mission that were really flown.
+    _aviary = (getattr(_design_state, "sessions", {}) or {}).get("aviary")
+    if _aviary:
+        out["_aviary_session_at_end"] = _aviary
     for key, value in (getattr(_design_state, "data_store", {}) or {}).items():
         if value is None or isinstance(value, (int, float, bool)):
             out[key] = value
