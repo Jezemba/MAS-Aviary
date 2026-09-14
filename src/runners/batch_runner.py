@@ -1062,6 +1062,13 @@ def run_combination(
     model_id = getattr(getattr(config, "llm", None), "model_id", "") or ""
     METER.reset()  # complete token accounting for THIS run (all agents + peer threads)
     start = time.monotonic()
+    # B77: the pre-hook session lives in the runner's process. Register it with
+    # THIS process's data plane before any tool loads, or the plane auto-creates
+    # a blank aviary session and routes every mission call to it.
+    if session_id:
+        from src.tools.data_plane import register_presession
+
+        register_presession("aviary", session_id)
     try:
         messages, traces = _execute_combination(combo, task, config, model=model, tools=tools, session_id=session_id)
         result.duration_seconds = time.monotonic() - start

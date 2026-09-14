@@ -770,6 +770,45 @@ def read_end_state_design(tool_map: dict, session_id: str) -> dict:
         return {}
 
 
+# The canonical mission fields every run must fly (B77). Values come from
+# config/mdo_f25_canonical_baseline.yaml, the same source the pre-hook uses.
+_MISSION_CHECK_FIELDS = ("range_nmi", "num_passengers", "cruise_mach", "cruise_altitude_ft")
+
+
+def read_flown_mission(tool_map: dict, session_id: str) -> dict:
+    """What mission the session actually flew, and whether it is the canonical one.
+
+    B77: from 2026-08-15 runs silently flew aviary's default 1500 nmi / 162 pax
+    mission whenever the agents did not reconfigure it, and nothing recorded
+    that. Returns {"flown": {...}, "matches_canonical": bool|None, "mismatches": {...}}.
+    ``matches_canonical`` is None when the session has no results to read.
+    """
+    from src.config.canonical import load_canonical
+
+    want = load_canonical().get("mission", {}) or {}
+    try:
+        resp = tool_map["get_results"].forward(session_id=session_id)
+        d = resp if isinstance(resp, dict) else json.loads(resp)
+    except Exception as e:
+        return {"flown": {}, "matches_canonical": None, "mismatches": {}, "error": str(e)[:200]}
+    mc = (d.get("design_parameters") or {}).get("mission_config") or {}
+    if not mc:
+        return {"flown": {}, "matches_canonical": None, "mismatches": {},
+                "error": d.get("error_code") or d.get("error")}
+    flown = {k: mc.get(k) for k in _MISSION_CHECK_FIELDS}
+    mismatches = {}
+    for k in _MISSION_CHECK_FIELDS:
+        if k not in want:
+            continue
+        try:
+            same = abs(float(flown[k]) - float(want[k])) <= 1e-6 * max(1.0, abs(float(want[k])))
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            mismatches[k] = {"flown": flown[k], "canonical": want[k]}
+    return {"flown": flown, "matches_canonical": not mismatches, "mismatches": mismatches}
+
+
 def run_stat_batch(
     n_repeats: int,
     combo_names: list[str] | None = None,
@@ -1062,7 +1101,30 @@ def run_stat_batch(
                     # None on link 0 -- there is no predecessor, so "improvement
                     # vs the design handed over" is undefined rather than zero.
                     result_dict["chain_start_fuel_kg"] = chain_start_fuel
-                    end_state = read_end_state_design(tool_map, session_id)
+                    # B77: read the aviary session the run actually ENDED on. It is
+                    # the runner's own session unless an agent created another one.
+                    # The parent's plane would override any other id back to the
+                    # runner's, so point it at the session in use before reading.
+                    from src.tools.data_plane import get_design_state as _gds
+
+                    _ds = _gds()
+                    _used = ((_ds.data_store if _ds else {}) or {}).get("_aviary_session_at_end")
+                    _end_sid = _used or session_id
+                    result_dict["aviary_session_at_end"] = _end_sid
+                    result_dict["aviary_session_swapped"] = bool(_used and _used != session_id)
+                    if result_dict["aviary_session_swapped"]:
+                        print(f"  [B77] WARNING: run ended on aviary session {_used[:8]}, "
+                              f"not the runner's {session_id[:8]} -- an agent created its own session")
+                    if _ds is not None:
+                        _ds.set_session("aviary", _end_sid)
+                    _mission = read_flown_mission(tool_map, _end_sid)
+                    result_dict["flown_mission"] = _mission.get("flown")
+                    result_dict["mission_matches_canonical"] = _mission.get("matches_canonical")
+                    if _mission.get("matches_canonical") is False:
+                        print(f"  [B77] WARNING: this run flew a NON-canonical mission: {_mission['mismatches']}")
+                    elif _mission.get("matches_canonical") is None:
+                        print(f"  [B77] mission could not be read ({_mission.get('error')}) -- no simulation on {_end_sid[:8]}")
+                    end_state = read_end_state_design(tool_map, _end_sid)
                     result_dict["chain_end_params"] = end_state
                     _fuel_now = (result_dict.get("eval_classification") or {}).get("fuel_burned_kg")
                     if _fuel_now is not None:
