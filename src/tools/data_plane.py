@@ -217,6 +217,10 @@ _design_state = None
 _tool_server_map: dict[str, str] = {}
 _registered_tools: dict = {}
 
+# Sessions the RUNNER created for this run, keyed by MCP (see register_presession).
+# While one is registered, agent calls that would create a replacement are refused.
+_presessions: dict[str, str] = {}
+
 
 def init_data_plane(design_state, tool_server_map: dict[str, str]) -> None:
     global _design_state, _tool_server_map
@@ -256,6 +260,59 @@ def register_presession(mcp_name: str, session_id: str | None) -> None:
             mcp_name, previous, session_id,
         )
     _design_state.sessions[mcp_name] = session_id
+    _presessions[mcp_name] = session_id
+
+
+def session_creation_refusal(tool_name: str, kwargs: dict) -> dict | None:
+    """Refuse an agent's create_session while the runner's session exists.
+
+    Since the data plane was written, an agent's create_session was captured as
+    THE run's session, and the override then redirected every agent's mission
+    calls to it (d01cb38 + 01ed347). A new aviary session is blank, so the whole
+    run silently flew aviary's default mission instead of the task's -- measured
+    in 5 of 16 runs on 2026-08-18. Mostly the agents were obeying stage prompts
+    written before the runner created the session itself.
+
+    Jessica's decision (2026-09-14): refuse, name the existing session so the
+    agent can recover in one step, and count the attempt -- the mission and the
+    starting design are fixed controls, and the attempt stays measurable.
+    Returns an error payload, or None when the call should proceed.
+    """
+    if tool_name not in _SESSION_CREATION_TOOLS:
+        return None
+    mcp_name = _tool_server_map.get(tool_name, "")
+    sid = _presessions.get(mcp_name)
+    if not sid:
+        return None
+    if _design_state is not None:
+        store = _design_state.data_store
+        store["create_session_refused"] = int(store.get("create_session_refused") or 0) + 1
+        attempts = list(store.get("create_session_refused_args") or [])
+        if len(attempts) < 10:
+            attempts.append({k: v for k, v in (kwargs or {}).items() if k != "session_id"})
+            store["create_session_refused_args"] = attempts
+    logger.warning("Refused %s: run already has %s session %s", tool_name, mcp_name, sid)
+    try:
+        from src.config.canonical import load_canonical
+
+        m = load_canonical().get("mission", {}) or {}
+        mission = (f"{m.get('range_nmi')} nmi, {m.get('num_passengers')} passengers, "
+                   f"Mach {m.get('cruise_mach')}, {m.get('cruise_altitude_ft')} ft")
+    except Exception:  # pragma: no cover - the message must not depend on config
+        mission = "this task's mission"
+    return {
+        "success": False,
+        "error_code": "SESSION_EXISTS",
+        "session_id": sid,
+        "error": (
+            f"create_session was NOT called. This run already has an {mcp_name} session, "
+            f"created by the framework with this task's mission ({mission}) and starting "
+            f"design: session_id=\"{sid}\". A new session would be blank and would "
+            f"silently fly the default mission instead. Use session_id=\"{sid}\" for every "
+            f"{mcp_name} call. To change design variables, call "
+            f"set_aircraft_parameters(session_id=\"{sid}\", parameters={{...}})."
+        ),
+    }
 
 
 def register_tools(tools) -> None:
@@ -382,6 +439,7 @@ def reset_design_state():
     from src.coordination.design_state import DesignState
 
     _design_state = DesignState()
+    _presessions.clear()
     logger.info("Data plane reset — fresh DesignState for the next link.")
     return _design_state
 
@@ -688,6 +746,13 @@ def _capture_session(tool_name: str, data: dict) -> None:
     if not mcp_name:
         return
     if tool_name in _SESSION_CREATION_TOOLS:
+        pinned = _presessions.get(mcp_name)
+        if pinned and pinned != session_id:
+            # Defence in depth: session_creation_refusal stops this call before the
+            # server, but a runner-registered session must never be replaced here.
+            logger.warning("Not capturing %s session %s over the runner's %s",
+                           mcp_name, session_id, pinned)
+            return
         _design_state.sessions[mcp_name] = session_id
         logger.info("Captured session: sessions[%s] = %s", mcp_name, session_id)
 

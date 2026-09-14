@@ -329,9 +329,9 @@ def build_task_with_session(
 
     The session is pre-created with initial_parameters applied via MCP,
     and the task text includes the session_id and params as context.
-    Strong language warns agents not to create new sessions — a new
-    session will lack the configured mission and parameters, causing
-    simulation failures.
+    The task tells agents not to create a new session: a new session is blank
+    and silently flies the default mission. The data plane refuses the call
+    anyway (session_creation_refusal) and names the existing session.
     """
     params_text = ""
     if params:
@@ -377,9 +377,11 @@ def build_task_with_session(
         f"get_design_space (valid aviary parameter names and ranges), "
         f"get_valid_config_options (SU2 options), list_variables (pycycle variables). "
         f"A guessed name costs a failed call; a lookup costs one step.\n"
-        f"WARNING: Creating a new session (calling create_session) will "
-        f"produce a blank session without the mission or starting parameters, "
-        f"and simulations on it WILL FAIL.\n\n"
+        f"WARNING: Do not call create_session. This run's aviary session "
+        f"already exists with the mission and starting parameters above. A new "
+        f"session would be blank, without the mission or starting parameters, and "
+        f"would silently fly the default mission instead of this task's, so the "
+        f"framework refuses create_session and returns the existing session_id.\n\n"
         f"{base_task}"
     )
 
@@ -1117,6 +1119,11 @@ def run_stat_batch(
                               f"not the runner's {session_id[:8]} -- an agent created its own session")
                     if _ds is not None:
                         _ds.set_session("aviary", _end_sid)
+                    _refused = int(((_ds.data_store if _ds else {}) or {}).get("create_session_refused") or 0)
+                    result_dict["create_session_refused"] = _refused
+                    if _refused:
+                        result_dict["create_session_refused_args"] = (_ds.data_store or {}).get("create_session_refused_args")
+                        print(f"  [session] agents tried create_session {_refused}x -- refused, pointed at {session_id[:8]}")
                     _mission = read_flown_mission(tool_map, _end_sid)
                     result_dict["flown_mission"] = _mission.get("flown")
                     result_dict["mission_matches_canonical"] = _mission.get("matches_canonical")

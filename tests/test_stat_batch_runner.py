@@ -218,9 +218,13 @@ class TestBuildTaskWithSession:
         assert "Optimize fuel." in task
 
     def test_warns_against_create_session(self):
-        """Task warns that create_session will produce a broken session."""
+        """Task warns against create_session and says what really happens.
+
+        The old wording claimed simulations on a new session "WILL FAIL". They
+        do not: a blank session silently flies the default mission (B77).
+        """
         task = build_task_with_session("base", "s1")
-        assert "WILL FAIL" in task or "will fail" in task.lower()
+        assert "silently fly the default mission" in task
         assert "create_session" in task.lower()
 
     def test_includes_params_when_provided(self):

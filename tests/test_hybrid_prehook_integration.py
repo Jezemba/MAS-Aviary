@@ -168,9 +168,10 @@ class TestHybridTaskText:
         assert "_derived_span" not in task
 
     def test_task_warns_about_create_session_consequence(self):
-        """Task warns that create_session produces a broken blank session."""
+        """Task warns that create_session produces a blank session, and that it is refused."""
         task = build_task_with_session("base", "s1")
-        assert "WILL FAIL" in task
+        assert "silently fly the default mission" in task
+        assert "refuses create_session" in task
         assert "create_session" in task
         # Should explain the consequence, not just ban it
         assert "blank session" in task.lower() or "without the mission" in task.lower()

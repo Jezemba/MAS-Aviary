@@ -207,6 +207,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         mass_coupling_hint,
         mission_coupling_error,
         resolve_request,
+        session_creation_refusal,
         unresolved_ref_error,
     )
 
@@ -228,6 +229,11 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         bad_ref = unresolved_ref_error(tool.name, resolved)
         if bad_ref is not None:
             return _json.dumps(bad_ref)
+        # 2a'. A session the runner created is authoritative: refuse creating a
+        #      replacement before it reaches the server, naming the one to use.
+        refused = session_creation_refusal(tool.name, resolved)
+        if refused is not None:
+            return _json.dumps(refused)
         # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
         #     A hard error made non-sequential coordination structures loop/timeout
         #     because they can't always run SU2 before the mission. As a warning the
