@@ -163,6 +163,11 @@ class NetworkedStrategy(CoordinationStrategy):
 
         # Initialize blackboard.
         self._blackboard = Blackboard(claiming_mode=self._claiming_mode)
+        # B81: completed once-only work is mirrored here so peers reading the
+        # blackboard see "agent_1 did X" (other structures get it via the KB).
+        from src.tools.duplicate_guard import register_blackboard
+
+        register_blackboard(self._blackboard)
 
         # Toggle config dict for context filtering.
         toggle_config = {

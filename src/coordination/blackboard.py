@@ -27,7 +27,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-VALID_ENTRY_TYPES = frozenset({"status", "claim", "result", "gap", "prediction"})
+VALID_ENTRY_TYPES = frozenset({"status", "claim", "result", "gap", "prediction", "done"})  # done: B81 once-only work
 
 
 # TODO lifecycle states.

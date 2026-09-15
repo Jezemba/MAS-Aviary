@@ -40,6 +40,10 @@ class AttemptFeedback:
 _ERROR_TYPE_RE = re.compile(r"\b([A-Z][a-zA-Z]*(?:Error|Exception|Warning|Fault))\b")
 
 
+# Framework refusals that carry information rather than signal a failure.
+INFORMATIONAL_REFUSALS = frozenset({"ALREADY_DONE", "SESSION_EXISTS"})
+
+
 def _extract_error_type(text: str) -> str | None:
     """Extract the first recognisable Python error type from a string."""
     m = _ERROR_TYPE_RE.search(text)
@@ -84,6 +88,11 @@ def extract_feedback(message, attempt_number: int = 0) -> AttemptFeedback:
         # values until validation passes.
         if tc.error:
             success = False
+        elif isinstance(parsed, dict) and parsed.get("error_code") in INFORMATIONAL_REFUSALS:
+            # B81/B78: a framework refusal (already done / session exists) tells the
+            # agent where the existing result is. It is not a failed attempt, and
+            # counting it as one would make the handler retry the whole stage.
+            success = True
         elif isinstance(parsed, dict) and "success" in parsed:
             success = bool(parsed["success"])
             # Override: if the tool succeeded but validation failed,

@@ -192,7 +192,8 @@ def _attach_coupling_hint(result, hint: str):
     return _json.dumps(payload) if was_str else payload
 
 
-def _kb_record(tool_name: str, resolved: dict, result, *, error=None, status=None, fingerprint=None) -> None:
+def _kb_record(tool_name: str, resolved: dict, result, *, error=None, status=None, fingerprint=None,
+               note: str = ""):
     """Write an MCP tool call to the design knowledge base (B81). Never breaks a call."""
     try:
         from src.tools import data_plane
@@ -200,10 +201,11 @@ def _kb_record(tool_name: str, resolved: dict, result, *, error=None, status=Non
 
         server = data_plane._tool_server_map.get(tool_name, "")
         if server:
-            record_tool_result(tool_name, server, resolved, result, error=error,
-                               status=status, design_fingerprint=fingerprint)
+            return record_tool_result(tool_name, server, resolved, result, error=error,
+                                      status=status, design_fingerprint=fingerprint, note=note)
     except Exception:  # pragma: no cover - recording must never break a tool call
         pass
+    return None
 
 
 def wrap_tool_with_middleware(tool: Tool) -> Tool:
@@ -249,6 +251,17 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         if refused is not None:
             _kb_record(tool.name, resolved, refused, status="refused")
             return _json.dumps(refused)
+        # 2a''. B81 once-only guard: refuse repeating work already done for this
+        #       design (once per agent), before the call reaches the server.
+        from src.tools import duplicate_guard
+        from src.tools.agent_context import current_agent_name
+
+        _fp = duplicate_guard.fingerprint(tool.name, resolved)
+        _guard = duplicate_guard.check(tool.name, _fp, current_agent_name())
+        _deliberate = bool(_guard and _guard.get("_deliberate_repeat"))
+        if _guard is not None and not _deliberate:
+            _kb_record(tool.name, resolved, _guard, status="refused", fingerprint=_fp)
+            return _json.dumps(_guard)
         # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
         #     A hard error made non-sequential coordination structures loop/timeout
         #     because they can't always run SU2 before the mission. As a warning the
@@ -264,13 +277,19 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         try:
             result = original_forward(*args, **resolved)
         except Exception as exc:
-            _kb_record(tool.name, resolved, None, error=exc)   # B81: failures are knowledge too
+            duplicate_guard.release(tool.name, _fp)
+            _kb_record(tool.name, resolved, None, error=exc, fingerprint=_fp)   # failures are knowledge too
             raise
         # 4. Intercept large binary responses
         result = intercept_response(tool.name, result)
         # 4'. B81: record the completed call in the design knowledge base, AFTER
-        #     interception so large payloads are stored as data_store refs.
-        _kb_record(tool.name, resolved, result)
+        #     interception so large payloads are stored as data_store refs; then
+        #     release the in-progress claim and update the tracked design state.
+        _entry = _kb_record(tool.name, resolved, result, fingerprint=_fp,
+                            note="deliberate repeat after an ALREADY_DONE refusal" if _deliberate else "")
+        duplicate_guard.release(tool.name, _fp)
+        _obs_status = (_entry or {}).get("status", "success")
+        duplicate_guard.observe(tool.name, resolved, result, _obs_status, _entry)
         # 4a. If the mission ran without SU2 aero, attach the coupling advisory as a
         #     NON-BLOCKING warning so the model can choose to run SU2 and re-couple.
         if aero_uncoupled is not None:
