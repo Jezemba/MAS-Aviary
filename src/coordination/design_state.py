@@ -12,6 +12,7 @@ so existing single-MCP pipelines continue to work unchanged.
 from __future__ import annotations
 
 import copy
+from typing import Any
 from dataclasses import dataclass, field
 
 
@@ -94,6 +95,10 @@ class DesignState:
     # Keys are descriptive: "tigl_wing_mesh_su2", "tigl_full_step", etc.
     # Values are the raw payload strings (base64, file paths, etc.).
     data_store: dict[str, str] = field(default_factory=dict)
+
+    # Design knowledge base for this chain link (B81): completed tool results,
+    # written by the middleware. Created lazily by src.tools.knowledge_base.get_kb.
+    knowledge_base: Any = field(default=None, repr=False, compare=False)
 
     # -- Backward compatibility -------------------------------------------------
 

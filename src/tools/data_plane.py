@@ -370,6 +370,13 @@ def export_state_summary() -> dict:
     # large to export, so its presence is exported as a flag.
     _mesh = (getattr(_design_state, "data_store", {}) or {}).get("generate_volume_mesh__mesh_base64")
     out["_volume_mesh_generated"] = isinstance(_mesh, str) and len(_mesh) > 100
+    # B80/B81: knowledge-base and duplicate-guard metrics for result.json.
+    try:
+        from src.tools.knowledge_base import kb_metrics
+
+        out["_kb_metrics"] = kb_metrics()
+    except Exception:  # pragma: no cover - never fail while exporting
+        pass
     for key, value in (getattr(_design_state, "data_store", {}) or {}).items():
         if value is None or isinstance(value, (int, float, bool)):
             out[key] = value

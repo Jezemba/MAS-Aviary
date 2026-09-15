@@ -21,10 +21,16 @@ def _with_design_state(tools: list) -> list:
     which server it is about to call (B53/B54/B55).
     """
     from src.tools.design_state_tool import GetDesignState
+    from src.tools.knowledge_base_tool import ReadDesignKnowledge
 
-    if any(getattr(t, "name", None) == GetDesignState.name for t in tools):
-        return tools
-    return list(tools) + [GetDesignState()]
+    names = {getattr(t, "name", None) for t in tools}
+    extra = []
+    if GetDesignState.name not in names:
+        extra.append(GetDesignState())
+    # B81: the design knowledge base is a discovery tool too, for the same reason.
+    if ReadDesignKnowledge.name not in names:
+        extra.append(ReadDesignKnowledge())
+    return list(tools) + extra
 
 
 def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]:

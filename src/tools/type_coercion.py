@@ -192,6 +192,20 @@ def _attach_coupling_hint(result, hint: str):
     return _json.dumps(payload) if was_str else payload
 
 
+def _kb_record(tool_name: str, resolved: dict, result, *, error=None, status=None, fingerprint=None) -> None:
+    """Write an MCP tool call to the design knowledge base (B81). Never breaks a call."""
+    try:
+        from src.tools import data_plane
+        from src.tools.knowledge_base import record_tool_result
+
+        server = data_plane._tool_server_map.get(tool_name, "")
+        if server:
+            record_tool_result(tool_name, server, resolved, result, error=error,
+                               status=status, design_fingerprint=fingerprint)
+    except Exception:  # pragma: no cover - recording must never break a tool call
+        pass
+
+
 def wrap_tool_with_middleware(tool: Tool) -> Tool:
     """Wrap a Tool with the full middleware stack:
 
@@ -233,6 +247,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         #      replacement before it reaches the server, naming the one to use.
         refused = session_creation_refusal(tool.name, resolved)
         if refused is not None:
+            _kb_record(tool.name, resolved, refused, status="refused")
             return _json.dumps(refused)
         # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
         #     A hard error made non-sequential coordination structures loop/timeout
@@ -246,9 +261,16 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             import json as _json
             return _json.dumps(aero_uncoupled)
         # 3. Call the actual tool
-        result = original_forward(*args, **resolved)
+        try:
+            result = original_forward(*args, **resolved)
+        except Exception as exc:
+            _kb_record(tool.name, resolved, None, error=exc)   # B81: failures are knowledge too
+            raise
         # 4. Intercept large binary responses
         result = intercept_response(tool.name, result)
+        # 4'. B81: record the completed call in the design knowledge base, AFTER
+        #     interception so large payloads are stored as data_store refs.
+        _kb_record(tool.name, resolved, result)
         # 4a. If the mission ran without SU2 aero, attach the coupling advisory as a
         #     NON-BLOCKING warning so the model can choose to run SU2 and re-couple.
         if aero_uncoupled is not None:

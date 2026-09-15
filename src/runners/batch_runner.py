@@ -668,7 +668,14 @@ def _install_trace_capture(coordinator) -> None:
 
         def _make_traced_run(agent_name, orig_run, agent_ref):
             def traced_run(*args, **kwargs):
-                result = orig_run(*args, **kwargs)
+                # B81: every tool call this run makes is attributed to this agent
+                # (the knowledge base records who did the work; the duplicate guard
+                # counts refusals per agent). When a graph alias wraps an agent a
+                # second time, the innermost scope -- the agent's own name -- wins.
+                from src.tools.agent_context import agent_scope
+
+                with agent_scope(agent_name, getattr(agent_ref, "description", "") or ""):
+                    result = orig_run(*args, **kwargs)
                 try:
                     steps = agent_ref.memory.get_full_steps()
                     serialized = [_serialize_step(s) for s in steps]
