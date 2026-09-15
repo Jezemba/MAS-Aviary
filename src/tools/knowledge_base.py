@@ -324,10 +324,168 @@ def digest(entries: list[dict], limit_chars: int = 2500) -> str:
     return text if len(text) <= limit_chars else text[: limit_chars - 20] + "\n...[digest truncated]"
 
 
+_SUMMARY_INSTRUCTION = (
+    "You summarize an aircraft-design run's knowledge base for another engineering agent. "
+    "The records below were written by the framework from real tool results (not from agents' "
+    "claims). Summarize them for an agent that needs: {need}. Return, briefly: what is DONE (with "
+    "key values and the data refs of large results), what is STILL MISSING for a coupled result "
+    "(volume mesh, SU2 solve, mass estimate, engine cycle, mission simulation), and any conflicts "
+    "or failures. Do not invent values that are not in the records."
+)
+_SUMMARY_RECORDS_CAP_CHARS = 12000
+
+
+def _summary_messages(entries: list[dict], question: str | None) -> list[dict]:
+    need = question or "the current state of the design work, to continue it without repeating done work"
+    kept: list[dict] = []
+    for e in reversed(entries):                       # newest first, within the cap
+        trial = [e] + kept
+        if len(json.dumps(trial, default=str)) > _SUMMARY_RECORDS_CAP_CHARS:
+            break
+        kept = trial
+    omitted = len(entries) - len(kept)
+    records = json.dumps(kept, default=str)
+    text = (_SUMMARY_INSTRUCTION.format(need=need)
+            + (f"\n\n({omitted} older records omitted.)" if omitted else "")
+            + f"\n\nDeterministic tally (for reference):\n{digest(entries)}"
+            + f"\n\nRecords:\n{records}")
+    return [{"role": "user", "content": [{"type": "text", "text": text}]}]
+
+
+def _generate_summary(model: Any, messages: list[dict]) -> str:
+    """One short, tool-free, history-free generation on the local model, under the lock."""
+    from src.llm.generation_lock import GENERATION_LOCK
+    from src.llm.thinking_model import strip_think_blocks
+
+    with GENERATION_LOCK:
+        from smolagents.models import TransformersModel
+
+        if isinstance(model, TransformersModel):
+            # Bypass ThinkingModel.generate: no tool-call parsing/retries. Thinking is
+            # switched off for this call only (safe: the lock serializes every
+            # generation, so no other prompt is being built concurrently).
+            prev = model._set_thinking_kwarg(False) if hasattr(model, "_set_thinking_kwarg") else None
+            try:
+                msg = TransformersModel.generate(model, messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS,
+                                                 do_sample=False)
+            finally:
+                if hasattr(model, "_restore_thinking_kwarg"):
+                    model._restore_thinking_kwarg(prev)
+        else:  # registered test stub
+            msg = model.generate(messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS, do_sample=False)
+    return strip_think_blocks(getattr(msg, "content", "") or "").strip()
+
+
 def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: bool = True,
               **filters) -> str:
-    """Summary of the matching entries. Local model when registered (step 4), else digest."""
+    """Summary of the matching entries by the already-loaded LOCAL model, else the digest.
+
+    The call gets only an instruction and the matching records -- no tools, no
+    conversation history -- with SUMMARY_MAX_NEW_TOKENS new tokens and thinking
+    disabled, under the single generation lock (src/llm/generation_lock.py), so it
+    never overlaps an agent's generation. Cached per (filters, question, KB size):
+    a repeat call with nothing new costs no GPU time. Never an API model: only a
+    model accepted by register_local_model is used.
+    """
+    if kb is None:
+        return "No design work recorded yet."
     if count_read:
         kb.bump("kb_reads_summary")
     entries = kb.select(**filters)
-    return digest(entries)
+    if not entries:
+        return "No design work recorded yet."
+    key = (tuple(sorted((k, v) for k, v in filters.items() if v is not None)), question or "", len(kb.entries))
+    with kb._lock:
+        cached = kb._summary_cache.get(key)
+    if cached is not None:
+        return cached
+
+    from src.llm.generation_lock import GENERATION_LOCK, get_local_model
+
+    model = get_local_model()
+    text = None
+    if model is not None:
+        need = question or "the current state of the design work"
+        records = json.dumps(_newest_within(entries, 9000), default=str)
+        instruction = (
+            "Summarize these design records for an agent that needs: " + need + ".\n"
+            "Return, in under 300 words: what is DONE (with key values and data refs), what is "
+            "STILL MISSING for a coupled result (volume mesh, SU2 solve, mass estimate, engine cycle, "
+            "mission simulation), and any conflicts or failures. Use only these records.\n\n"
+            "RECORDS:\n" + records + "\n\nDeterministic digest of the same records:\n" + digest(entries)
+        )
+        messages = [{"role": "user", "content": [{"type": "text", "text": instruction}]}]
+        t0 = time.monotonic()
+        try:
+            with GENERATION_LOCK:
+                text = _call_summary_model(model, messages)
+            kb.bump("kb_summary_calls")
+        except Exception as exc:  # a failed summary must never break the caller
+            kb.bump("kb_summary_failures")
+            text = None
+            _ = exc
+        finally:
+            kb.bump("kb_summary_seconds", round(time.monotonic() - t0, 3))
+    if not text:
+        text = digest(entries)
+    with kb._lock:
+        kb._summary_cache[key] = text
+    return text
+
+
+def _newest_within(entries: list[dict], cap_chars: int) -> list[dict]:
+    kept: list[dict] = []
+    for e in reversed(entries):
+        if len(json.dumps([e] + kept, default=str)) > cap_chars:
+            break
+        kept = [e] + kept
+    return kept
+
+
+def _call_summary_model(model: Any, messages: list) -> str:
+    """One short, tool-free generation on the local model; returns plain text."""
+    from smolagents.models import TransformersModel
+
+    from src.llm.thinking_model import strip_think_blocks
+
+    if isinstance(model, TransformersModel):
+        # Bypass ThinkingModel.generate (no tool-call parsing or parse retries) and
+        # turn thinking off so the 400-token budget goes to the summary itself.
+        setter = getattr(model, "_set_thinking_kwarg", None)
+        prev = setter(False) if setter else None
+        try:
+            msg = TransformersModel.generate(model, messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS,
+                                             do_sample=False)
+        finally:
+            if setter:
+                model._restore_thinking_kwarg(prev)
+    else:   # a registered test stub
+        msg = model.generate(messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS, do_sample=False)
+    content = msg.content if not isinstance(msg.content, list) else " ".join(
+        part.get("text", "") for part in msg.content if isinstance(part, dict))
+    return strip_think_blocks(content or "").strip()
+
+
+HANDOFF_MARKER = "=== DESIGN KNOWLEDGE BASE ("
+
+
+def handoff_text(task: str) -> str:
+    """Prefix a handoff or assignment with the knowledge-base summary (decided 2026-09-15, 7.4).
+
+    Every agent run starts with what has really been done, from tool results, instead
+    of relying on another agent's free-text claim. Empty knowledge base: unchanged.
+    """
+    kb = get_kb()
+    if kb is None or not kb.entries:
+        return task
+    summary = summarize(kb, count_read=False, question="an agent starting its next piece of work")
+    kb.bump("kb_handoff_summaries")
+    return (
+        f"{HANDOFF_MARKER}framework record of work already done in this run: real tool "
+        "results, not claims) ===\n"
+        f"{summary}\n"
+        "For details or data refs call read_design_knowledge(mode='full', tool=...). Do not redo "
+        "once-only work listed here.\n"
+        "=== END DESIGN KNOWLEDGE BASE ===\n\n"
+        f"{task}"
+    )

@@ -83,10 +83,24 @@ def load_model(config: LLMConfig) -> Model:
     key = _cache_key(config)
     cached = _MODEL_CACHE.get(key)
     if cached is not None:
+        _register_for_summaries(cached)
         return cached
     model = _build_model(config)
     _MODEL_CACHE[key] = model
+    _register_for_summaries(model)
     return model
+
+
+def _register_for_summaries(model: Model) -> None:
+    """B81: the loaded model also writes knowledge-base summaries -- only if it is local.
+
+    register_local_model accepts only an in-process TransformersModel, so a LiteLLM or
+    OpenAI-compatible client is never used for summaries (B79); those fall back to the
+    deterministic digest.
+    """
+    from src.llm.generation_lock import register_local_model
+
+    register_local_model(model)
 
 
 def _build_model(config: LLMConfig) -> Model:

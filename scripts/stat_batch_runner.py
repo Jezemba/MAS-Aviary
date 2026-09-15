@@ -505,11 +505,17 @@ def _aggressive_gpu_cleanup():
     print(f"  [GPU cleanup] {mem:.0f} MB allocated after cleanup")
 
 
-def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cover
+def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None):  # pragma: no cover
     """Child entry point: run the combination and send the result back."""
     try:
         from src.runners.batch_runner import run_combination
 
+        # B81: where this run's design knowledge base is written, which chain link
+        # and attempt it belongs to, and what the previous link handed over.
+        if kb_context:
+            from src.tools.knowledge_base import configure_run
+
+            configure_run(**kb_context)
         result = run_combination(combo, task, config, session_id=session_id)
         # The result alone is NOT enough. The design ledger's authoritative
         # coupling check reads the data-plane state via get_design_state() in
@@ -522,6 +528,20 @@ def _subprocess_target(pipe, combo, task, config, session_id):  # pragma: no cov
             state_summary = export_state_summary()
         except Exception:
             state_summary = {}
+        # B81: summarize this link's knowledge base now, while the model is still
+        # loaded here, so the next link can start from it (the link_start entry).
+        try:
+            from src.tools.knowledge_base import get_kb, summarize
+
+            _kb = get_kb()
+            if _kb is not None and _kb.entries:
+                state_summary["_kb_link_summary"] = summarize(
+                    _kb, count_read=False, question="the next design iteration of this chain")
+                from src.tools.knowledge_base import kb_metrics
+
+                state_summary["_kb_metrics"] = kb_metrics()
+        except Exception:
+            pass
         try:
             pipe.send(("ok", result, state_summary))
         except Exception as exc:
@@ -661,7 +681,7 @@ def _start_live_heartbeat(wb_run, interval_s: int = 60):
     return stop
 
 
-def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=None):
+def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=None, kb_context=None):
     """Run a combination with a wall-clock timeout, in a killable subprocess.
 
     This used to say "uses a subprocess" while using
@@ -688,7 +708,7 @@ def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=N
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     proc = ctx.Process(
         target=_subprocess_target,
-        args=(child_conn, combo, task, config, session_id),
+        args=(child_conn, combo, task, config, session_id, kb_context),
         daemon=False,
     )
     proc.start()
@@ -962,11 +982,16 @@ def run_stat_batch(
         # Fuel the PREVIOUS link ended at, so this link can be scored against the
         # design it was handed rather than against the untouched baseline (B32).
         chain_start_fuel: float | None = None
+        # B81: what the previous link's knowledge base hands the next one.
+        chain_kb_seed: dict | None = None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
                 chain_params = dict(done["chain_end_params"])
                 chain_feedback = done.get("chain_feedback") or chain_feedback
+                if done.get("kb_link_summary"):
+                    chain_kb_seed = {"summary": done["kb_link_summary"],
+                                     "end_state": done["chain_end_params"]}
                 chain_start_fuel = (
                     (done.get("eval_classification") or {}).get("fuel_burned_kg")
                     or chain_start_fuel
@@ -1055,6 +1080,12 @@ def run_stat_batch(
                         domain="aviary",
                         timeout_seconds=timeout_sec,
                         session_id=session_id,
+                        kb_context={
+                            "path": str(out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl"),
+                            "chain_link": repeat_idx,
+                            "attempt": attempt,
+                            "seed": chain_kb_seed,
+                        },
                     )
 
                     # Retry on zero fuel (simulation didn't produce output)
@@ -1137,6 +1168,24 @@ def run_stat_batch(
                         print("  [B31] WARNING: no volume mesh was generated in this run"
                               + (f" (finished without one: {result_dict['finished_without_mesh']})"
                                  if result_dict["finished_without_mesh"] else ""))
+                    # B80/B81: knowledge base, duplicate guard and context budget.
+                    _kbm = dict(_store.get("_kb_metrics") or {})
+                    for _k in ("kb_entries", "kb_reads_full", "kb_reads_summary", "kb_summary_calls",
+                               "kb_summary_seconds", "kb_handoff_summaries", "duplicate_refusals",
+                               "duplicate_repeats_after_refusal", "max_prompt_tokens", "context_trims",
+                               "context_over_budget_untrimmable"):
+                        result_dict[_k] = _kbm.get(_k, {} if _k.startswith("duplicate_") else 0)
+                    result_dict["kb_link_summary"] = _store.get("_kb_link_summary")
+                    _ref = result_dict["duplicate_refusals"] or {}
+                    _rep = result_dict["duplicate_repeats_after_refusal"] or {}
+                    _nref = sum(sum(t.values()) for t in _ref.values())
+                    _nrep = sum(sum(t.values()) for t in _rep.values())
+                    if _nref:
+                        _detail = ", ".join(f"{a}: " + " ".join(f"{t} {n}" for t, n in tools.items())
+                                            for a, tools in _ref.items())
+                        print(f"  [B81] duplicate work refused {_nref}x ({_detail}) -- {_nrep} repeated anyway")
+                    print(f"  [B80] context trimmed {result_dict['context_trims']}x; "
+                          f"max prompt {result_dict['max_prompt_tokens']} tokens")
                     _mission = read_flown_mission(tool_map, _end_sid)
                     result_dict["flown_mission"] = _mission.get("flown")
                     result_dict["mission_matches_canonical"] = _mission.get("matches_canonical")
@@ -1151,6 +1200,8 @@ def run_stat_batch(
                         chain_start_fuel = _fuel_now
                     if end_state:
                         chain_params = dict(end_state)
+                        if result_dict.get("kb_link_summary"):
+                            chain_kb_seed = {"summary": result_dict["kb_link_summary"], "end_state": end_state}
                         moved = sum(1 for k in end_state if abs(float(end_state[k]) - float(_start.get(k, end_state[k]))) > 1e-9)
                         print(f"  [chain] captured end-state ({moved}/{len(end_state)} vars changed) → seeds next link")
                     else:

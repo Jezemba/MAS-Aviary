@@ -253,6 +253,16 @@ class ThinkingModel(TransformersModel):
         thinking mode for that specific attempt instead of appending
         more context.
         """
+        # B81/B80 (Jessica, 2026-09-15): one lock for every generation on this model.
+        # Networked peers call it from several threads; overlapping generations were
+        # where the OOMs occurred, and a knowledge-base summary must never overlap one.
+        from src.llm.generation_lock import GENERATION_LOCK
+
+        with GENERATION_LOCK:
+            return self._generate_locked(messages, stop_sequences, response_format,
+                                         tools_to_call_from, **kwargs)
+
+    def _generate_locked(self, messages, stop_sequences, response_format, tools_to_call_from, **kwargs):
         max_retries = self._reliability.max_retries
         last_error: Exception | None = None
         # Work on a copy so retries don't pollute the caller's list.
@@ -343,6 +353,34 @@ class ThinkingModel(TransformersModel):
             last_error,
         )
         return raw_message  # type: ignore[possibly-undefined]
+
+    # -- B80 prompt budget -----------------------------------------------------
+
+    def _prepare_completion_args(self, messages, stop_sequences=None, tools_to_call_from=None, **kwargs):
+        """Build the generation inputs, trimmed to the prompt budget first (B80).
+
+        Tokens are counted exactly as they will be generated -- this model's own chat
+        template, including the tool schemas -- and when the prompt exceeds
+        PROMPT_BUDGET_TOKENS the oldest steps are replaced by a knowledge-base summary
+        (src/llm/context_budget.py). Trimming happens before generation, never after an
+        OOM, and the agent's own memory is not modified.
+        """
+        from src.llm.context_budget import fit_to_budget
+        from src.tools.knowledge_base import PROMPT_BUDGET_TOKENS
+
+        base = super()._prepare_completion_args
+        built: list[tuple[list, dict]] = []   # keeps every candidate alive for the identity match
+
+        def count(msgs: list) -> int:
+            args = base(msgs, stop_sequences=stop_sequences, tools_to_call_from=tools_to_call_from, **kwargs)
+            built.append((msgs, args))
+            return int(args["inputs"].shape[1])
+
+        fitted, _ = fit_to_budget(list(messages), count, PROMPT_BUDGET_TOKENS)
+        for msgs, args in reversed(built):
+            if msgs is fitted:
+                return args
+        return base(fitted, stop_sequences=stop_sequences, tools_to_call_from=tools_to_call_from, **kwargs)
 
     # -- Strict tool schemas ---------------------------------------------------
 

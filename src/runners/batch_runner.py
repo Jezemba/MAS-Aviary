@@ -673,6 +673,15 @@ def _install_trace_capture(coordinator) -> None:
                 # counts refusals per agent). When a graph alias wraps an agent a
                 # second time, the innermost scope -- the agent's own name -- wins.
                 from src.tools.agent_context import agent_scope
+                from src.tools.knowledge_base import HANDOFF_MARKER, handoff_text
+
+                # B81 (decided 2026-09-15, 7.4): every handoff and task assignment
+                # starts with the knowledge-base summary of work really done. Skipped
+                # when an outer wrapper (a graph role alias) already added it.
+                if args and isinstance(args[0], str) and HANDOFF_MARKER not in args[0]:
+                    args = (handoff_text(args[0]),) + tuple(args[1:])
+                elif isinstance(kwargs.get("task"), str) and HANDOFF_MARKER not in kwargs["task"]:
+                    kwargs = {**kwargs, "task": handoff_text(kwargs["task"])}
 
                 with agent_scope(agent_name, getattr(agent_ref, "description", "") or ""):
                     result = orig_run(*args, **kwargs)
