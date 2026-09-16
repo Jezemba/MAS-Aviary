@@ -550,6 +550,14 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
             state_summary["_generation_stats"] = generation_stats()
         except Exception:
             pass
+        # B84: what actually reached the mission -- aero/mass/propulsion status for the
+        # CURRENT design, and whether the fuel figure is this design's at all.
+        try:
+            from src.tools.coupling_contract import coupling_status
+
+            state_summary["_coupling_status"] = coupling_status()
+        except Exception:
+            pass
         # B83: how many peer generations actually shared a forward pass.
         try:
             from src.llm.batch_generation import stats as batch_stats
@@ -1216,6 +1224,26 @@ def run_stat_batch(
                           f"waited {_gs.get('generation_wait_seconds', 0)}s; "
                           f"summaries on {_gs.get('summary_model_id') or 'digest (no summary model)'} "
                           f"{_kbm.get('kb_summary_calls', 0)}x ({_kbm.get('kb_summary_seconds', 0)}s)")
+                    # B84: the coupled inputs are required parameters now. A refusal costs
+                    # one cheap step and never reaches a server; it is NOT a tool failure.
+                    _cs = dict(_store.get("_coupling_status") or {})
+                    for _k in ("aero_status", "mass_status", "propulsion_status",
+                               "propulsion_ran", "propulsion_coupled", "mission_coupled"):
+                        result_dict[_k] = _cs.get(_k)
+                    _mdr = dict(_kbm.get("missing_data_refusals") or {})
+                    result_dict["missing_data_refusals"] = _mdr
+                    _n = {k: sum(v.values()) for k, v in _mdr.items()} if _mdr else {}
+                    result_dict["missing_data_refusals_total"] = sum(_n.values())
+                    if _n or _cs:
+                        print(f"  [B84] missing-data refusals {sum(_n.values())} "
+                              f"(aero {_n.get('aero', 0)}, mass {_n.get('mass', 0)}, "
+                              f"prop {_n.get('propulsion', 0)}); "
+                              f"mission coupled: {_cs.get('mission_coupled')}; "
+                              f"propulsion ran: {_cs.get('propulsion_ran')} "
+                              "(recorded, not coupled -- B3)")
+                    if _cs.get("mission_coupled") is False:
+                        print("  [B84] WARNING: this run's fuel figure is NOT this design's "
+                              "aero/mass -- excluded from fuel ranking")
                     # B83: peers are served by one padded batch, because concurrent
                     # generate() on the sharded model crashes ("CUDA error: invalid argument").
                     _bs = dict(_store.get("_batch_stats") or {})

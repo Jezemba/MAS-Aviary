@@ -469,6 +469,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_aero_coefficients(tool_name, data)
                 _capture_wing_mass_from_mass_estimate(tool_name, data)
                 _capture_geometry_ref(tool_name, data)
+                _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
@@ -487,6 +488,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_aero_coefficients(tool_name, response)
         _capture_wing_mass_from_mass_estimate(tool_name, response)
         _capture_geometry_ref(tool_name, response)
+        _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
@@ -542,6 +544,10 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     _design_state.data_store["mass_wing_source"] = str(
         components.get("mWing_source", "unknown")
     )
+    # B84: the design this mass was sized for, plus the CPACS it actually read -- the
+    # baseline fixture and the exported morph are easy to confuse (B21/B30).
+    from src.tools.coupling_contract import note_capture
+    note_capture("mass", {"wing_kg": wing_f, "sized_on": data.get("cpacs_file_path")})
     logger.info(
         "Captured wing mass from estimate_mass: %.1f kg (source=%s)",
         wing_f, components.get("mWing_source"),
@@ -696,10 +702,49 @@ def _store_aero(cl_f: float, cd_f: float, source: str) -> None:
     coupling.put_var(_design_state, "aero.cd_cruise", cd_f, source_tool=source)
     if cd_f:
         coupling.put_var(_design_state, "aero.l_over_d", cl_f / cd_f, source_tool=source)
+    # B84: record WHICH design these coefficients were solved for, so a mission after a
+    # later morph sees them as stale rather than silently flying old drag.
+    from src.tools.coupling_contract import note_capture
+    note_capture("su2", {"cl": cl_f, "cd": cd_f, "source": source})
     logger.info(
         "Captured aero into typed registry from %s: aero.cl_cruise=%.4f aero.cd_cruise=%.4f",
         source, cl_f, cd_f,
     )
+
+
+def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
+    """B84: capture pycycle's cruise TSFC and thrust from ``run_cycle``.
+
+    Nothing captured these before, so ``prop.sfc_cruise`` was declared in the typed
+    registry and never written. They stay DIAGNOSTIC -- aviary burns a tabulated engine
+    deck and no parameter carries SFC into fuel burn (B3) -- but the run is now recorded,
+    which is what the mission call requires for this design.
+    """
+    if _design_state is None or tool_name != "run_cycle":
+        return
+    outputs = data.get("outputs")
+    if not isinstance(outputs, dict):
+        return
+    from src.tools import coupling as _coupling
+
+    captured: dict = {}
+    for key, var in (("perf.TSFC", "prop.sfc_cruise"), ("perf.Fn", "prop.fn_lbf")):
+        value = outputs.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value[0] if isinstance(value, list) and value else value)
+        except (TypeError, ValueError):
+            continue
+        _coupling.put_var(_design_state, var, number, source_tool="run_cycle")
+        captured[var] = number
+    if not captured:
+        return          # a cycle that resolved nothing is not a cycle result (pycycle-mcp
+                        # returns success: false in that case, and missing_outputs says why)
+    _design_state.data_store["prop_cycle_outputs"] = captured
+    from src.tools.coupling_contract import note_capture
+    note_capture("pycycle", captured)
+    logger.info("Captured engine cycle from run_cycle: %s", captured)
 
 
 def _capture_param_bounds(tool_name: str, data: dict) -> None:

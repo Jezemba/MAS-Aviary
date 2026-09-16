@@ -407,7 +407,15 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
                 _integrator_verdict(traces) or "", None),
             "design_touched": bool(design),
             "fuel_delta_vs_start": _fuel_delta_vs_start(result_dict, ec),
-            "scoreable": bool(design),
+            # B84: a fuel figure produced on aviary's DEFAULT drag polar / internal FLOPS
+            # wing mass is not this design's figure. Scoreable now means BOTH: the run
+            # modified the aircraft AND the mission used that aircraft's aero and mass.
+            "mission_coupled": result_dict.get("mission_coupled"),
+            "aero_status": result_dict.get("aero_status"),
+            "mass_status": result_dict.get("mass_status"),
+            "propulsion_ran": result_dict.get("propulsion_ran"),
+            "propulsion_coupled": result_dict.get("propulsion_coupled"),
+            "scoreable": bool(design) and result_dict.get("mission_coupled") is not False,
         },
         # cost / efficiency
         "cost": {

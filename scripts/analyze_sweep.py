@@ -47,6 +47,21 @@ def _row_touched(row: dict) -> bool:
     return bool(row.get("design_applied")) if v is None else bool(v)
 
 
+def _row_coupled(row: dict) -> bool:
+    """Did this run's fuel figure come from THIS design's aero and mass? (B84)
+
+    Rows written before B84 carry no `mission_coupled` key. Absent is not the same as
+    False -- treating it as False would retro-label every historical run as uncoupled --
+    so those rows fall back to whether an aero coupling was recorded at all.
+    """
+    v = (row.get("objective") or {}).get("mission_coupled")
+    if v is None:
+        v = row.get("mission_coupled")
+    if v is None:
+        return str(row.get("aero_coupling_status", "")).lower() in ("injected", "coupled")
+    return bool(v)
+
+
 def split_runs(log_text: str, finished_only: bool = True) -> list[tuple[str, str]]:
     """Split the sweep log into (combo, text) per run, in order.
 
@@ -287,6 +302,24 @@ def main() -> None:
                   f"vs modified {sum(sf)/len(sf):8.0f} kg")
             print("  A fuel-ordered table is therefore topped by runs that did no "
                   "design work; rank on design_touched runs only.")
+    # ---- B84: a fuel figure from aviary's DEFAULT drag polar is not this design's ----
+    # Excluded from fuel ranking the way B32 excludes untouched designs. Before B84 the
+    # mission ran happily on the default polar and the number looked like any other.
+    uncoupled = [r for r in rows if not _row_coupled(r)]
+    coupled = [r for r in rows if _row_coupled(r)]
+    print(f"\nmission coupled to this design's aero+mass: {len(coupled)}/{len(rows)} runs   [B84]")
+    if uncoupled:
+        uf = [r["outcomes"]["fuel_burned_kg"] for r in uncoupled
+              if r["outcomes"].get("fuel_burned_kg")]
+        cf = [r["outcomes"]["fuel_burned_kg"] for r in coupled
+              if r["outcomes"].get("fuel_burned_kg")]
+        print(f"  {len(uncoupled)} run(s) produced a fuel figure WITHOUT this design's "
+              "aero/mass -- aviary substituted its own.")
+        if uf and cf:
+            print(f"  mean fuel  uncoupled {sum(uf)/len(uf):8.0f} kg   "
+                  f"vs coupled {sum(cf)/len(cf):8.0f} kg")
+        print("  Rank on coupled runs only: an uncoupled figure is aviary's default, not a result.")
+
     deltas = [r["objective"]["fuel_delta_vs_start"] for r in rows
               if r["objective"].get("fuel_delta_vs_start") is not None]
     if deltas:

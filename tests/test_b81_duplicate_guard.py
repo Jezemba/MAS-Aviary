@@ -20,6 +20,25 @@ from src.tools.agent_context import agent_scope
 from src.tools.type_coercion import wrap_tool_with_middleware
 
 BIG_MESH = "U1UyIE1FU0g=" * 60
+
+
+def _coupled_inputs_available():
+    """Pretend SU2, mass-mcp and pycycle have run for this design (B84).
+
+    The aviary mission tools require their coupled inputs since B84, which is a different
+    mechanism from the once-only guard under test here -- without this the calls below
+    would be refused for a reason this test is not about.
+    """
+    from src.tools import coupling
+    from src.tools.coupling_contract import note_capture
+
+    state = dp.get_design_state()
+    for name, value in (("aero.cl_cruise", 0.52), ("aero.cd_cruise", 0.0182),
+                        ("mass.wing_kg", 8100.0), ("mass.mtom_kg", 72000.0),
+                        ("prop.sfc_cruise", 0.58)):
+        coupling.put_var(state, name, value, source_tool="test")
+    for producer in ("su2", "mass", "pycycle"):
+        note_capture(producer)
 SERVERS = {"generate_volume_mesh": "tigl", "set_high_level_parameters": "tigl", "morph_wing": "tigl",
            "open_cpacs": "tigl", "close_cpacs": "tigl", "run_su2_solver": "su2", "create_su2_session": "su2",
            "set_mesh": "su2", "update_config_entries": "su2", "create_cycle_model": "pycycle",
@@ -143,6 +162,7 @@ def test_row7_a_failed_or_refused_prior_does_not_count(srv):
 def test_row8_non_once_only_tools_are_never_guarded(srv):
     sp = srv.tool("set_aircraft_parameters", ["session_id", "parameters"])
     rs = srv.tool("run_simulation", ["session_id"])
+    _coupled_inputs_available()      # B84: these two now require them; this test is about B81
     for agent in ("agent_1", "agent_1", "agent_2"):
         assert call(sp, agent, session_id="a", parameters={"x": 1})["success"] is True
         assert call(rs, agent, session_id="a")["success"] is True

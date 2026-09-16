@@ -183,8 +183,12 @@ CHILD = textwrap.dedent('''
 
 
 def _py(code, *args):
+    # B84 off for this probe: it flies the mission directly to check WHICH SESSION is used,
+    # with no SU2/mass/cycle behind it. The coupled-input contract is a different mechanism
+    # and has its own tests -- leaving it on would refuse the call for an unrelated reason.
     out = subprocess.run([sys.executable, "-c", code, *args], cwd=MAS, capture_output=True, text=True,
-                         timeout=600, env={**__import__("os").environ, "CUDA_VISIBLE_DEVICES": ""})
+                         timeout=600, env={**__import__("os").environ, "CUDA_VISIBLE_DEVICES": "",
+                                           "AVION_REQUIRE_COUPLED_INPUTS": "0"})
     return out.stdout
 
 

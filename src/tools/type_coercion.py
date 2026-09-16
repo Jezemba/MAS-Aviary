@@ -220,8 +220,6 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
     """
     from src.tools.data_plane import (
         intercept_response,
-        mass_coupling_hint,
-        mission_coupling_error,
         resolve_request,
         session_creation_refusal,
         unresolved_ref_error,
@@ -230,6 +228,11 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
     original_forward = getattr(tool, "forward", None)
     if original_forward is None or not getattr(tool, "inputs", None):
         return tool  # Not an MCP tool — skip
+
+    # B84: say it in the tool's own description, so a missing coupled input never costs a
+    # wasted call -- the agent reads what is required before it calls (Jessica, 2026-09-16).
+    from src.tools import coupling_contract
+    coupling_contract.apply_to_tool(tool)
 
     def middleware_forward(*args, **kwargs):
         # 1. Type coercion
@@ -262,17 +265,19 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         if _guard is not None and not _deliberate:
             _kb_record(tool.name, resolved, _guard, status="refused", fingerprint=_fp)
             return _json.dumps(_guard)
-        # 2b. Aero coupling is a NON-BLOCKING WARNING (like mass), NOT a hard gate.
-        #     A hard error made non-sequential coordination structures loop/timeout
-        #     because they can't always run SU2 before the mission. As a warning the
-        #     mission RUNS regardless, and whether it coupled becomes a measured outcome
-        #     (the coordination signal) instead of a crash. Set AVION_HARD_COUPLING=1
-        #     to restore the old hard block (strict mode).
-        import os as _os
-        aero_uncoupled = mission_coupling_error(tool.name, resolved)  # dict or None
-        if aero_uncoupled is not None and _os.environ.get("AVION_HARD_COUPLING") == "1":
-            import json as _json
-            return _json.dumps(aero_uncoupled)
+        # 2b. B84: the coupled quantities are REQUIRED PARAMETERS of the mission call.
+        #     Advisory hints were ignored every time (validate7 link 1: 5 aero warnings,
+        #     7 mass hints, 0 estimate_mass, 0 run_cycle), and aviary's stand-in values
+        #     made the answer look fine. A missing coupled input is missing DATA: the call
+        #     comes back naming what is absent and the tool sequence that produces it,
+        #     exactly as a missing argument would. resolve_request above has already had
+        #     its chance to inject, so this fires only when the data does not exist.
+        from src.tools import coupling_contract
+        missing_inputs = coupling_contract.check(tool.name, resolved)
+        if missing_inputs is not None:
+            duplicate_guard.release(tool.name, _fp)     # nothing ran; drop any in-flight claim
+            _kb_record(tool.name, resolved, missing_inputs, status="refused")
+            return _json.dumps(missing_inputs)
         # 3. Call the actual tool
         try:
             result = original_forward(*args, **resolved)
@@ -290,18 +295,9 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         duplicate_guard.release(tool.name, _fp)
         _obs_status = (_entry or {}).get("status", "success")
         duplicate_guard.observe(tool.name, resolved, result, _obs_status, _entry)
-        # 4a. If the mission ran without SU2 aero, attach the coupling advisory as a
-        #     NON-BLOCKING warning so the model can choose to run SU2 and re-couple.
-        if aero_uncoupled is not None:
-            result = _attach_coupling_hint(
-                result, aero_uncoupled.get("error", "aero not coupled into this mission")
-            )
-        # 4b. Non-blocking mass-coupling hint: if the mission runs without the structures
-        #     discipline coupled, annotate the response so the model can CHOOSE to couple it
-        #     (run estimate_mass) — unlike the aero error, this never blocks.
-        hint = mass_coupling_hint(tool.name, resolved)
-        if hint:
-            result = _attach_coupling_hint(result, hint)
+        # 4a/4b (retired by B84): the aero warning and the optional-mass hint used to be
+        #     attached here. They are unreachable now -- a mission call that reaches the
+        #     server has its coupled inputs, because the contract above required them.
         return result
 
     tool.forward = middleware_forward

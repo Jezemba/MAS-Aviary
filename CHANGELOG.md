@@ -1,5 +1,87 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: a coupled variable is now a REQUIRED INPUT of the tool that consumes it (B84)
+
+**What it was doing before.** Every MCP server has a default for everything, and every
+framework injector is a no-op when its upstream has not run:
+
+| upstream missing | what the solver did instead |
+|---|---|
+| no SU2 solve | aviary flew its own **DEFAULT drag polar** |
+| no mass-mcp | aviary used its own **internal FLOPS wing mass** |
+| no mass-mcp | pycycle sized the engine on its own **default thrust** (`Fn_DES` never injected) |
+
+So the discipline chain — geometry → SU2 → aviary, geometry → mass → pycycle → aviary —
+existed only as a convention inside the middleware, never as a requirement. A mission ran,
+returned a plausible fuel figure, and nothing said the number was not this design's. The
+framework only **advised**, on the successful result: *"AERO COUPLING MISSING … aviary will
+use its DEFAULT drag polar"*, *"COUPLING AVAILABLE (optional) … Your choice."*
+
+**Agents ignored the advice every time.** `validate7_net` link 1: 5 aero warnings, 7 mass
+hints, and **0 `estimate_mass`, 0 `run_cycle`, 0 `claim_todo`** — the tool called right
+after each of the first five hints was `get_design_state` / `generate_volume_mesh` /
+`create_su2_session` / `set_mesh` / `set_mesh`, never the discipline the hint named.
+`validate4` across the sweep: 43 aero warnings, 51 mass hints, with orchestrated links
+recording `eval=commission` on fuel computed from the default polar. Nothing caught it at
+the end either: the only end-of-run gate is B31's volume mesh, so a link with 0
+`estimate_mass` and 0 `run_cycle` finished and was scored.
+
+**The rule (Jessica, 2026-09-16), one rule everywhere:** if a tool consumes a coupled
+variable, that variable is a **required input** of the call. Call it without one and the
+call does not run; the error names the missing parameter and the tool sequence that
+produces it, exactly as a missing argument would (`src/tools/coupling_contract.py`):
+
+| tool | required coupled inputs |
+|---|---|
+| `set_aircraft_parameters` | SU2 `CL`/`CD`, mass-mcp wing mass |
+| `run_simulation` | those, plus a cycle run for this design |
+| `run_cycle` | mass-mcp `MTOM` — it is what sizes `Fn_DES` |
+
+- **Nothing special-cases a coordination structure.** It is one agent calling one tool that
+  has required inputs, so there is no gate to trap a structure and no fallback counter to
+  bound: a required input can always be satisfied by running the discipline that produces it.
+- **Said in the tool's own description**, so the requirement is known before the call rather
+  than after a wasted one.
+- **Injection stays.** `resolve_request` still fills these from the typed registry whenever
+  the discipline HAS run for the current design (and still derives the drag factor from SU2
+  CD, the formula the model kept skipping), so the check fires only when the value genuinely
+  does not exist. A value passed by hand counts — the contract is about what reaches the
+  solver, not who produced it.
+- **Stale counts as missing.** Each capture records the design it was produced for (the B81
+  geometry epoch); a later morph makes it stale and says so ("produced for an EARLIER
+  geometry"). A remesh does not — that is a discretisation, not a design change.
+- **A refusal is not a tool failure.** It never reaches a server, is recorded as `refused`
+  like the B81 duplicate guard, and does not consume a retry or a turn.
+
+**Propulsion is recorded, never claimed as coupled (B3).** There is no aviary parameter that
+carries SFC into fuel burn — the bench aircraft burns a tabulated engine deck and the FLOPS
+scalers do not land (measured, Δfuel = 0.0000 kg). So the cycle is required as a **run** and
+recorded with `propulsion_coupled: False`. Also fixed here: **nothing captured pycycle's
+outputs at all**, so `prop.sfc_cruise` was declared in the typed registry and never written;
+`run_cycle`'s `perf.TSFC` / `perf.Fn` are now captured. The real coupling would be a
+pyCycle-backed `EngineModel` builder — NASA's own TTBW model does exactly this and Aviary
+0.9.10 has the API (`EngineModel(SubsystemBuilderBase)`, `AviaryProblem(engine_builders=…)`),
+which is separate work and still B3's open decision.
+
+**Evaluator.** A fuel figure produced without this design's aero and mass is excluded from
+fuel ranking, the way B32 excludes untouched designs (`analyze_sweep._row_coupled`), and
+`scoreable` now requires both. Rows written before B84 have no flag and are not retro-labelled.
+
+**Measured per run** (`result.json` + `[B84] missing-data refusals N (aero A, mass M, prop P);
+mission coupled: X; propulsion ran: Y`): `aero_status`, `mass_status`, `propulsion_status`,
+`engine_sizing_status`, `propulsion_ran`, `propulsion_coupled`, `mission_coupled`,
+`missing_data_refusals` (per tool and producer) and its total.
+
+**Tests:** `tests/test_b84_required_coupled_inputs.py` (18) — each solver refusing its own
+missing input, the full chain passing when everything ran, stale-after-morph and its clearing,
+a hand-passed value counting, pycycle capture and its never-coupled label, the description
+block, refusals recorded as `refused` and counted per tool, the off switch, and the evaluator
+exclusion.
+
+**Retired:** the non-blocking `AERO COUPLING MISSING` warning and the optional mass hint —
+unreachable now, since a mission call that reaches the server has its coupled inputs.
+`AVION_REQUIRE_COUPLED_INPUTS=0` switches the contract off for a probe.
+
 ### 2026-09-16 — FIXED: one batching generation worker, because concurrent generate() on the sharded 32B crashes (B83)
 
 **The new fact from the 7960:** concurrent `generate()` on the single accelerate-sharded 32B
