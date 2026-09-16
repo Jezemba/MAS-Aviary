@@ -550,6 +550,13 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
             state_summary["_generation_stats"] = generation_stats()
         except Exception:
             pass
+        # B83: how many peer generations actually shared a forward pass.
+        try:
+            from src.llm.batch_generation import stats as batch_stats
+
+            state_summary["_batch_stats"] = batch_stats()
+        except Exception:
+            pass
         try:
             pipe.send(("ok", result, state_summary))
         except Exception as exc:
@@ -1209,6 +1216,21 @@ def run_stat_batch(
                           f"waited {_gs.get('generation_wait_seconds', 0)}s; "
                           f"summaries on {_gs.get('summary_model_id') or 'digest (no summary model)'} "
                           f"{_kbm.get('kb_summary_calls', 0)}x ({_kbm.get('kb_summary_seconds', 0)}s)")
+                    # B83: peers are served by one padded batch, because concurrent
+                    # generate() on the sharded model crashes ("CUDA error: invalid argument").
+                    _bs = dict(_store.get("_batch_stats") or {})
+                    for _k in ("batches", "batched_generations", "mean_batch_size",
+                               "max_batch_size_seen", "batch_gather_seconds",
+                               "batch_oom_splits", "batch_failures"):
+                        result_dict[_k] = _bs.get(_k)
+                    if _bs.get("batches"):
+                        print(f"  [B83] batches {_bs.get('batches')}; "
+                              f"mean size {_bs.get('mean_batch_size')}; "
+                              f"max size {_bs.get('max_batch_size_seen')}; "
+                              f"batched generations {_bs.get('batched_generations')}")
+                        if _bs.get("batch_oom_splits") or _bs.get("batch_failures"):
+                            print(f"  [B83] {_bs.get('batch_oom_splits')} OOM splits, "
+                                  f"{_bs.get('batch_failures')} failed batches")
                     if _gs.get("summary_calls_big_model"):
                         print(f"  [B82] WARNING: {_gs['summary_calls_big_model']} summaries reached the "
                               "agents' model -- it must be 0")

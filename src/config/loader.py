@@ -35,9 +35,18 @@ class LLMConfig:
     # (Jessica, 2026-09-16: networked peers must think simultaneously); the free-VRAM
     # guard is then the limiter. 1 reproduces the old serialised behaviour.
     max_concurrent_generations: int | None = None
-    # A generation waits rather than starting when the tightest visible card has less
-    # than this much free VRAM.
+    # B83: this is no longer a serialiser, only a batch-size limiter -- below this much
+    # free VRAM on the tightest card a batch is run one row at a time.
     min_free_vram_gb: float = 3.0
+    # B83. Rows per batched generation. None = the networked peer count. A batch of N
+    # long prompts holds N KV caches at once, so this is the new memory peak.
+    max_batch_size: int | None = None
+    # B83 (Jessica, 2026-09-16). How long the batching worker waits for a straggler peer.
+    # Peers only arrive together on step 1; after that they drift apart by the length of
+    # their tool calls, so a 25-50 ms window would batch step 1 and nothing else. The
+    # worker fires as soon as every LIVE peer has queued a request and otherwise waits at
+    # most this long (5 s is ~3% of a 130-185 s step).
+    batch_gather_seconds: float = 5.0
 
 
 @dataclass

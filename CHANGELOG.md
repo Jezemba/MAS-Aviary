@@ -1,5 +1,60 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: one batching generation worker, because concurrent generate() on the sharded 32B crashes (B83)
+
+**The new fact from the 7960:** concurrent `generate()` on the single accelerate-sharded 32B
+instance **crashes**. With B82's slots letting peers overlap, 2 of 3 peers per link died
+instantly with `CUDA error: invalid argument` — Step 1 in 0.46 s against a real 130–185 s —
+leaving one peer to do the whole link, which is why the link still looked serialised.
+Counts per link: validate3 (no lock) 4, validate4 (exclusive lock) 0, validate5_net 2,
+validate6_net 2. Not memory (4.5–10 GB free against a 1 GB floor) and not the summary model's
+card (moving it GPU 0 → GPU 2 changed nothing). The 32B is split across GPUs 0–3 by accelerate
+`device_map`; its per-module hooks move tensors and hold state on every forward, so two threads
+inside them corrupt each other. **Peer parallelism had therefore never actually worked** —
+validate3's apparent 1.40x overlap included 4 peers crashing out of their runs.
+
+**The fix Jessica chose: ONE batching generation worker** (`src/llm/batch_generation.py`).
+Peers keep their own threads and call `generate()` exactly as before; underneath, requests are
+queued and a single worker thread runs them as one padded batch, so the GPU serves every peer in
+one forward pass and only one thread ever touches the model. Everything model-facing — building
+the prompt, the B80 budget trim, the tokenizer, `model.generate` — happens on that thread, so an
+accelerate hook can never be re-entered.
+
+- **Adaptive gather window** (Jessica, 2026-09-16). Peers only arrive together on step 1; after
+  that they drift apart by the length of their tool calls, so the handoff's 25–50 ms window would
+  have batched step 1 and nothing else. The worker fires as soon as every LIVE peer has queued a
+  request and otherwise waits at most `llm.batch_gather_seconds` (5 s, ~3% of a 150 s step). The
+  coordinator declares the peer count UP FRONT (`peers_dispatched`) so the first arrival waits for
+  its peers instead of firing a batch of one, and each peer releases its place the moment its run
+  ends, so the last peer of a link never pays the window. A lone request with nobody else live
+  runs immediately.
+- **Bucketing.** Rows share a batch only when `enable_thinking`, `max_new_tokens`, the sampling
+  flags and `stop_sequences` all match; other buckets go in consecutive batches.
+- **Left-padding with a per-row mask**, so every row's completion starts at the same column and
+  cannot pick up another peer's tokens. Per-row stop handling replaces smolagents'
+  `StopOnStrings`, which reads `input_ids[0]` into one shared stream and would stop the whole
+  batch on row 0's stop sequence.
+- **Failure isolation.** A bad request fails alone, a failing batch never kills the worker, and a
+  CUDA OOM halves the batch and retries rather than failing every caller in it.
+- **Scope: networked only** (Jessica, 2026-09-16). The worker is active only while peers are
+  dispatched, so sequential and orchestrated keep today's direct path and their validate4 results
+  stay comparable. B82's slots and VRAM guard survive as the batch-size limiter (§3.2) and as the
+  non-networked path's guard; the summary model stays separate and unbatched.
+
+**Config** (`llm:`): `max_batch_size` (null = one row per dispatched peer), `batch_gather_seconds`
+(5.0), plus the 7960's placement `summary_model.device: cuda:2` (it balances the cards: GPU 0 free
+2.6 → 10.7 GB) and `min_free_vram_gb: 1.0`, which is now only a batch-size limiter.
+
+**Measured per run** (`result.json` + `[B83] batches N; mean size M; max size K; batched
+generations G`): `batches`, `batched_generations`, `mean_batch_size`, `max_batch_size_seen`,
+`batch_gather_seconds`, `batch_oom_splits`, `batch_failures`.
+
+**Tests:** `tests/test_b83_batched_generation.py` (17, stubbed model and CPU tensors) — three peers
+served by one padded call, each caller gets its own row back, only the worker thread ever touches
+the model, per-row masking, the two bucketing rules, a bad request failing alone, a failing batch
+not killing the worker, back-pressure across 3 batches with nobody starved, the three window cases,
+per-row stop sequences, the metrics, and the direct path when no peers are dispatched.
+
 ### 2026-09-16 — FIXED: networked peers think SIMULTANEOUSLY again; KB summaries moved to a small model (B82)
 
 **Regression (B80/B81, `abf9892`):** one global re-entrant lock around every generation removed

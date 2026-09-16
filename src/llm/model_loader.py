@@ -95,11 +95,14 @@ def load_model(config: LLMConfig) -> Model:
 
 
 def _configure_generation(config: LLMConfig) -> None:
-    """B82: slot cap and VRAM floor for concurrent generations."""
+    """B82 slot cap and VRAM floor, plus the B83 batching worker's size and window."""
+    from src.llm.batch_generation import configure as configure_batching
     from src.llm.generation_slots import configure
 
     configure(max_concurrent=getattr(config, "max_concurrent_generations", None),
               min_free_vram_gb=getattr(config, "min_free_vram_gb", None))
+    configure_batching(max_batch_size=getattr(config, "max_batch_size", None),
+                       gather_seconds=getattr(config, "batch_gather_seconds", None))
 
 
 def load_summary_model(config: LLMConfig):

@@ -280,9 +280,17 @@ class ThinkingModel(TransformersModel):
         thinking mode for that specific attempt instead of appending
         more context.
         """
-        # B82 (Jessica, 2026-09-16): networked peers must think SIMULTANEOUSLY.
-        # The exclusive B80/B81 lock is replaced by bounded slots plus a free-VRAM
-        # guard, which targets the OOMs without serialising the peers.
+        # B83 (Jessica, 2026-09-16): while peers are dispatched, generations go through
+        # the ONE batching worker -- concurrent generate() on the accelerate-sharded 32B
+        # crashes with "CUDA error: invalid argument", so B82's slots let peers overlap
+        # straight into that crash. The worker is the only thread that touches the model;
+        # peers still all sit inside generate() at once and are served by one forward pass.
+        # Off the networked path the worker is inactive and this is the B82 behaviour.
+        from src.llm.batch_generation import is_active
+
+        if is_active():
+            return self._generate_in_slot(messages, stop_sequences, response_format,
+                                          tools_to_call_from, **kwargs)
         from src.llm.generation_slots import generation_slot
 
         with generation_slot():
@@ -299,7 +307,7 @@ class ThinkingModel(TransformersModel):
         thinking = self._thinking_enabled
         with self._thinking_for_this_call(thinking):
             for attempt in range(max_retries + 1):
-                raw_message = super().generate(
+                raw_message = self._generate_once(
                     msgs,
                     stop_sequences=stop_sequences,
                     response_format=response_format,
@@ -377,6 +385,31 @@ class ThinkingModel(TransformersModel):
             last_error,
         )
         return raw_message  # type: ignore[possibly-undefined]
+
+    def _generate_once(self, msgs, stop_sequences=None, response_format=None,
+                       tools_to_call_from=None, **kwargs):
+        """One underlying generation: through the batch worker when peers are dispatched.
+
+        The worker builds the prompt too (B80 budget included), so the thinking setting
+        for THIS call has to travel with the request -- it is thread-local (B82) and the
+        worker is a different thread.
+        """
+        from src.llm.batch_generation import is_active, submit
+
+        if is_active():
+            if response_format is not None:
+                # Same refusal as TransformersModel: batching must not silently drop it.
+                raise ValueError("Transformers does not support structured outputs, use VLLMModel for this.")
+            return submit(self, msgs, stop_sequences=stop_sequences,
+                          tools_to_call_from=tools_to_call_from,
+                          thinking=self._thinking_for_call(), **kwargs)
+        return super().generate(
+            msgs,
+            stop_sequences=stop_sequences,
+            response_format=response_format,
+            tools_to_call_from=tools_to_call_from,
+            **kwargs,
+        )
 
     # -- B80 prompt budget -----------------------------------------------------
 

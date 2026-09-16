@@ -556,14 +556,34 @@ class Coordinator:
         # ThreadPoolExecutor.map preserves submit order; using submit + as_completed
         # would give completion order. Either works — peers in this prototype
         # complete in roughly similar times so we use map for determinism.
-        # B82: peers think SIMULTANEOUSLY. Allow as many concurrent generations as
-        # there are peers dispatched (including any the team spawned); the free-VRAM
-        # guard, not a fixed cap, is what holds a start back when memory is tight.
+        # B82/B83: peers think SIMULTANEOUSLY, but they cannot each run their own
+        # forward pass -- concurrent generate() on the sharded 32B crashes. The slots
+        # below now only bound anything that still takes the direct path; the peers'
+        # generations are merged into one batch by the worker.
+        from src.llm.batch_generation import configure as _configure_batching
         from src.llm.generation_slots import configure as _configure_slots
 
         _configure_slots(max_concurrent=max(1, len(peer_names)))
-        with ThreadPoolExecutor(max_workers=len(peer_names)) as ex:
-            messages = list(ex.map(_run_one_peer, peer_names))
+        # B83: one batch row per dispatched peer. Concurrent generate() on the sharded
+        # model crashes, so the peers' generations are merged into one forward pass
+        # instead of running side by side.
+        _configure_batching(max_batch_size=max(1, len(peer_names)))
+
+        # B83: the peers are declared to the batching worker BEFORE they start, so the
+        # first request to arrive waits for its peers instead of firing a batch of one;
+        # each peer releases its place as soon as its run ends, so the worker never waits
+        # for a peer that has finished.
+        def _run_one_peer_batched(peer_name: str) -> AgentMessage:
+            try:
+                return _run_one_peer(peer_name)
+            finally:
+                _peers.release()
+
+        from src.llm.batch_generation import peers_dispatched
+
+        with peers_dispatched(len(peer_names)) as _peers:
+            with ThreadPoolExecutor(max_workers=len(peer_names)) as ex:
+                messages = list(ex.map(_run_one_peer_batched, peer_names))
 
         return messages
 
