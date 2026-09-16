@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import contextlib
 import re
 import uuid
 from typing import Any
@@ -187,27 +189,52 @@ class ThinkingModel(TransformersModel):
     def thinking_enabled(self, value: bool) -> None:
         self._thinking_enabled = value
 
-    # Sentinel for "key was not present".
-    _NO_KEY = object()
+    # B82: thinking mode is PER CALL, held in thread-local state.
+    #
+    # It used to be set by mutating self.apply_chat_template_kwargs and restoring
+    # it afterwards. That is shared instance state, so two threads generating at
+    # once could flip each other's setting -- a real race that the B80/B81
+    # generation lock was accidentally hiding. Networked peers generate
+    # concurrently again (B82), so the toggle has to be per call.
+    #
+    # apply_chat_template_kwargs (which smolagents' TransformersModel reads when it
+    # builds the prompt) is therefore a read-only VIEW: the stored kwargs plus this
+    # thread's thinking setting. Nothing is mutated, so no lock is needed and
+    # template building stays parallel.
+    _thinking_tls = threading.local()
 
-    def _set_thinking_kwarg(self, enabled: bool) -> Any:
-        """Temporarily inject/remove ``enable_thinking`` in chat template kwargs.
-
-        Returns the previous value (or ``_NO_KEY``) so it can be restored.
-        """
-        prev = self.apply_chat_template_kwargs.get("enable_thinking", self._NO_KEY)
-        if enabled:
-            self.apply_chat_template_kwargs.pop("enable_thinking", None)
+    @property
+    def apply_chat_template_kwargs(self) -> dict[str, Any]:
+        stored = dict(getattr(self, "_chat_template_kwargs", None) or {})
+        if self._thinking_for_call():
+            stored.pop("enable_thinking", None)      # Qwen3 thinks by default
         else:
-            self.apply_chat_template_kwargs["enable_thinking"] = False
-        return prev
+            stored["enable_thinking"] = False
+        return stored
 
-    def _restore_thinking_kwarg(self, prev: Any) -> None:
-        """Restore ``enable_thinking`` to its previous state."""
-        if prev is self._NO_KEY:
-            self.apply_chat_template_kwargs.pop("enable_thinking", None)
-        else:
-            self.apply_chat_template_kwargs["enable_thinking"] = prev
+    @apply_chat_template_kwargs.setter
+    def apply_chat_template_kwargs(self, value: dict[str, Any] | None) -> None:
+        self._chat_template_kwargs = dict(value or {})
+
+    def _thinking_for_call(self) -> bool:
+        """Thinking setting for THIS thread's current generation."""
+        value = getattr(type(self)._thinking_tls, "enabled", None)
+        if value is not None:
+            return bool(value)
+        return bool(getattr(self, "_thinking_enabled", True))
+
+    @contextlib.contextmanager
+    def _thinking_for_this_call(self, enabled: bool):
+        tls = type(self)._thinking_tls
+        previous = getattr(tls, "enabled", None)
+        tls.enabled = bool(enabled)
+        try:
+            yield
+        finally:
+            if previous is None:
+                del tls.enabled
+            else:
+                tls.enabled = previous
 
     # -- Truncation detection ---------------------------------------------------
 
@@ -253,24 +280,24 @@ class ThinkingModel(TransformersModel):
         thinking mode for that specific attempt instead of appending
         more context.
         """
-        # B81/B80 (Jessica, 2026-09-15): one lock for every generation on this model.
-        # Networked peers call it from several threads; overlapping generations were
-        # where the OOMs occurred, and a knowledge-base summary must never overlap one.
-        from src.llm.generation_lock import GENERATION_LOCK
+        # B82 (Jessica, 2026-09-16): networked peers must think SIMULTANEOUSLY.
+        # The exclusive B80/B81 lock is replaced by bounded slots plus a free-VRAM
+        # guard, which targets the OOMs without serialising the peers.
+        from src.llm.generation_slots import generation_slot
 
-        with GENERATION_LOCK:
-            return self._generate_locked(messages, stop_sequences, response_format,
-                                         tools_to_call_from, **kwargs)
+        with generation_slot():
+            return self._generate_in_slot(messages, stop_sequences, response_format,
+                                          tools_to_call_from, **kwargs)
 
-    def _generate_locked(self, messages, stop_sequences, response_format, tools_to_call_from, **kwargs):
+    def _generate_in_slot(self, messages, stop_sequences, response_format, tools_to_call_from, **kwargs):
         max_retries = self._reliability.max_retries
         last_error: Exception | None = None
         # Work on a copy so retries don't pollute the caller's list.
         msgs = list(messages)
 
-        # Apply per-call thinking toggle (Fix 2).
-        prev_thinking = self._set_thinking_kwarg(self._thinking_enabled)
-        try:
+        # Apply the per-call thinking toggle (Fix 2; per thread since B82).
+        thinking = self._thinking_enabled
+        with self._thinking_for_this_call(thinking):
             for attempt in range(max_retries + 1):
                 raw_message = super().generate(
                     msgs,
@@ -300,7 +327,7 @@ class ThinkingModel(TransformersModel):
                             attempt + 1,
                             max_retries + 1,
                         )
-                        self._set_thinking_kwarg(False)
+                        type(self)._thinking_tls.enabled = False
                         # Don't append error feedback — the model just
                         # needs more token budget for the actual JSON.
                         continue
@@ -335,9 +362,6 @@ class ThinkingModel(TransformersModel):
                             "content": [{"type": "text", "text": error_feedback}],
                         },
                     ]
-        finally:
-            # Always restore original thinking state.
-            self._restore_thinking_kwarg(prev_thinking)
 
         # All retries exhausted.  Instead of raising (which smolagents
         # wraps as AgentGenerationError — a fatal error that kills run()),
@@ -365,18 +389,34 @@ class ThinkingModel(TransformersModel):
         (src/llm/context_budget.py). Trimming happens before generation, never after an
         OOM, and the agent's own memory is not modified.
         """
-        from src.llm.context_budget import fit_to_budget
-        from src.tools.knowledge_base import PROMPT_BUDGET_TOKENS
+        from src.llm.context_budget import HARD_PROMPT_LIMIT_TOKENS, fit_to_budget
+        from src.tools.knowledge_base import PROMPT_BUDGET_TOKENS, get_kb
 
         base = super()._prepare_completion_args
         built: list[tuple[list, dict]] = []   # keeps every candidate alive for the identity match
 
         def count(msgs: list) -> int:
-            args = base(msgs, stop_sequences=stop_sequences, tools_to_call_from=tools_to_call_from, **kwargs)
+            # apply_chat_template_kwargs is a per-thread view (see above), so the
+            # base can build this thread's prompt while other peers build theirs.
+            args = base(msgs, stop_sequences=stop_sequences,
+                        tools_to_call_from=tools_to_call_from, **kwargs)
             built.append((msgs, args))
             return int(args["inputs"].shape[1])
 
-        fitted, _ = fit_to_budget(list(messages), count, PROMPT_BUDGET_TOKENS)
+        fitted, tokens = fit_to_budget(list(messages), count, PROMPT_BUDGET_TOKENS)
+        # B82: the budget must BIND. validate4 run 9 trimmed 78 times and still sent
+        # 45,707 tokens, above the model's 40,960 maximum, because dropping whole
+        # steps cannot help when one message is itself enormous.
+        if tokens > PROMPT_BUDGET_TOKENS:
+            fitted, tokens = fit_to_budget(fitted, count, PROMPT_BUDGET_TOKENS, truncate_messages=True)
+        if tokens > HARD_PROMPT_LIMIT_TOKENS:
+            kb = get_kb()
+            if kb is not None:
+                kb.bump("prompt_over_limit_count")
+            raise ValueError(
+                f"prompt is {tokens} tokens, above the model maximum of {HARD_PROMPT_LIMIT_TOKENS} "
+                "even after trimming and message truncation (B82)"
+            )
         for msgs, args in reversed(built):
             if msgs is fitted:
                 return args

@@ -27,6 +27,17 @@ class LLMConfig:
     # long-prompt logits (201k vocab) -> CUDA OOM mid-run. `max_memory` caps
     # each device so the split is actually even.
     model_kwargs: dict = field(default_factory=dict)
+    # B82. summary_model: the SMALL local model that writes knowledge-base summaries,
+    # e.g. {"model_id": "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit", "device": "cuda:0"}.
+    # Never the big model and never an API (B79); unset means the deterministic digest.
+    summary_model: dict = field(default_factory=dict)
+    # How many generations may run at once on the big model. None/0 = uncapped
+    # (Jessica, 2026-09-16: networked peers must think simultaneously); the free-VRAM
+    # guard is then the limiter. 1 reproduces the old serialised behaviour.
+    max_concurrent_generations: int | None = None
+    # A generation waits rather than starting when the tightest visible card has less
+    # than this much free VRAM.
+    min_free_vram_gb: float = 3.0
 
 
 @dataclass

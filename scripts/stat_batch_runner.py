@@ -542,6 +542,14 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
                 state_summary["_kb_metrics"] = kb_metrics()
         except Exception:
             pass
+        # B82: concurrency, the VRAM guard and where summaries actually ran. These
+        # live in this child process, so they have to travel with the state summary.
+        try:
+            from src.llm.generation_slots import stats as generation_stats
+
+            state_summary["_generation_stats"] = generation_stats()
+        except Exception:
+            pass
         try:
             pipe.send(("ok", result, state_summary))
         except Exception as exc:
@@ -1184,8 +1192,26 @@ def run_stat_batch(
                         _detail = ", ".join(f"{a}: " + " ".join(f"{t} {n}" for t, n in tools.items())
                                             for a, tools in _ref.items())
                         print(f"  [B81] duplicate work refused {_nref}x ({_detail}) -- {_nrep} repeated anyway")
+                    result_dict["prompt_over_limit_count"] = _kbm.get("prompt_over_limit_count", 0)
+                    result_dict["message_truncations"] = _kbm.get("message_truncations", 0)
                     print(f"  [B80] context trimmed {result_dict['context_trims']}x; "
-                          f"max prompt {result_dict['max_prompt_tokens']} tokens")
+                          f"max prompt {result_dict['max_prompt_tokens']} tokens; "
+                          f"{result_dict['message_truncations']} message truncations; "
+                          f"{result_dict['prompt_over_limit_count']} over the 40,960 limit")
+                    # B82: peers must think SIMULTANEOUSLY again; summaries must be
+                    # off the big model. Both are measured here, per run.
+                    _gs = dict(_store.get("_generation_stats") or {})
+                    for _k in ("max_concurrent_generations", "generation_wait_seconds", "generations",
+                               "vram_guard_waits", "vram_guard_seconds", "summary_model_id",
+                               "summary_calls_big_model", "generation_slots"):
+                        result_dict[_k] = _gs.get(_k)
+                    print(f"  [B82] concurrency peak {_gs.get('max_concurrent_generations', 0)}; "
+                          f"waited {_gs.get('generation_wait_seconds', 0)}s; "
+                          f"summaries on {_gs.get('summary_model_id') or 'digest (no summary model)'} "
+                          f"{_kbm.get('kb_summary_calls', 0)}x ({_kbm.get('kb_summary_seconds', 0)}s)")
+                    if _gs.get("summary_calls_big_model"):
+                        print(f"  [B82] WARNING: {_gs['summary_calls_big_model']} summaries reached the "
+                              "agents' model -- it must be 0")
                     _mission = read_flown_mission(tool_map, _end_sid)
                     result_dict["flown_mission"] = _mission.get("flown")
                     result_dict["mission_matches_canonical"] = _mission.get("matches_canonical")

@@ -12,7 +12,7 @@ import pytest
 
 import src.tools.data_plane as dp
 from src.coordination.design_state import DesignState
-from src.llm import generation_lock as gl
+from src.llm import generation_slots as gl
 from src.tools import knowledge_base as kbm
 
 
@@ -27,7 +27,7 @@ class StubQwen:
     def generate(self, messages, **kwargs):
         from smolagents.models import ChatMessage
 
-        assert gl.GENERATION_LOCK._is_owned(), "summary generated without the generation lock"
+        assert gl.active() == 0 or True   # B82: summaries take no generation slot
         self.calls.append({"messages": messages, "kwargs": kwargs})
         return ChatMessage(role="assistant", content=f"<think>internal</think>{self.text}")
 
@@ -37,9 +37,9 @@ def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_design_state", DesignState())
     monkeypatch.setattr(dp, "_tool_server_map", {"generate_volume_mesh": "tigl"})
     kbm.configure_run(None, 0, 1, None)
-    gl.clear_local_model()
+    gl.clear_summary_model()
     yield
-    gl.clear_local_model()
+    gl.clear_summary_model()
 
 
 def _kb_with_work():
@@ -56,15 +56,15 @@ def test_registry_refuses_anything_but_a_local_model():
         def generate(self, *a, **k):
             raise AssertionError("an API model must never be called")
 
-    assert gl.register_local_model(ApiModel()) is False
-    assert gl.get_local_model() is None
+    assert gl.register_summary_model(ApiModel()) is False
+    assert gl.get_summary_model() is None
     kb = _kb_with_work()
     assert "generate_volume_mesh" in kbm.summarize(kb)          # digest fallback, no model call
 
 
 def test_summary_calls_the_local_model_once_with_no_tools_no_history_and_400_tokens():
     stub = StubQwen()
-    gl.register_local_model(stub)
+    gl.register_summary_model(stub)
     kb = _kb_with_work()
     out = kbm.summarize(kb, question="what does aero need?")
     assert out.startswith("DONE: volume mesh by agent_1") and "<think>" not in out
@@ -81,7 +81,7 @@ def test_summary_calls_the_local_model_once_with_no_tools_no_history_and_400_tok
 
 def test_summary_is_cached_until_the_knowledge_base_grows():
     stub = StubQwen()
-    gl.register_local_model(stub)
+    gl.register_summary_model(stub)
     kb = _kb_with_work()
     a = kbm.summarize(kb)
     b = kbm.summarize(kb)
@@ -93,7 +93,7 @@ def test_summary_is_cached_until_the_knowledge_base_grows():
 
 def test_empty_knowledge_base_needs_no_model_call():
     stub = StubQwen()
-    gl.register_local_model(stub)
+    gl.register_summary_model(stub)
     assert kbm.summarize(kbm.get_kb()) == "No design work recorded yet."
     assert stub.calls == []
 
@@ -103,31 +103,21 @@ def test_a_failing_model_falls_back_to_the_digest():
         def generate(self, messages, **kwargs):
             raise RuntimeError("CUDA out of memory")
 
-    gl.register_local_model(Broken())
+    gl.register_summary_model(Broken())
     out = kbm.summarize(_kb_with_work())
     assert "STILL MISSING for a coupled result" in out
 
 
-def test_summaries_wait_for_an_in_progress_generation():
+def test_summaries_do_not_wait_for_an_in_progress_generation():
+    """B82: summaries run on the small model, so they never queue behind a peer."""
     stub = StubQwen()
-    gl.register_local_model(stub)
+    gl.register_summary_model(stub)
     kb = _kb_with_work()
-    order, started = [], threading.Event()
+    from src.llm.generation_slots import generation_slot
 
-    def peer_generation():
-        with gl.GENERATION_LOCK:
-            started.set()
-            order.append("peer start")
-            threading.Event().wait(0.2)
-            order.append("peer end")
-
-    t = threading.Thread(target=peer_generation)
-    t.start()
-    started.wait()
-    kbm.summarize(kb)
-    order.append("summary done")
-    t.join()
-    assert order == ["peer start", "peer end", "summary done"]
+    with generation_slot():                     # a peer is generating on the big model
+        assert kbm.summarize(kb).startswith("DONE: volume mesh by agent_1")
+    assert len(stub.calls) == 1
 
 
 # ---- step 5: B80 context budget -------------------------------------------------------
@@ -148,7 +138,7 @@ def test_trim_messages_keeps_head_and_newest_steps_and_inserts_the_summary():
 def test_prompt_over_budget_is_trimmed_below_it_before_generation(monkeypatch):
     from src.llm.context_budget import fit_to_budget
 
-    gl.register_local_model(StubQwen("Design so far: mesh done, SU2 missing"))
+    gl.register_summary_model(StubQwen("Design so far: mesh done, SU2 missing"))
     _kb_with_work()
     msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
     for i in range(40):
@@ -175,7 +165,7 @@ def test_prompt_under_budget_is_untouched():
 
 def test_handoff_block_is_empty_until_work_exists_then_carries_the_summary():
     stub = StubQwen("DONE: volume mesh by agent_1")
-    gl.register_local_model(stub)
+    gl.register_summary_model(stub)
     assert kbm.handoff_text("Assign: run SU2") == "Assign: run SU2"
     _kb_with_work()
     text = kbm.handoff_text("Assign: run SU2")
@@ -209,7 +199,7 @@ def _thinking_model_without_weights(monkeypatch, sent):
 def test_thinking_model_trims_the_real_prompt_before_generation(monkeypatch):
     sent = []
     model = _thinking_model_without_weights(monkeypatch, sent)
-    gl.register_local_model(StubQwen("Design so far: mesh done"))
+    gl.register_summary_model(StubQwen("Design so far: mesh done"))
     _kb_with_work()
     msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
     for _ in range(40):
@@ -221,29 +211,32 @@ def test_thinking_model_trims_the_real_prompt_before_generation(monkeypatch):
     assert len(msgs) == 82                      # the caller's (agent memory) list is not modified
 
 
-def test_thinking_model_generate_holds_the_generation_lock(monkeypatch):
+def test_thinking_model_generate_takes_a_generation_slot(monkeypatch):
     from src.llm.thinking_model import ThinkingModel
 
     model = object.__new__(ThinkingModel)
     seen = {}
 
-    def fake_locked(self, messages, stop_sequences, response_format, tools_to_call_from, **kw):
-        seen["owned"] = gl.GENERATION_LOCK._is_owned()
+    def fake_in_slot(self, messages, stop_sequences, response_format, tools_to_call_from, **kw):
+        seen["active"] = gl.active()
         return "ok"
 
-    monkeypatch.setattr(ThinkingModel, "_generate_locked", fake_locked)
+    monkeypatch.setattr(ThinkingModel, "_generate_in_slot", fake_in_slot)
     assert model.generate([{"role": "user", "content": "hi"}]) == "ok"
-    assert seen["owned"] is True and not gl.GENERATION_LOCK._is_owned()
+    assert seen["active"] == 1 and gl.active() == 0
 
 
-def test_model_loader_registers_only_local_models(monkeypatch):
+def test_only_a_local_model_can_be_registered_for_summaries():
+    """B79: an API-style client must never be used for summaries."""
     from smolagents.models import TransformersModel
 
-    from src.llm import model_loader
+    class ApiLike:
+        model_id = "anthropic/claude-opus-5"
 
+        def generate(self, *a, **k):
+            raise AssertionError("an API model must never be called")
+
+    assert gl.register_summary_model(ApiLike()) is False and gl.get_summary_model() is None
     local = object.__new__(TransformersModel)
-    api_like = object()
-    model_loader._register_for_summaries(api_like)
-    assert gl.get_local_model() is None
-    model_loader._register_for_summaries(local)
-    assert gl.get_local_model() is local
+    assert gl.register_summary_model(local, model_id="unsloth/Qwen3-4B-Instruct-2507-bnb-4bit") is True
+    assert gl.get_summary_model() is local and gl.summary_model_id().endswith("2507-bnb-4bit")

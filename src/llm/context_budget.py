@@ -18,6 +18,11 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+# Qwen3-32B's max_position_embeddings. A prompt above this is a hard error (B82):
+# beyond it the model cannot use the context correctly on any hardware.
+HARD_PROMPT_LIMIT_TOKENS = 40960
+_MIN_KEEP_CHARS = 400          # never truncate a message below this
+
 
 def _role(message: Any) -> str:
     role = message.get("role") if isinstance(message, dict) else getattr(message, "role", "")
@@ -34,6 +39,42 @@ def _split(messages: list) -> tuple[list, list[list]]:
         else:
             groups[-1].append(m)
     return head, groups
+
+
+def _text_of(message: Any) -> str:
+    content = message.get("content") if isinstance(message, dict) else getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return ""
+
+
+def _with_text(message: Any, text: str) -> dict:
+    role = _role(message)
+    return {"role": role, "content": [{"type": "text", "text": text}]}
+
+
+def truncate_middle(text: str, keep: int) -> str:
+    """Head + tail of a message with an explicit elision marker in between."""
+    if len(text) <= keep:
+        return text
+    head = keep // 2
+    tail = keep - head
+    return (text[:head] + f"\n...[{len(text) - keep} characters elided by the framework "
+            "to fit the model's context window (B82); call read_design_knowledge for the "
+            "full record]...\n" + text[-tail:])
+
+
+def shrink_largest_message(messages: list) -> list | None:
+    """Halve the longest message's text. None when nothing can usefully shrink."""
+    sizes = [(len(_text_of(m)), i) for i, m in enumerate(messages)]
+    size, idx = max(sizes) if sizes else (0, -1)
+    if idx < 0 or size <= _MIN_KEEP_CHARS:
+        return None
+    out = list(messages)
+    out[idx] = _with_text(messages[idx], truncate_middle(_text_of(messages[idx]), max(_MIN_KEEP_CHARS, size // 2)))
+    return out
 
 
 def summary_message(dropped: int, summary: str) -> dict:
@@ -55,7 +96,8 @@ def trim_messages(messages: list, drop_groups: int, summary: str) -> list:
     return head + [summary_message(drop, summary)] + kept
 
 
-def fit_to_budget(messages: list, count_tokens: Callable[[list], int], budget: int) -> tuple[list, int]:
+def fit_to_budget(messages: list, count_tokens: Callable[[list], int], budget: int,
+                  truncate_messages: bool = False) -> tuple[list, int]:
     """Return (messages, prompt tokens) with the prompt at or under ``budget`` if at all possible.
 
     ``count_tokens`` must count the prompt exactly as it will be generated (the model
@@ -71,28 +113,41 @@ def fit_to_budget(messages: list, count_tokens: Callable[[list], int], budget: i
     if n <= budget:
         return messages, n
 
+    best: tuple[list, int] = (messages, n)      # identity kept: the caller reuses the built args
     _, groups = _split(messages)
-    if len(groups) <= 1:
+    if len(groups) > 1:
+        summary = summarize(kb, count_read=False, question="an agent whose older steps were trimmed "
+                            "needs the state of the design work") if kb is not None else "No design work recorded yet."
+        lo, hi, found = 1, len(groups) - 1, None
+        while lo <= hi:                       # smallest number of dropped steps that fits
+            mid = (lo + hi) // 2
+            candidate = trim_messages(messages, mid, summary)
+            c = int(count_tokens(candidate))
+            if c <= budget:
+                found, hi = (candidate, c), mid - 1
+            else:
+                lo = mid + 1
+        if found is None:
+            candidate = trim_messages(messages, len(groups) - 1, summary)
+            found = (candidate, int(count_tokens(candidate)))
+        best = found
         if kb is not None:
-            kb.bump("context_over_budget_untrimmable")
-        return messages, n
+            kb.bump("context_trims")
 
-    summary = summarize(kb, count_read=False, question="an agent whose older steps were trimmed "
-                        "needs the state of the design work") if kb is not None else "No design work recorded yet."
-    lo, hi, best = 1, len(groups) - 1, None
-    while lo <= hi:                       # smallest number of dropped steps that fits
-        mid = (lo + hi) // 2
-        candidate = trim_messages(messages, mid, summary)
-        c = int(count_tokens(candidate))
-        if c <= budget:
-            best, hi = (candidate, c), mid - 1
-        else:
-            lo = mid + 1
-    if best is None:
-        candidate = trim_messages(messages, len(groups) - 1, summary)
-        best = (candidate, int(count_tokens(candidate)))
-        if kb is not None:
-            kb.bump("context_over_budget_untrimmable")
-    if kb is not None:
-        kb.bump("context_trims")
+    if best[1] > budget and truncate_messages:
+        # B82: dropping whole steps cannot help when ONE message is itself enormous
+        # (validate4 run 9 trimmed 78 times and still sent 45,707 tokens). Halve the
+        # largest message, head+tail with an elision marker, until the prompt fits.
+        current, tokens = best
+        while tokens > budget:
+            shrunk = shrink_largest_message(current)
+            if shrunk is None:                # nothing left that can usefully shrink
+                break
+            current, tokens = shrunk, int(count_tokens(shrunk))
+            if kb is not None:
+                kb.bump("message_truncations")
+        best = (current, tokens)
+
+    if best[1] > budget and kb is not None:
+        kb.bump("context_over_budget_untrimmable")
     return best

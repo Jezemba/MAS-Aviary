@@ -39,6 +39,19 @@
 # NOT validated as a substitute for Opus 5 on paper coordination metrics.
 llm:
   model_id: "unsloth/Qwen3-32B-bnb-4bit"
+  # B82 (Jessica, 2026-09-16). Knowledge-base summaries run on this SMALL local model,
+  # never the 32B (they cost 40.8 min of it in one link) and never an API (B79).
+  # Qwen3-4B-Instruct-2507: same qwen3 architecture and tokenizer family as the 32B,
+  # 4-bit (~3 GB), 262k context, non-thinking so the whole budget is summary.
+  # Pinned to cuda:0, the card with the most headroom -- `balanced` puts the most
+  # layers of the 32B on GPU 3, which is also the card that OOMed first.
+  summary_model:
+    model_id: "unsloth/Qwen3-4B-Instruct-2507-bnb-4bit"
+    device: "cuda:0"
+  # Peers must generate simultaneously: unset = uncapped (the networked strategy sets
+  # the cap to its peer count), with the VRAM guard as the real limiter.
+  max_concurrent_generations: null
+  min_free_vram_gb: 3.0
   backend: "transformers"
   # The 4-bit quantization_config is embedded in the repo's config.json, so
   # transformers applies it automatically — no explicit quantization args here.

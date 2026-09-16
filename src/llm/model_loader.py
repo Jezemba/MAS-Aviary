@@ -10,6 +10,7 @@ Supports three backends:
 """
 
 import json
+import logging
 import os
 
 from smolagents.models import Model
@@ -17,6 +18,8 @@ from smolagents.models import Model
 from src.config.loader import LLMConfig
 from src.llm.reliability import ReliabilityConfig
 from src.llm.thinking_model import ThinkingModel
+
+logger = logging.getLogger(__name__)
 
 
 def _pick_litellm_api_key(model_id: str) -> str | None:
@@ -81,26 +84,54 @@ def load_model(config: LLMConfig) -> Model:
         A ready-to-use Model instance.
     """
     key = _cache_key(config)
+    _configure_generation(config)
+    load_summary_model(config)          # B82: summaries never run on the big model
     cached = _MODEL_CACHE.get(key)
     if cached is not None:
-        _register_for_summaries(cached)
         return cached
     model = _build_model(config)
     _MODEL_CACHE[key] = model
-    _register_for_summaries(model)
     return model
 
 
-def _register_for_summaries(model: Model) -> None:
-    """B81: the loaded model also writes knowledge-base summaries -- only if it is local.
+def _configure_generation(config: LLMConfig) -> None:
+    """B82: slot cap and VRAM floor for concurrent generations."""
+    from src.llm.generation_slots import configure
 
-    register_local_model accepts only an in-process TransformersModel, so a LiteLLM or
-    OpenAI-compatible client is never used for summaries (B79); those fall back to the
-    deterministic digest.
+    configure(max_concurrent=getattr(config, "max_concurrent_generations", None),
+              min_free_vram_gb=getattr(config, "min_free_vram_gb", None))
+
+
+def load_summary_model(config: LLMConfig):
+    """Load and register the SMALL model that writes knowledge-base summaries (B82).
+
+    Pinned to one card (default cuda:0, the one with the most headroom -- `balanced`
+    gives GPU 3 the most layers of the 32B and it OOMed first). Cached like the big
+    model. Any failure is non-fatal: summaries fall back to the deterministic digest,
+    never to the big model, and never to an API (B79).
     """
-    from src.llm.generation_lock import register_local_model
+    from src.llm.generation_slots import get_summary_model, register_summary_model
 
-    register_local_model(model)
+    spec = dict(getattr(config, "summary_model", None) or {})
+    model_id = spec.pop("model_id", None)
+    if not model_id:
+        return None
+    if get_summary_model() is not None:
+        return get_summary_model()
+    cached = _MODEL_CACHE.get(("summary", model_id))
+    if cached is None:
+        device = spec.pop("device", "cuda:0")
+        try:
+            from smolagents import TransformersModel
+
+            cached = TransformersModel(model_id=model_id, device_map={"": device},
+                                       max_new_tokens=spec.pop("max_new_tokens", 400), **spec)
+            _MODEL_CACHE[("summary", model_id)] = cached
+        except Exception as exc:
+            logger.warning("B82: summary model %s did not load (%s); summaries use the digest", model_id, exc)
+            return None
+    register_summary_model(cached, model_id=model_id)
+    return cached
 
 
 def _build_model(config: LLMConfig) -> Model:

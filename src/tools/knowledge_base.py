@@ -335,55 +335,14 @@ _SUMMARY_INSTRUCTION = (
 _SUMMARY_RECORDS_CAP_CHARS = 12000
 
 
-def _summary_messages(entries: list[dict], question: str | None) -> list[dict]:
-    need = question or "the current state of the design work, to continue it without repeating done work"
-    kept: list[dict] = []
-    for e in reversed(entries):                       # newest first, within the cap
-        trial = [e] + kept
-        if len(json.dumps(trial, default=str)) > _SUMMARY_RECORDS_CAP_CHARS:
-            break
-        kept = trial
-    omitted = len(entries) - len(kept)
-    records = json.dumps(kept, default=str)
-    text = (_SUMMARY_INSTRUCTION.format(need=need)
-            + (f"\n\n({omitted} older records omitted.)" if omitted else "")
-            + f"\n\nDeterministic tally (for reference):\n{digest(entries)}"
-            + f"\n\nRecords:\n{records}")
-    return [{"role": "user", "content": [{"type": "text", "text": text}]}]
-
-
-def _generate_summary(model: Any, messages: list[dict]) -> str:
-    """One short, tool-free, history-free generation on the local model, under the lock."""
-    from src.llm.generation_lock import GENERATION_LOCK
-    from src.llm.thinking_model import strip_think_blocks
-
-    with GENERATION_LOCK:
-        from smolagents.models import TransformersModel
-
-        if isinstance(model, TransformersModel):
-            # Bypass ThinkingModel.generate: no tool-call parsing/retries. Thinking is
-            # switched off for this call only (safe: the lock serializes every
-            # generation, so no other prompt is being built concurrently).
-            prev = model._set_thinking_kwarg(False) if hasattr(model, "_set_thinking_kwarg") else None
-            try:
-                msg = TransformersModel.generate(model, messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS,
-                                                 do_sample=False)
-            finally:
-                if hasattr(model, "_restore_thinking_kwarg"):
-                    model._restore_thinking_kwarg(prev)
-        else:  # registered test stub
-            msg = model.generate(messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS, do_sample=False)
-    return strip_think_blocks(getattr(msg, "content", "") or "").strip()
-
-
 def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: bool = True,
               **filters) -> str:
     """Summary of the matching entries by the already-loaded LOCAL model, else the digest.
 
     The call gets only an instruction and the matching records -- no tools, no
-    conversation history -- with SUMMARY_MAX_NEW_TOKENS new tokens and thinking
-    disabled, under the single generation lock (src/llm/generation_lock.py), so it
-    never overlaps an agent's generation. Cached per (filters, question, KB size):
+    conversation history -- with SUMMARY_MAX_NEW_TOKENS new tokens, on the small
+    summary model, taking no generation slot, so it never competes with the agents
+    for the big model (B82). Cached per (filters, question, KB size):
     a repeat call with nothing new costs no GPU time. Never an API model: only a
     model accepted by register_local_model is used.
     """
@@ -400,9 +359,13 @@ def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: b
     if cached is not None:
         return cached
 
-    from src.llm.generation_lock import GENERATION_LOCK, get_local_model
+    # B82: summaries run on the SMALL summary model, never the big one -- they cost
+    # 40.8 minutes of the 32B's time in one link -- and take no generation slot, so
+    # they never compete with the peers. No summary model configured (or it failed
+    # to load) means the deterministic digest, never the big model.
+    from src.llm.generation_slots import get_summary_model
 
-    model = get_local_model()
+    model = get_summary_model()
     text = None
     if model is not None:
         need = question or "the current state of the design work"
@@ -417,8 +380,7 @@ def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: b
         messages = [{"role": "user", "content": [{"type": "text", "text": instruction}]}]
         t0 = time.monotonic()
         try:
-            with GENERATION_LOCK:
-                text = _call_summary_model(model, messages)
+            text = _call_summary_model(model, messages)
             kb.bump("kb_summary_calls")
         except Exception as exc:  # a failed summary must never break the caller
             kb.bump("kb_summary_failures")
@@ -443,22 +405,27 @@ def _newest_within(entries: list[dict], cap_chars: int) -> list[dict]:
 
 
 def _call_summary_model(model: Any, messages: list) -> str:
-    """One short, tool-free generation on the local model; returns plain text."""
+    """One short, tool-free generation on the SMALL summary model; returns plain text.
+
+    Called straight through TransformersModel.generate: no tool-call parsing, no parse
+    retries, and no shared chat-template state to mutate (B82 -- that mutation was the
+    race the old lock hid). The configured summary model is a non-thinking instruct
+    build, so the whole token budget goes to the summary.
+    """
     from smolagents.models import TransformersModel
 
-    from src.llm.thinking_model import strip_think_blocks
+    from src.llm.thinking_model import ThinkingModel, strip_think_blocks
 
+    if isinstance(model, ThinkingModel):
+        # Structurally impossible (register_summary_model refuses it); counted and
+        # refused here too so the acceptance criterion is measured, not assumed.
+        from src.llm.generation_slots import note_summary_on_big_model
+
+        note_summary_on_big_model()
+        raise RuntimeError("summaries must never run on the agents' model (B82)")
     if isinstance(model, TransformersModel):
-        # Bypass ThinkingModel.generate (no tool-call parsing or parse retries) and
-        # turn thinking off so the 400-token budget goes to the summary itself.
-        setter = getattr(model, "_set_thinking_kwarg", None)
-        prev = setter(False) if setter else None
-        try:
-            msg = TransformersModel.generate(model, messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS,
-                                             do_sample=False)
-        finally:
-            if setter:
-                model._restore_thinking_kwarg(prev)
+        msg = TransformersModel.generate(model, messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS,
+                                         do_sample=False)
     else:   # a registered test stub
         msg = model.generate(messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS, do_sample=False)
     content = msg.content if not isinstance(msg.content, list) else " ".join(

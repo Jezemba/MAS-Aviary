@@ -13,7 +13,7 @@ from smolagents import Tool
 
 import src.tools.data_plane as dp
 from src.coordination.design_state import DesignState
-from src.llm import generation_lock as gl
+from src.llm import generation_slots as gl
 from src.tools import knowledge_base as kbm
 from src.tools.agent_context import current_agent_name
 from src.tools.type_coercion import wrap_tool_with_middleware
@@ -43,10 +43,10 @@ class _Stub:
 def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_design_state", DesignState())
     monkeypatch.setattr(dp, "_tool_server_map", {"generate_volume_mesh": "tigl"})
-    gl.clear_local_model()
+    gl.clear_summary_model()
     yield
     kbm.configure_run(None, None, None, None)
-    gl.clear_local_model()
+    gl.clear_summary_model()
 
 
 def _mesh_tool():
@@ -65,7 +65,7 @@ def test_child_writes_the_run_kb_and_returns_summary_and_metrics(monkeypatch, tm
     import scripts.stat_batch_runner as sbr
     from src.runners import batch_runner
 
-    gl.register_local_model(_Stub())
+    gl.register_summary_model(_Stub())
     path = tmp_path / "repeat_001" / "mdo_f25_x" / "knowledge_base.jsonl"
 
     def fake_run_combination(combo, task, config, session_id=None):
@@ -90,7 +90,7 @@ def test_child_writes_the_run_kb_and_returns_summary_and_metrics(monkeypatch, tm
 def test_every_agent_run_gets_the_kb_summary_and_its_identity_once(monkeypatch):
     from src.runners.batch_runner import _install_trace_capture
 
-    gl.register_local_model(_Stub())
+    gl.register_summary_model(_Stub())
     kbm.get_kb().append(tool="generate_volume_mesh", server="tigl", agent="geometry_engineer",
                         role="", status="success", outputs={"mesh_base64": "generate_volume_mesh__mesh_base64"})
     seen = {}

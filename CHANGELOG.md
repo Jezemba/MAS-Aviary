@@ -1,5 +1,51 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: networked peers think SIMULTANEOUSLY again; KB summaries moved to a small model (B82)
+
+**Regression (B80/B81, `abf9892`):** one global re-entrant lock around every generation removed
+the CUDA OOMs but also **serialised the networked peers** — the one behaviour the networked
+structure exists to demonstrate. Measured on the 7960, `networked_iterative_feedback` link 1:
+129 min → **333 min** (2.6x), mean step 241 s → **592 s**, with 58 knowledge-base summaries
+costing **40.8 min of the 32B's time**. The lock was also paying that cost for a guarantee the
+B80 context trimming already provides: validate4 had 0 OOMs while trimming 78 times.
+
+**What replaces the lock** (`src/llm/generation_slots.py`, new):
+1. **Bounded slots.** `generation_slot()` admits several generations at once; the networked
+   strategy opens one slot per dispatched peer (`coordinator.py`), `llm.max_concurrent_generations`
+   overrides, and `n=1` reproduces the old serialised behaviour for debugging.
+2. **A free-VRAM guard** targeting the actual failure mode: below `llm.min_free_vram_gb` (3 GB)
+   on the tightest visible card, a generation waits for running ones instead of piling on. The
+   wait is bounded (300 s, and it proceeds immediately when nothing of ours is running) so a run
+   can never deadlock on it.
+3. **A separate small summary model**, `unsloth/Qwen3-4B-Instruct-2507-bnb-4bit` pinned to
+   **cuda:0** (`balanced` gives GPU 3 the most 32B layers and it OOMed first). Summaries take no
+   generation slot and never touch the agents' model: `register_summary_model` refuses a
+   `ThinkingModel` and anything that is not an in-process `TransformersModel` (B79 — never an API
+   model). No summary model, or a failed load, falls back to the **deterministic digest**.
+
+**The thinking-mode race the lock was hiding.** `ThinkingModel` toggled thinking by mutating
+`self.apply_chat_template_kwargs` and restoring it, so two concurrent threads could flip each
+other's setting. `apply_chat_template_kwargs` is now a **read-only per-thread view** (stored
+kwargs + this thread's setting, from a `threading.local`); nothing is mutated, so no lock is
+needed and template building stays parallel.
+
+**The B80 budget now binds.** validate4 run 9 trimmed 78 times and still sent 45,707 tokens
+(limit 40,960) because dropping whole steps cannot help when a single message is enormous.
+`fit_to_budget(..., truncate_messages=True)` now halves the largest message (head+tail with an
+elision marker) until the prompt fits — including when there is only one step group, which
+previously returned early and skipped truncation entirely — and a prompt still above
+`HARD_PROMPT_LIMIT_TOKENS` (40,960) is a **hard error**, not a warning.
+
+**Measured per run** (`result.json` + runner lines): `max_concurrent_generations`,
+`generation_wait_seconds`, `vram_guard_waits/seconds`, `summary_model_id`,
+`summary_calls_big_model` (must be 0), `prompt_over_limit_count`, `message_truncations`, and
+`[B82] concurrency peak N; waited Ws; summaries on <model> Mx (Ss)`.
+
+**Tests:** `tests/test_b82_parallel_peers.py` (12) — 3 peers overlap with `n=3` and never with
+`n=1`, a slot per peer, the thinking race under a barrier, the VRAM guard waits and never
+deadlocks, summaries route to the small model / digest with the big model and an API-like model
+both refused, an oversized message truncated to fit, and an irreducible prompt as a hard error.
+
 ### 2026-07-30 — FIXED: mass-mcp structural discipline now geometry-COUPLED (real fix)
 
 **Bug (surfaced by a "mass = null" log line during live verification):** `mass-mcp`'s

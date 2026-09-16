@@ -556,6 +556,12 @@ class Coordinator:
         # ThreadPoolExecutor.map preserves submit order; using submit + as_completed
         # would give completion order. Either works — peers in this prototype
         # complete in roughly similar times so we use map for determinism.
+        # B82: peers think SIMULTANEOUSLY. Allow as many concurrent generations as
+        # there are peers dispatched (including any the team spawned); the free-VRAM
+        # guard, not a fixed cap, is what holds a start back when memory is tight.
+        from src.llm.generation_slots import configure as _configure_slots
+
+        _configure_slots(max_concurrent=max(1, len(peer_names)))
         with ThreadPoolExecutor(max_workers=len(peer_names)) as ex:
             messages = list(ex.map(_run_one_peer, peer_names))
 
