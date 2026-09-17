@@ -1,5 +1,58 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: peers act on the live board, and a lost claim names what is free (B89)
+
+**B86/B87/B88 worked.** On the first link that ran with them (`validate10_net_7960`): 3 of 3
+peers claimed before working (was 0 of 3), the first call of the run was `claim_todo` ×3 rather
+than three identical `get_design_space` calls, step 1 fell from 166/278/382 s to 97/190/269 s, a
+peer doing another peer's discipline was refused with `CLAIMED_BY_ANOTHER_AGENT`, and **B87 was
+confirmed in production**: agent_1's cell-cap refusal was recorded as `failed` with the error as
+its note, where validate9 filed the identical call as a phantom success and locked all three
+peers out of meshing for the rest of the link.
+
+**B89 is what that cost.** Every peer chose from a board read once at the start of the turn, all
+three were handed the same suggestion, and a rejected claim said *"pick a different TODO"*
+without naming one:
+
+```
+22:41  agent_1  claim_todo('geometry')  ok
+22:43  agent_2  claim_todo('geometry')  REJECTED     22:48  agent_2 claim_todo('mass') ok
+22:44  agent_3  claim_todo('geometry')  REJECTED     22:49  agent_3 claim_todo('mass') REJECTED
+                                                     22:55  agent_3 claim_todo('aero') REJECTED
+```
+
+**agent_3 spent its whole run — three steps, 927 s — losing three claims and doing no work**, and
+four rejections cost 1,117 s across the link. Coordination was correct and nearly all of the wall
+clock.
+
+- **Every claim result now carries the live board**, success or failure (`unclaimed`, `board`).
+  The peers share one prompt built once per turn, so the claim is the one place a peer is
+  guaranteed to look; the true state rides back on it. A rejection names what is takeable *at
+  that moment* and excludes the one just lost: *"'geometry' is currently claimed by 'agent_1'.
+  Unclaimed RIGHT NOW: aero, mass, propulsion, mission — call claim_todo('aero') and start
+  there."* With nothing free it says so and points at `write_blackboard`, instead of inviting
+  another guess.
+- **A different suggestion per peer.** The prompt used to say `claim_todo('geometry')` to all
+  three, built from `free[0]`. Since the peers share one string, the split is now written out by
+  name — `agent_1 -> geometry, agent_2 -> aero, agent_3 -> mass` — and each peer reads its own.
+- **No forward reservation** (Jessica, 2026-09-16). A peer holding unfinished work cannot claim a
+  second TODO: it is **left on the board** for a peer who has nothing, and the reply tells the
+  holder to finish or release what it has. agent_1 held `geometry` *and* `aero` so agent_3 could
+  take neither. Auto-claim-on-touch stays uncapped — a claim made by actually running the work
+  means "I am doing this now", and blocking that would strand a peer mid-flow (B85's lesson).
+- **Ask, do not take over** (Jessica, 2026-09-16). agent_2 held `mass` and was refused
+  `export_cpacs`, which belongs to `geometry`. Ownership is unchanged — the refusal now tells the
+  peer how to *request* it: `write_blackboard(key='request_export_cpacs', value='<what you need
+  and why>', entry_type='gap')`, naming the holder who reads the board and can run it.
+
+**Tests:** `tests/test_b89_live_board.py` (21) — a lost claim listing what is free and excluding
+what it just lost, the next call succeeding, the live board on every result, a fully-claimed board
+telling the peer to stop trying, six peers racing one TODO leaving one winner with every loser
+told what is free, no forward reservation and the second TODO really left for the waiting peer,
+finishing or failing freeing the holder, re-claiming your own being fine, auto-claim still
+uncapped, a different suggestion per peer, more peers than TODOs, the prompt text, the request
+path, and B86/B87/B88 regression.
+
 ### 2026-09-16 — FIXED: a failed call is no longer filed as a success (B87), and no solve without a mesh (B88)
 
 **B87 — the one that gated everything.** `classify_result` json-parsed a tool's return value

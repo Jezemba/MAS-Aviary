@@ -235,11 +235,17 @@ def _refuse_claimed(tool_name: str, todo_name: str, owner: str, agent: str) -> d
         "error_code": ERROR_CLAIMED_BY_OTHER,
         "error": (
             f"{todo_name} is claimed by {owner} (since {_when(todo_name)}), and {tool_name} is part of "
-            f"that work -- doing it too would duplicate {owner}'s run. It stays reserved until {owner} "
-            f"releases it: mark_todo_done('{todo_name}', result='<short summary of what it produced>') "
-            f"or mark_todo_failed('{todo_name}') if {owner} has stalled -- you may call mark_todo_failed "
-            f"yourself to free it. {alternatives}. read_procedure(role='<name>') lists that TODO's tools "
-            "in order, and structures and propulsion need no aero at all."
+            f"that work -- doing it too would duplicate {owner}'s run. "
+            # B89 (Jessica, 2026-09-16): if you need this done, ASK for it rather than taking
+            # it over. agent_2 held 'mass' and needed export_cpacs, which belongs to geometry:
+            # the right move is to tell the holder, not to run another peer's step.
+            f"If you NEED it for your own work, ask for it: write_blackboard(key='request_{tool_name}', "
+            f"value='<what you need and why>', entry_type='gap') -- {owner} reads the board and can "
+            f"run it. It stays reserved until {owner} releases it with "
+            f"mark_todo_done('{todo_name}', result='<short summary>'), or mark_todo_failed"
+            f"('{todo_name}') if {owner} has stalled -- which you may call yourself to free it. "
+            f"{alternatives}. read_procedure(role='<name>') lists that TODO's tools in order, and "
+            "structures and propulsion need no aero at all."
         ),
         "todo": todo_name,
         "claimed_by": owner,
@@ -282,3 +288,34 @@ def stats() -> dict:
             "claim_violations_total": sum(sum(t.values()) for t in violations.values()),
         }
 
+# -- B89: the board a peer acts on must be the board as it is NOW -------------------------------
+
+def unclaimed_now() -> list[str]:
+    """What is takeable at this instant. Public because the claim tool needs it too (B89)."""
+    return _unclaimed_names()
+
+
+def board_snapshot() -> list[dict]:
+    """The live board, small enough to ride on every claim result (B89)."""
+    return [{"name": t.name, "status": str(t.status), "owner": t.assigned_to} for t in _todos()]
+
+
+def held_unfinished(agent: str) -> list[str]:
+    """TODOs this peer holds that are neither done nor failed."""
+    from src.coordination.blackboard import TODO_STATUS_CLAIMED
+
+    return [t.name for t in _todos()
+            if t.assigned_to == agent and str(t.status) == TODO_STATUS_CLAIMED]
+
+
+def suggest_split(peer_names: list[str]) -> dict:
+    """One different free TODO per peer (B89).
+
+    ``_with_board_and_uids`` used to suggest ``free[0]`` to everybody, so all three peers read
+    the identical line "claim_todo('geometry')" and two of them lost the race. The peers share
+    one prompt string, so the split is written out by NAME and each peer reads its own.
+    """
+    free = _unclaimed_names()
+    if not free or not peer_names:
+        return {}
+    return {peer: free[i % len(free)] for i, peer in enumerate(peer_names)}

@@ -386,6 +386,33 @@ class ClaimTodo(Tool):
         self._agent_name = agent_name
 
     def forward(self, todo_name: str) -> str:  # type: ignore[override]
+        from src.tools import work_claims
+
+        # B89: a peer that holds unfinished work does not get to reserve more. agent_1 claimed
+        # 'aero' at 22:52 while still doing 'geometry', so it held two and agent_3 could take
+        # neither -- agent_3 then lost three claims in a row and did no work in 927 s. The
+        # second TODO stays ON THE BOARD, visible to whoever is waiting (Jessica, 2026-09-16).
+        # Auto-claim-on-touch is deliberately NOT capped: a claim made by actually running the
+        # work means "I am doing this now", and blocking that would strand a peer mid-flow.
+        holding = work_claims.held_unfinished(self._agent_name)
+        if holding and todo_name not in holding:
+            free = work_claims.unclaimed_now()
+            return json.dumps({
+                "success": False,
+                "todo_name": todo_name,
+                "attempted_by": self._agent_name,
+                "current_owner": None,
+                "unclaimed": free,
+                "board": work_claims.board_snapshot(),
+                "message": (
+                    f"You still hold {', '.join(holding)} and it is not finished, so "
+                    f"{todo_name!r} was left on the board for a peer who has nothing. Finish "
+                    f"yours first: mark_todo_done('{holding[0]}', result='<short summary of what "
+                    f"it produced>'), or mark_todo_failed('{holding[0]}') if you cannot. "
+                    + (f"Still unclaimed for others: {', '.join(free)}." if free else "")
+                ),
+            })
+
         ok, msg = self._context.blackboard.claim_todo(todo_name, self._agent_name)
         # Resolve the current owner from the blackboard so the response
         # carries it as a structured field. Under concurrent stdout
@@ -397,12 +424,28 @@ class ClaimTodo(Tool):
             if todo.name == todo_name:
                 current_owner = todo.assigned_to or None
                 break
+        # B89: every claim result carries the board AS IT IS NOW. The peers share one prompt
+        # built once per turn, so a rejected claim used to leave the peer with nothing but that
+        # stale snapshot and the words "pick a different TODO" -- naming none. Four rejections
+        # cost 1,117 s in validate10. The claim is the one place a peer is guaranteed to look,
+        # so the true state rides back on it, success or failure.
+        free = work_claims.unclaimed_now()
+        if not ok and free:
+            msg = (f"{msg}. Unclaimed RIGHT NOW: {', '.join(free)} -- "
+                   f"call claim_todo('{free[0]}') and start there. Structures and propulsion "
+                   "need no aero, so they can run while someone else solves.")
+        elif not ok:
+            msg = (f"{msg}. Nothing is unclaimed right now, so do not keep trying: if you hold a "
+                   "TODO, get on with it; if you hold none, post what you can help with via "
+                   "write_blackboard(entry_type='gap') and stop.")
         return json.dumps(
             {
                 "success": ok,
                 "todo_name": todo_name,
                 "attempted_by": self._agent_name,
                 "current_owner": current_owner,
+                "unclaimed": free,
+                "board": work_claims.board_snapshot(),
                 "message": msg,
             }
         )

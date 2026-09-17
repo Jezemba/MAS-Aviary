@@ -1393,10 +1393,21 @@ class NetworkedStrategy(CoordinationStrategy):
                 lines.append(f"  [{todo.status}{owner}] {todo.name}")
             free = [t.name for t in todos if str(t.status) == TODO_STATUS_PENDING]
             if free:
-                lines.append("CLAIM ONE BEFORE YOU START: claim_todo('" + free[0] + "') -- unclaimed: "
-                             + ", ".join(free) + ". A claimed TODO is reserved: its tools refuse "
-                             "everyone else until the holder calls mark_todo_done(name, result='<short "
-                             "summary of what it produced>') or mark_todo_failed(name).")
+                # B89: this used to suggest free[0] to EVERY peer, so all three read the same
+                # line "claim_todo('geometry')" and two of them lost the race -- 4 rejections
+                # cost 1,117 s in validate10. The peers share one prompt string, so the split
+                # is written out by NAME and each peer reads its own.
+                from src.tools.work_claims import suggest_split
+
+                split = suggest_split(list(self._agent_order))
+                if split:
+                    lines.append("SUGGESTED SPLIT -- claim YOURS, not someone else's: "
+                                 + ", ".join(f"{peer} -> {todo}" for peer, todo in split.items()))
+                lines.append("Unclaimed: " + ", ".join(free) + ". Claim before you start. A claimed "
+                             "TODO is reserved: its tools refuse everyone else until the holder calls "
+                             "mark_todo_done(name, result='<short summary of what it produced>') or "
+                             "mark_todo_failed(name). If your claim is rejected, the reply lists what "
+                             "is free at that moment -- take one of those rather than guessing again.")
             else:
                 lines.append("Everything is claimed or done -- carry on with your own TODO.")
             blocks.append("\n".join(lines))
