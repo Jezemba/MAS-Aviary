@@ -257,7 +257,7 @@ def _refuse_claimed(tool_name: str, todo_name: str, owner: str, agent: str) -> d
             f"mark_todo_done('{todo_name}', result='<short summary>'), or mark_todo_failed"
             f"('{todo_name}') if {owner} has stalled -- which you may call yourself to free it. "
             f"{alternatives}. read_procedure(role='<name>') lists that TODO's tools in order, and "
-            "structures and propulsion need no aero at all."
+            "structures and propulsion need no aero at all." + own_next
         ),
         "todo": todo_name,
         "claimed_by": owner,

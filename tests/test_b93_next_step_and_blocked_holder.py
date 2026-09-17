@@ -227,3 +227,33 @@ def test_a_result_with_no_fuel_figure_is_untouched():
     payload = {"valid": True, "summary": {"gtow_kg": 79560.1}}
     dp._flag_zero_fuel("run_simulation", payload)
     assert payload["valid"] is True
+
+# ---- the claim refusal also names the CALLER's own next step -----------------------------------
+#
+# This was written in the first B93 commit and silently did nothing: the append targeted a string
+# that spans two source lines, the replace found no match, and `own_next` was computed and thrown
+# away. validate14 03:30 caught it -- agent_3 held `geometry` and was refused
+# set_aircraft_parameters with no word about the mesh it should have been making. Hence a test.
+
+def test_a_claim_refusal_tells_the_caller_what_ITS_own_next_step_is():
+    from src.tools.work_claims import check
+
+    board = _board()
+    _claim(board, "agent_2", "mission")
+    _claim(board, "agent_3", "geometry")
+    refusal = check("set_aircraft_parameters", "agent_3")      # mission work, held by agent_2
+    assert refusal is not None
+    assert refusal["error_code"] == "CLAIMED_BY_ANOTHER_AGENT"
+    assert "You hold geometry:" in refusal["error"]
+    assert "YOUR NEXT STEP IS" in refusal["error"]
+
+
+def test_a_claim_refusal_to_a_peer_holding_nothing_says_nothing_about_its_own_work():
+    from src.tools.work_claims import check
+
+    board = _board()
+    _claim(board, "agent_2", "mission")
+    # agent_1 holds nothing, so it gets CLAIM_FIRST rather than the claimed-by refusal.
+    refusal = check("set_aircraft_parameters", "agent_1")
+    assert refusal is not None
+    assert "You hold" not in refusal["error"]
