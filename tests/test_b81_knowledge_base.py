@@ -133,7 +133,8 @@ def test_every_agent_toolset_gets_read_design_knowledge():
     from src.tools.tool_loader import _with_design_state
 
     names = [t.name for t in _with_design_state([])]
-    assert names == ["get_design_state", "read_design_knowledge"]
+    # B85 added read_procedure alongside it: what has been done, and what should be done.
+    assert names == ["get_design_state", "read_design_knowledge", "read_procedure"]
     assert [t.name for t in _with_design_state(_with_design_state([]))] == names
 
 

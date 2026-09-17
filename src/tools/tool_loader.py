@@ -22,6 +22,7 @@ def _with_design_state(tools: list) -> list:
     """
     from src.tools.design_state_tool import GetDesignState
     from src.tools.knowledge_base_tool import ReadDesignKnowledge
+    from src.tools.procedure_tool import ReadProcedure
 
     names = {getattr(t, "name", None) for t in tools}
     extra = []
@@ -30,6 +31,11 @@ def _with_design_state(tools: list) -> list:
     # B81: the design knowledge base is a discovery tool too, for the same reason.
     if ReadDesignKnowledge.name not in names:
         extra.append(ReadDesignKnowledge())
+    # B85: and so is the procedure. read_design_knowledge says what HAS been done;
+    # read_procedure says what SHOULD be done, in order. Nobody called read_history_csv
+    # in validate8 because the sequence was written nowhere an agent could reach.
+    if ReadProcedure.name not in names:
+        extra.append(ReadProcedure())
     return list(tools) + extra
 
 

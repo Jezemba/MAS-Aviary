@@ -54,6 +54,24 @@ def register_blackboard(blackboard) -> None:
     _blackboard = blackboard
 
 
+def _unclaimed_work_hint() -> str:
+    """Name the TODOs nobody has claimed, so "wait" is never the only option (B85)."""
+    board = _blackboard
+    if board is None:
+        return (" Do not sit idle: call read_todos for unclaimed work, and read_procedure() for "
+                "which stages depend on which -- structures and propulsion need no aero at all.")
+    try:
+        pending = [t.name for t in board.read_pending_todos()]
+    except Exception:      # pragma: no cover - a hint must never break a refusal
+        return ""
+    if not pending:
+        return " Nothing else is unclaimed, so waiting is correct here."
+    return (" Do NOT sit idle while you wait -- this costs you a step. Unclaimed right now: "
+            + ", ".join(pending) + ". Call claim_todo(<name>) and do one of those; "
+            "read_procedure(role='<name>') lists its tools in order. Structures and propulsion "
+            "need no aero at all, so they can run while this solve finishes.")
+
+
 def _h(obj: Any) -> str:
     return hashlib.sha1(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
@@ -256,6 +274,10 @@ def check(tool: str, fp: str | None, agent: str) -> dict | None:
                 f"(started {running['time_utc']}). Wait for it to finish and use its result: call "
                 f"read_design_knowledge(tool='{tool}'). If it really must be run again, call it again "
                 "and it will run."
+                # B85/2.3: a peer told to wait has nothing to do, and in validate8_net spent a
+                # 400-900 s step deciding to wait -- while aero, mass and propulsion all sat
+                # pending, and mass and propulsion depend on no aero at all. Name the work.
+                + _unclaimed_work_hint()
             )
             done_by, seq = running["agent"], None
         else:
@@ -267,6 +289,12 @@ def check(tool: str, fp: str | None, agent: str) -> dict | None:
                 "for details. If it really must be redone, call it again and it will run."
             )
             done_by, seq = prior["agent"], prior["seq"]
+        # B85: same step-budget warning as the missing-data refusal -- 11 ALREADY_DONE
+        # refusals in one link, and a refused step costs 200-900 s like any other.
+        from src.tools.coupling_contract import refusals_so_far
+        from src.tools.procedures import budget_warning
+
+        message += budget_warning(refusals_so_far(agent) + 1)
         return {"success": False, "error_code": "ALREADY_DONE", "error": message,
                 "done_by": done_by, "kb_seq": seq, "design_fingerprint": fp}
 

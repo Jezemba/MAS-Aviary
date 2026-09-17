@@ -34,9 +34,12 @@ One rule, everywhere: **if a tool consumes a coupled variable, that variable is 
 input of the call.** Call it without one and the call does not run; the error names the
 missing parameter and the tool that produces it, exactly as a missing argument would.
 
-  set_aircraft_parameters  requires  SU2 CL/CD and mass-mcp's wing mass
-  run_simulation           requires  those, and a cycle run for this design
-  run_cycle                requires  mass-mcp's MTOM (it is what sizes engine thrust)
+  run_simulation  requires  SU2 CL/CD, mass-mcp's wing mass, and a cycle run for this design
+  run_cycle       requires  mass-mcp's MTOM (it is what sizes engine thrust)
+
+set_aircraft_parameters is deliberately NOT in that list (B85): it is how a peer applies its
+design and checks valid:true, so gating it refused work unrelated to the mission and burned
+the step budget. run_simulation is where the default drag polar would actually be used.
 
 Nothing special-cases a coordination structure: it is one agent calling one tool that has
 required inputs. Injection stays -- resolve_request still fills these from the typed
@@ -111,8 +114,15 @@ CYCLE = CoupledInput(
          "result is recorded for this design but does not feed fuel burn (B3).")
 
 # The whole rule, in one table: tool -> the coupled variables that call consumes.
+#
+# B85 (Jessica, 2026-09-16): set_aircraft_parameters was REMOVED from this table. It is not
+# only the mission seed -- it is how a peer applies its design and checks valid:true -- so
+# requiring the coupled inputs there refused work that had nothing to do with the mission.
+# validate8_net link 1 measured exactly that: 5 MISSING_REQUIRED_PARAMETERS, every one of
+# them on set_aircraft_parameters, at 200-900 s a step, and two of three peers reached
+# max_steps having produced nothing. run_simulation is the call that actually burns aviary's
+# default drag polar, so that is where the requirement belongs.
 REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
-    "set_aircraft_parameters": (AERO_CL, AERO_CD, WING_MASS),
     "run_simulation": (AERO_CL, AERO_CD, WING_MASS, CYCLE),
     "run_cycle": (MTOM,),
 }
@@ -232,6 +242,12 @@ def _refusal(tool_name: str, problems: list[tuple[CoupledInput, str]]) -> dict:
 
     mesh = _mesh_ref()
     tail = f"\nThe volume mesh for this design is ready to use: {mesh}." if mesh else ""
+    # B85: an agent cannot see its own step budget draining. After a few refusals, say so and
+    # point at the written procedure (Jessica, 2026-09-16).
+    from src.tools.agent_context import current_agent_name
+    from src.tools.procedures import budget_warning
+
+    tail += budget_warning(refusals_so_far(current_agent_name()) + 1)
     return {
         "success": False,
         "error_code": ERROR_CODE,
@@ -301,6 +317,24 @@ def _bump(tool_name: str, producer: str, state: str) -> None:
     if kb is None:
         return
     kb.bump_nested("missing_data_refusals", tool_name, f"{producer}:{state}")
+
+
+def refusals_so_far(agent: str | None = None) -> int:
+    """How many times THIS agent has been refused for missing data or duplicate work.
+
+    Both kinds cost a step, and a step costs 200-900 s, so they are counted together: what
+    the agent needs to know is that it is spending its budget being turned away.
+    """
+    from src.tools.knowledge_base import get_kb
+
+    kb = get_kb()
+    if kb is None:
+        return 0
+    name = agent or ""
+    with kb._lock:
+        entries = list(kb.entries)
+    return sum(1 for e in entries
+               if e.get("status") == "refused" and (not name or e.get("agent") == name))
 
 
 def coupling_status() -> dict:

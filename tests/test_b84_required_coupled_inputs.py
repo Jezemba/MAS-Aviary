@@ -118,7 +118,11 @@ def test_a_fully_coupled_link_passes_every_call():
 
 def test_only_the_consuming_tools_are_affected():
     for tool in ("generate_volume_mesh", "run_su2_solver", "estimate_mass",
-                 "get_design_state", "set_inputs", "create_cycle_model"):
+                 "get_design_state", "set_inputs", "create_cycle_model",
+                 # B85: set_aircraft_parameters is how a peer APPLIES its design and checks
+                 # valid:true. Gating it refused work unrelated to the mission and cost two
+                 # peers their whole step budget in validate8_net.
+                 "set_aircraft_parameters"):
         assert cc.check(tool, {"session_id": "s1"}) is None
 
 

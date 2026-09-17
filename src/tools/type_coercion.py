@@ -278,9 +278,14 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             duplicate_guard.release(tool.name, _fp)     # nothing ran; drop any in-flight claim
             _kb_record(tool.name, resolved, missing_inputs, status="refused")
             return _json.dumps(missing_inputs)
-        # 3. Call the actual tool
+        # 3. Call the actual tool, under a deadlock bound (B85). mcpadapt's sync bridge
+        #    waits on .result() with no timeout, so a stalled event loop parks the caller
+        #    forever -- validate8_net wedged for 48 minutes with every thread asleep. A
+        #    call that overruns its budget becomes an ordinary tool failure, so the agent
+        #    ends, its peer place is released, and the link finishes and is recorded.
+        from src.tools import call_watchdog
         try:
-            result = original_forward(*args, **resolved)
+            result = call_watchdog.call(tool.name, original_forward, *args, **resolved)
         except Exception as exc:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, None, error=exc, fingerprint=_fp)   # failures are knowledge too

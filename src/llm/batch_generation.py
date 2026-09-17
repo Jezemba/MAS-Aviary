@@ -51,7 +51,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_BATCH_SIZE = 4          # peer count when the coordinator arms it
 _DEFAULT_GATHER_SECONDS = 5.0        # bounded wait for a straggler peer
 _IDLE_POLL_SECONDS = 0.5
-_MAX_WAIT_SECONDS = 3600.0           # a caller fails loudly rather than hanging a run forever
+# B85: 3600 s was too long to be useful -- validate8_net sat wedged for 48 minutes and was
+# stopped by hand before any caller would have given up. The slowest measured step was 652 s,
+# so 1800 s is ~2.7x the honest worst case and still bounds a deadlock inside one link.
+_MAX_WAIT_SECONDS = 1800.0           # a caller fails loudly rather than hanging a run forever
 
 _lock = threading.RLock()
 _queue: "queue.Queue[_Request]" = queue.Queue()

@@ -558,6 +558,13 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
             state_summary["_coupling_status"] = coupling_status()
         except Exception:
             pass
+        # B85: any tool call the watchdog had to abandon, so a wedge shows up as data.
+        try:
+            from src.tools.call_watchdog import stats as watchdog_stats
+
+            state_summary["_watchdog_stats"] = watchdog_stats()
+        except Exception:
+            pass
         # B83: how many peer generations actually shared a forward pass.
         try:
             from src.llm.batch_generation import stats as batch_stats
@@ -1244,6 +1251,14 @@ def run_stat_batch(
                     if _cs.get("mission_coupled") is False:
                         print("  [B84] WARNING: this run's fuel figure is NOT this design's "
                               "aero/mass -- excluded from fuel ranking")
+                    # B85: a call that never answered was abandoned so the run could finish.
+                    _wd = dict(_store.get("_watchdog_stats") or {})
+                    result_dict["tool_call_timeouts"] = _wd.get("tool_call_timeouts") or {}
+                    result_dict["tool_call_timeouts_total"] = _wd.get("tool_call_timeouts_total") or 0
+                    if result_dict["tool_call_timeouts_total"]:
+                        print(f"  [B85] {result_dict['tool_call_timeouts_total']} tool call(s) "
+                              f"abandoned on timeout: {result_dict['tool_call_timeouts']} -- the run "
+                              "continued rather than wedging")
                     # B83: peers are served by one padded batch, because concurrent
                     # generate() on the sharded model crashes ("CUDA error: invalid argument").
                     _bs = dict(_store.get("_batch_stats") or {})

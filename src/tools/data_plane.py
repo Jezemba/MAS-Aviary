@@ -469,6 +469,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_aero_coefficients(tool_name, data)
                 _capture_wing_mass_from_mass_estimate(tool_name, data)
                 _capture_geometry_ref(tool_name, data)
+                _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
@@ -488,6 +489,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_aero_coefficients(tool_name, response)
         _capture_wing_mass_from_mass_estimate(tool_name, response)
         _capture_geometry_ref(tool_name, response)
+        _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
         response = _intercept_binaries(tool_name, response)
@@ -630,6 +632,18 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     # sample_surface_solution instead. SU2 had solved cleanly in both.
     if tool_name == "run_su2_solver":
         coeffs = data.get("final_coefficients")
+        if (not isinstance(coeffs, dict) or not coeffs) and data.get("success"):
+            # B85/2.2: the solve succeeded but did not report coefficients. Read them out of
+            # the session's history file rather than waiting for a read_history_csv that may
+            # never come -- in validate8_net it never did, and the mission stayed refused for
+            # a design whose aero was solved and sitting on disk.
+            workdir = ((_design_state.data_store.get("_su2_workdirs") or {}).get(
+                str(data.get("session_id") or "")) or _design_state.data_store.get("_su2_workdir_latest"))
+            if isinstance(workdir, str):
+                coeffs = _coefficients_from_history(workdir)
+                if coeffs:
+                    logger.info("Recovered CL/CD from the SU2 history file at %s (the solve did not "
+                                "report them)", workdir)
         if not isinstance(coeffs, dict) or not coeffs:
             # Not a failure worth flagging here: a solve that errored is already
             # reported by solver_error/config_errors, and read_history_csv may
@@ -745,6 +759,56 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
     logger.info("Captured engine cycle from run_cycle: %s", captured)
+
+
+def _capture_su2_workdir(tool_name: str, data: dict) -> None:
+    """Remember where an SU2 session writes, so its results can be read without the agent (B85)."""
+    if _design_state is None or tool_name != "create_su2_session":
+        return
+    workdir, session_id = data.get("workdir"), data.get("session_id")
+    if isinstance(workdir, str) and workdir:
+        store = _design_state.data_store.setdefault("_su2_workdirs", {})
+        store[str(session_id or "latest")] = workdir
+        _design_state.data_store["_su2_workdir_latest"] = workdir
+
+
+def _coefficients_from_history(workdir: str) -> dict:
+    """Read the converged CL/CD out of an SU2 history file ourselves.
+
+    B85/2.2: in validate8_net the solves COMPLETED -- history.csv, surface.csv, restart.dat
+    and vol_solution.vtu were all on disk -- but no peer called read_history_csv, so CL/CD
+    were never captured and the mission stayed refused for a design whose aero had in fact
+    been solved. The solver reports final_coefficients itself, and when it cannot (it says
+    so via final_coefficients_note) the framework reads the file rather than depending on
+    the agent choosing exactly one of several plausible follow-up tools.
+    """
+    import csv
+    import glob
+    import os
+
+    aliases = {"CL": ("CL", "LIFT", "CLIFT"), "CD": ("CD", "DRAG", "CDRAG")}
+    try:
+        candidates = sorted(glob.glob(os.path.join(workdir, "history*.csv")))
+        if not candidates:
+            return {}
+        with open(candidates[0], "r", encoding="utf-8", errors="replace") as fh:
+            rows = list(csv.DictReader(fh))
+        if not rows:
+            return {}
+        # SU2 writes padded, quoted headers -- '       "CD"       '.
+        last = {str(k).strip().strip('"').strip().upper(): v for k, v in rows[-1].items()}
+        out = {}
+        for name, names in aliases.items():
+            for alias in names:
+                if alias in last:
+                    try:
+                        out[name] = float(str(last[alias]).strip())
+                    except (TypeError, ValueError):
+                        continue
+                    break
+        return out if {"CL", "CD"} <= set(out) else {}
+    except Exception:      # pragma: no cover - a reporting fallback must never fail a solve
+        return {}
 
 
 def _capture_param_bounds(tool_name: str, data: dict) -> None:

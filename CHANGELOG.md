@@ -1,5 +1,79 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: no call can wedge a run, and the design sequence is written down (B85 + B84 follow-ups)
+
+**B85, what happened.** `validate8_net_7960`'s first networked link stopped progressing at
+~18:50 and was still frozen 48 minutes later: **92 threads, all sleeping in
+`futex_wait_queue`**, CPU time frozen, GPUs 0–3 at 0% with memory held, the runner alive, no
+in-flight MCP request on any of the five servers, all five answering. The last log lines were
+two `Reached max steps.`
+
+**The reported cause does not hold.** A peer's place *is* released when its run ends by
+max-steps or by an exception: `_run_one_peer_batched` releases in a `finally`, and
+`_run_one_peer` catches `Exception` itself. `_live_peers` reaching 0 was not the failure, and
+there is now a test that says so.
+
+**What can actually park a thread forever** is mcpadapt's own sync bridge:
+`asyncio.run_coroutine_threadsafe(session.call_tool(...), self.loop).result()` — `.result()`
+with no timeout. If that event loop stops serving, the caller waits forever. We do not own
+that code, so every tool call now runs under a deadlock bound (`src/tools/call_watchdog.py`):
+a call that overruns raises `ToolCallTimeout`, the agent sees an ordinary tool failure, its
+run ends, its peer place is released, and **the link finishes and is recorded** instead of
+hanging. Budgets are generous because these are real solvers (SU2 3600 s, mission and mass
+1800 s, 900 s otherwise) — they bound a deadlock, not performance. The batch worker's caller
+wait drops from 3600 s to **1800 s**, ~2.7x the slowest measured step.
+
+**B84 follow-up: the requirement moved to `run_simulation` only.** `set_aircraft_parameters`
+is not just the mission seed — it is how a peer applies its design and checks `valid:true`.
+validate8_net measured the cost: **5 `MISSING_REQUIRED_PARAMETERS`, every one on
+`set_aircraft_parameters`**, at 200–900 s a step, and two of three peers reached `max_steps`
+having produced nothing. `run_simulation` is the call that would actually burn aviary's
+default drag polar, so that is where the requirement belongs. `run_cycle` keeps its MTOM
+requirement.
+
+**B84 follow-up: a completed solve now counts.** The SU2 solves in validate8 *finished* —
+`history.csv`, `surface.csv`, `restart.dat`, `vol_solution.vtu` all on disk — but CL/CD were
+captured only from a `read_history_csv` call that no peer made, so the mission stayed refused
+for a design whose aero had been solved. `run_su2_solver` already reports its own
+`final_coefficients`; when it cannot (it says so via `final_coefficients_note`), the framework
+now reads `history*.csv` from the session's workdir itself, rather than depending on the agent
+picking exactly one of several plausible follow-up tools.
+
+**B85: the procedure is written down** (`src/tools/procedures.py`, `read_procedure`).
+Jessica, 2026-09-16: *"not knowing to call read_history_csv is a bug, because there is no error
+message to reflect that, and nowhere where that is documented."* So the sequence is data now —
+per role: what it needs first, which tools in which order, what it produces, and the traps
+(size mass on the **morphed** export; the coefficients are captured for you; structures and
+propulsion need no aero at all). `read_procedure` is a discovery tool like `get_design_state`
+and `read_design_knowledge`, so every agent has it in every structure.
+`read_design_knowledge` says what **has been done**; `read_procedure` says what **should be
+done**, in order.
+
+**B85: refusals now say they cost steps.** An agent cannot see its own budget draining. After
+3 refusals — missing-data or B81 duplicate-work alike, 11 `ALREADY_DONE` in that one link —
+the message says plainly that every refusal costs one of its limited steps, and points it at
+`read_procedure` and `read_todos`.
+
+**B85: a peer told to wait is given something to do.** The in-flight guard works and peers
+obey it, but one spent a 400–900 s step deciding to wait while aero, mass and propulsion all
+sat pending — and mass and propulsion need no aero. The wait message now names the unclaimed
+TODOs and says so.
+
+**Measured per run:** `tool_call_timeouts` (per tool) and `tool_call_timeouts_total`, with a
+`[B85]` line when anything was abandoned.
+
+**Tests:** `tests/test_b85_no_wedge_and_procedures.py` (20) — a hanging call bounded and not
+blocking the next one, the generous solver budgets, peer places released on max-steps and
+exceptions, **a parallel cycle of three max-steps peers completing** (the smoke test),
+design application never refused, the mission still required to be coupled, a completed solve
+captured with no `read_history_csv`, the solver's own coefficients still winning, a failed
+solve capturing nothing, every role's procedure, the 3-refusal warning reaching a real refusal,
+and a waiting peer pointed at unclaimed work.
+
+**Not done here:** §2.4, the ~24,000-token-per-step prompts that make steps 426 s. Shrinking
+the knowledge-base summary and handoff text is the biggest remaining lever on wall-clock and
+deserves its own change.
+
 ### 2026-09-16 — FIXED: a coupled variable is now a REQUIRED INPUT of the tool that consumes it (B84)
 
 **What it was doing before.** Every MCP server has a default for everything, and every
