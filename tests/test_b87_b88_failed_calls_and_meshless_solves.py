@@ -24,6 +24,7 @@ import src.tools.data_plane as dp
 from src.coordination.design_state import DesignState
 from src.tools import duplicate_guard as dg
 from src.tools import knowledge_base as kbm
+from src.tools import mesh_guard
 from src.tools import work_claims as wc
 from src.tools.agent_context import agent_scope
 from src.tools.type_coercion import wrap_tool_with_middleware
@@ -179,7 +180,7 @@ def test_a_solve_on_a_mesh_less_session_is_refused_before_the_server():
     sid = _su2_session()
     dp.get_design_state().data_store["generate_volume_mesh__mesh_base64"] = BIG_MESH
 
-    refusal = wc.mesh_missing("run_su2_solver", {"session_id": sid})
+    refusal = mesh_guard.mesh_missing("run_su2_solver", {"session_id": sid})
     assert refusal is not None and refusal["error_code"] == "NO_MESH"
     assert "set_mesh" in refusal["error"]
     assert "generate_volume_mesh__mesh_base64" in refusal["error"], "name the ref it already holds"
@@ -187,7 +188,7 @@ def test_a_solve_on_a_mesh_less_session_is_refused_before_the_server():
 
 def test_the_refusal_says_to_mesh_first_when_no_mesh_exists_at_all():
     sid = _su2_session()
-    refusal = wc.mesh_missing("run_su2_solver", {"session_id": sid})
+    refusal = mesh_guard.mesh_missing("run_su2_solver", {"session_id": sid})
     assert refusal is not None
     assert "generate_volume_mesh first" in refusal["error"]
     assert "read_procedure" in refusal["error"]
@@ -195,23 +196,23 @@ def test_the_refusal_says_to_mesh_first_when_no_mesh_exists_at_all():
 
 def test_a_session_with_a_mesh_solves():
     sid = _su2_session(mesh="abc123")
-    assert wc.mesh_missing("run_su2_solver", {"session_id": sid}) is None
+    assert mesh_guard.mesh_missing("run_su2_solver", {"session_id": sid}) is None
 
 
 def test_an_unknown_session_is_left_to_the_server():
-    assert wc.mesh_missing("run_su2_solver", {"session_id": "never-seen"}) is None
+    assert mesh_guard.mesh_missing("run_su2_solver", {"session_id": "never-seen"}) is None
 
 
 def test_only_the_solver_is_gated():
     _su2_session("s1")
     for tool in ("set_mesh", "create_su2_session", "generate_volume_mesh", "estimate_mass"):
-        assert wc.mesh_missing(tool, {"session_id": "s1"}) is None
+        assert mesh_guard.mesh_missing(tool, {"session_id": "s1"}) is None
 
 
 def test_the_mesh_check_can_be_switched_off(monkeypatch):
     monkeypatch.setenv("AVION_REQUIRE_MESH_BEFORE_SOLVE", "0")
     sid = _su2_session()
-    assert wc.mesh_missing("run_su2_solver", {"session_id": sid}) is None
+    assert mesh_guard.mesh_missing("run_su2_solver", {"session_id": sid}) is None
 
 
 def test_the_solver_refusal_reaches_the_agent_through_the_middleware():

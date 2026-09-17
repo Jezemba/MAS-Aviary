@@ -469,6 +469,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_aero_coefficients(tool_name, data)
                 _capture_wing_mass_from_mass_estimate(tool_name, data)
                 _capture_geometry_ref(tool_name, data)
+                _capture_component_uids(tool_name, data)
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
@@ -489,6 +490,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_aero_coefficients(tool_name, response)
         _capture_wing_mass_from_mass_estimate(tool_name, response)
         _capture_geometry_ref(tool_name, response)
+        _capture_component_uids(tool_name, response)
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
@@ -759,6 +761,38 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
     logger.info("Captured engine cycle from run_cycle: %s", captured)
+
+
+def _capture_component_uids(tool_name: str, data: dict) -> None:
+    """Remember the real CPACS component UIDs (B86 3.5).
+
+    Agents call generate_volume_mesh with component_uid 'Wing' instead of 'Wing1' in every
+    networked run measured on the 7960 (validate5 2x, validate7 3x, validate8 3x, validate9
+    1x). tigl's reply is already the best kind of error and the agent does correct itself,
+    but each mistake costs a 400-600 s step. The names are knowable before the call, so they
+    are captured from wherever they appear -- list_geometric_components, or tigl's own
+    "Available UIDs: ..." error -- and put in front of the peers.
+    """
+    if _design_state is None:
+        return
+    uids: list[str] = []
+    components = data.get("components")
+    if isinstance(components, list):
+        uids = [str(c.get("uid")) for c in components
+                if isinstance(c, dict) and c.get("uid")]
+    if not uids:
+        text = str(data.get("error") or data.get("message") or "")
+        if "Available UIDs:" in text:
+            tail = text.split("Available UIDs:", 1)[1]
+            tail = tail.split(".")[0]
+            uids = [part.strip() for part in tail.split(",") if part.strip()]
+    if not uids:
+        return
+    known = list(_design_state.data_store.get("component_uids") or [])
+    merged = known + [u for u in uids if u not in known]
+    if merged != known:
+        _design_state.data_store["component_uids"] = merged
+        logger.info("Captured CPACS component UIDs: %s", merged)
 
 
 def _capture_su2_workdir(tool_name: str, data: dict) -> None:
@@ -1196,6 +1230,12 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                     provided, stored_sid, tool_name, mcp_name,
                 )
                 resolved["session_id"] = stored_sid
+                # B88: with one session per design this is invisible and correct. With two
+                # peers each holding one it silently solved agent_2's case on agent_1's
+                # session, so the log and the knowledge base disagreed about which session
+                # ran. Record it so the redirect can be seen rather than inferred.
+                _design_state.data_store.setdefault("_session_redirects", []).append(
+                    {"tool": tool_name, "server": mcp_name, "asked": provided, "used": stored_sid})
 
     # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
     # current design's geometry) so structural mass is geometry-coupled; else fall back

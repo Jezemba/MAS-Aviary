@@ -265,6 +265,14 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         if _guard is not None and not _deliberate:
             _kb_record(tool.name, resolved, _guard, status="refused", fingerprint=_fp)
             return _json.dumps(_guard)
+        # B88: a solve on a mesh-less session aborts in 2.6 s and leaves the link with no
+        #      path to aero at all. Refuse before the server is touched, naming the ref.
+        from src.tools import mesh_guard
+        _no_mesh = mesh_guard.mesh_missing(tool.name, resolved)
+        if _no_mesh is not None:
+            duplicate_guard.release(tool.name, _fp)
+            _kb_record(tool.name, resolved, _no_mesh, status="refused")
+            return _json.dumps(_no_mesh)
         # 2b. B84: the coupled quantities are REQUIRED PARAMETERS of the mission call.
         #     Advisory hints were ignored every time (validate7 link 1: 5 aero warnings,
         #     7 mass hints, 0 estimate_mass, 0 run_cycle), and aviary's stand-in values
