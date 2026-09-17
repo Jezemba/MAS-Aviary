@@ -58,15 +58,29 @@ def test_meshing_an_unmorphed_session_is_refused_once_the_design_has_moved():
     assert "still the BASELINE" in refusal["error"]
 
 
-def test_the_refusal_names_the_design_values_and_the_two_calls_that_fix_it():
-    """The B81 refusal that changed behaviour named the result; this one names the numbers."""
+def test_the_refusal_writes_the_exact_morph_call():
+    """Not a description of the fix -- the call itself, with the real UID and the design's numbers.
+
+    validate14 04:24 showed why this matters: the geometry holder went looking for the current
+    values with get_high_level_parameters and got {} (B97), and our own procedure text told it that
+    the morph needs span, root chord, tip chord and sweep TOGETHER. In fact ANY of area /
+    aspect_ratio / sweep fires it (tigl-mcp `_wing_targets`), and the mission already holds all three.
+    """
     _open_session(epoch=0)
     _design_applied()
     error = stale_geometry("generate_volume_mesh", {"session_id": SESSION})["error"]
-    assert "ASPECT_RATIO=11.5" in error
-    assert "AREA=124.6" in error
-    assert "set_high_level_parameters" in error
+    assert "ASPECT_RATIO=11.5" in error and "AREA=124.6" in error
+    assert "set_high_level_parameters(session_id='tigl-session-1', component_uid='Wing1'" in error
+    assert "'area': 124.6" in error and "'aspect_ratio': 11.5" in error and "'sweep': 28.0" in error
+    assert "you do not need span, root chord and tip chord" in error
     assert "export_cpacs" in error
+
+
+def test_the_call_falls_back_to_placeholders_when_the_design_has_no_wing_values():
+    _open_session(epoch=0)
+    _design_applied({"Aircraft.Fuselage.LENGTH": 35.0})
+    error = stale_geometry("generate_volume_mesh", {"session_id": SESSION})["error"]
+    assert "'area': <m^2>" in error
 
 
 def test_exporting_an_unmorphed_session_is_refused_too():

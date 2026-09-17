@@ -62,6 +62,18 @@ def _never_morphed(session_id) -> bool:
         return False
 
 
+
+def _main_wing_uid() -> str:
+    """The real UID of the main wing, from the UIDs captured for this CPACS (B86 3.5)."""
+    try:
+        from src.tools.procedures import component_uids
+
+        uids = component_uids()
+        return next((u for u in uids if u.lower().startswith("wing")), uids[0] if uids else "Wing1")
+    except Exception:      # pragma: no cover
+        return "Wing1"
+
+
 def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
     """Refuse to mesh or export a session that is still the baseline while the design has moved."""
     if tool_name not in _GUARDED:
@@ -77,6 +89,16 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
 
     shown = [f"{name.split('.')[-1]}={value}" for name, value in applied.items()
              if name in _INTERESTING][:4] or [f"{k.split('.')[-1]}={v}" for k, v in list(applied.items())[:3]]
+    # The morph fires on ANY of area / aspect_ratio / sweep (tigl-mcp `_wing_targets`), and those are
+    # exactly the values the mission already holds -- so write the call out rather than describing it.
+    updates = {key: applied[param] for key, param in
+               (("area", "Aircraft.Wing.AREA"), ("aspect_ratio", "Aircraft.Wing.ASPECT_RATIO"),
+                ("sweep", "Aircraft.Wing.SWEEP")) if param in applied}
+    wing = _main_wing_uid()
+    call = (f"set_high_level_parameters(session_id='{session_id}', component_uid='{wing}', "
+            f"updates={updates})" if updates else
+            f"set_high_level_parameters(session_id='{session_id}', component_uid='{wing}', "
+            "updates={'area': <m^2>, 'aspect_ratio': <->, 'sweep': <deg>})")
     return {
         "success": False,
         "error_code": "STALE_GEOMETRY",
@@ -85,10 +107,11 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
             f"design has already moved to {', '.join(shown)}. {tool_name} now would describe the wrong "
             "aircraft, and every result taken from it (CFD, structural mass, the mission's drag polar) "
             "would belong to a design nobody is evaluating.\n"
-            "Apply the design to the geometry first: set_high_level_parameters(session_id="
-            f"'{session_id}', span=..., root_chord=..., tip_chord=..., sweep=...) -- the morph only fires "
-            "when all four are given together -- then export_cpacs so mass-mcp sizes the morphed file, "
-            f"then {tool_name} again."
+            "Apply the design to the geometry first. This exact call does it:\n  "
+            + call +
+            "\nANY of area / aspect_ratio / sweep fires the morph -- you do not need span, root chord and "
+            "tip chord, and you do not need get_high_level_parameters first (it returns {} for a real CPACS "
+            f"wing). Then export_cpacs so mass-mcp sizes the morphed file, then {tool_name} again."
         ),
         "session_id": session_id,
         "design_parameters": applied,

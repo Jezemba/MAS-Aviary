@@ -57,13 +57,22 @@ GEOMETRY = Procedure(
               "generate_volume_mesh__mesh_base64 (the volume mesh)"),
     steps=(
         Step("open_cpacs", "open the baseline CPACS; keep the session id."),
-        Step("set_high_level_parameters", "apply span, root chord, tip chord and sweep TOGETHER -- "
-                                          "the morph only fires when all four are given."),
+        Step("set_high_level_parameters", "morph the wing to the design. updates={'area': <m^2>, "
+                                          "'aspect_ratio': <-> , 'sweep': <deg>} -- ANY ONE of those "
+                                          "three fires the morph, and they are the values the mission "
+                                          "already holds (Aircraft.Wing.AREA / ASPECT_RATIO / SWEEP). "
+                                          "span+root_chord+tip_chord is only an alternative way to "
+                                          "derive area; you do NOT need all four, and you do not need "
+                                          "get_high_level_parameters first (it returns {} for a real "
+                                          "CPACS wing -- B97)."),
         Step("export_cpacs", "write the MORPHED geometry to a file; mass-mcp sizes on this file, "
                              "not on the baseline fixture."),
         Step("generate_volume_mesh", "produce the volume mesh the aero stage solves on."),
     ),
-    notes=("A design change here makes every downstream result stale: aero and mass must be "
+    notes=("Take the target values from the design the mission holds -- get_design_state or the task "
+           "text -- and pass them straight to set_high_level_parameters. Every run measured on the 7960 "
+           "skipped the morph and meshed the BASELINE aircraft instead (B95/B97).",
+           "A design change here makes every downstream result stale: aero and mass must be "
            "re-run after a morph, or the mission will refuse them as produced for an earlier geometry.",
            "component_uid is a CPACS UID, not a display name: the DLR-F25 baseline has Fuselage1, "
            "Wing1 (main wing), Wing2H (horizontal tail) and Wing3V (vertical tail). 'Wing' is not a "
