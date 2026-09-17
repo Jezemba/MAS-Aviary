@@ -1758,9 +1758,16 @@ def unresolved_ref_error(tool_name: str, resolved: dict) -> dict | None:
                 f"Argument '{key}' cannot be used: {problem} "
                 f"(got '{value.strip()[:60]}').{suggestion} "
                 f"Available references: {available}. "
-                "Pass one of these exactly (or the {\"ref\": \"<key>\"} form) — do NOT "
-                "type the payload yourself. This call was NOT sent to the server; the "
-                "literal string would have been interpreted as data."
+                # B100 (validate15 06:08-06:14): this used to offer the {"ref": "<key>"} form as an
+                # alternative. The agent took it -- and smolagents rejected the call on schema
+                # validation, "Argument mesh_base64 has type 'object' but should be 'string'",
+                # before the middleware could resolve anything. These parameters are declared as
+                # strings, so the bare key is the ONLY form that works. Advice that is wrong at the
+                # point of use costs a whole step, and this one cost two.
+                f"Pass the key itself as the argument, exactly as written above, e.g. "
+                f"{key}='{available[0]}' -- a bare string, NOT a dict and NOT the payload. "
+                "This call was NOT sent to the server; the literal string would have been "
+                "interpreted as data."
             ),
         }
     return None
