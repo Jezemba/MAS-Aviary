@@ -217,3 +217,103 @@ def component_uid_block() -> str:
             "names: " + ", ".join(uids) + ". The main wing is "
             + next((u for u in uids if u.lower().startswith("wing")), uids[0])
             + ", not 'Wing'.")
+
+# -- What a peer should do NEXT (B93) ----------------------------------------------------------
+#
+# validate11 measured the cost of not answering this question. The geometry holder re-claimed a
+# TODO it already held three times (556 + 465 + 662 s) and re-opened the same CPACS file twice,
+# never reaching generate_volume_mesh, while the aero holder sat blocked on the mesh it was not
+# producing. Across validate10 and validate11 peers spent 2,354 s re-claiming work they already
+# owned. read_procedure has had 0 calls in every run since it was added: the reference exists and
+# is never consulted, exactly as the prose in the system prompt was never acted on (B84).
+#
+# So the next step is pushed, not offered: every refusal and every self-claim ends with the one
+# line that says what this peer should do now, derived from the table above and the knowledge
+# base's record of what has actually succeeded for this design.
+
+# Which roles must have produced something before a role can do its own work.
+DEPENDS_ON: dict[str, tuple[str, ...]] = {
+    "geometry": (),
+    "aero": ("geometry",),
+    "structures": ("geometry",),
+    "propulsion": ("structures",),
+    "mission": ("aero", "structures", "propulsion"),
+}
+
+# Steps a peer may legitimately skip: the procedure lists them as conditional.
+_OPTIONAL_STEPS = {("aero", "read_history_csv")}
+
+
+def _succeeded_tools() -> set:
+    """Tools that have SUCCEEDED for this design, from the knowledge base (B81/B87)."""
+    try:
+        from src.tools.knowledge_base import get_kb
+
+        kb = get_kb()
+        if kb is None:
+            return set()
+        return {e["tool"] for e in kb.entries if e.get("status") == "success"}
+    except Exception:      # pragma: no cover - never fail a message over this
+        return set()
+
+
+def next_step_for(role: str, done: set | None = None):
+    """The next Step of ``role``'s procedure that has not succeeded yet, or None when finished."""
+    procedure = PROCEDURES.get(str(role or "").strip().lower())
+    if procedure is None:
+        return None
+    done = _succeeded_tools() if done is None else done
+    for step in procedure.steps:
+        if step.tool in done or (procedure.role, step.tool) in _OPTIONAL_STEPS:
+            continue
+        return step
+    return None
+
+
+def next_step_line(role: str, done: set | None = None) -> str:
+    """One pushed line naming this peer's next action, for a refusal or a self-claim (B93).
+
+    Empty when there is nothing useful to say, so callers can append it unconditionally.
+    """
+    procedure = PROCEDURES.get(str(role or "").strip().lower())
+    if procedure is None:
+        return ""
+    done = _succeeded_tools() if done is None else done
+    step = next_step_for(role, done)
+    if step is None:
+        return (f"Every step of the {procedure.role} procedure has succeeded for this design. "
+                f"Release it: mark_todo_done('{_todo_name(procedure.role)}', result='<the values it "
+                f"produced>') so the peers waiting on {procedure.role} can move.")
+    finished = [s.tool for s in procedure.steps if s.tool in done]
+    prefix = (f"Done so far for {procedure.role}: {', '.join(finished)}. " if finished
+              else f"Nothing has been produced for {procedure.role} yet. ")
+    return prefix + f"YOUR NEXT STEP IS {step.tool} -- {step.why}"
+
+
+def _todo_name(role: str) -> str:
+    """The board's name for a role's TODO (the board calls structures 'mass')."""
+    return {"structures": "mass"}.get(role, role)
+
+
+def role_for_todo(todo_name: str) -> str:
+    """The procedure role behind a board TODO name."""
+    name = str(todo_name or "").strip().lower()
+    if name in PROCEDURES:
+        return name
+    return {"mass": "structures", "simulation": "mission", "evaluation": "mission"}.get(name, "")
+
+
+def blocking_roles(role: str, done_todos: set) -> tuple:
+    """Which prerequisite roles of ``role`` are not done yet (B93).
+
+    ``done_todos`` is the set of BOARD names that are finished. A peer whose own work cannot
+    start because of these is BLOCKED -- it is not idle, and it must not be told to get on
+    with work it cannot do.
+    """
+    role = str(role or "").strip().lower()
+    blocking = []
+    for need in DEPENDS_ON.get(role, ()):
+        if _todo_name(need) not in done_todos:
+            blocking.append(need)
+    return tuple(blocking)
+

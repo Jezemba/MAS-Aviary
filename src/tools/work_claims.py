@@ -233,6 +233,15 @@ def _refuse_claimed(tool_name: str, todo_name: str, owner: str, agent: str) -> d
         "wait_for_board(reason='everything is claimed') and it will hand you the next TODO that "
         "frees up, or mark your own TODO done if you have finished it"
     )
+    # B93: tell this peer what IT should be doing, not only what it may not do.
+    own_next = ""
+    for held in held_unfinished(agent):
+        from src.tools.procedures import next_step_line, role_for_todo
+
+        line = next_step_line(role_for_todo(held))
+        if line:
+            own_next = f" You hold {held}: {line}"
+            break
     return {
         "success": False,
         "error_code": ERROR_CLAIMED_BY_OTHER,
@@ -384,3 +393,40 @@ def note_wait(agent: str, seconds: float, woke_on_change: bool) -> None:
         entry["seconds"] = round(entry["seconds"] + seconds, 1)
         entry["woken_by_change"] += 1 if woke_on_change else 0
 
+
+# -- B93: blocked is not idle -------------------------------------------------------------------
+
+def done_todo_names() -> set:
+    """Board names that are finished."""
+    from src.coordination.blackboard import TODO_STATUS_DONE
+
+    return {t.name for t in _todos() if str(t.status) == TODO_STATUS_DONE}
+
+
+def blocked_holdings(agent: str) -> dict:
+    """{held TODO -> the roles it is waiting on}, for the holdings this peer CANNOT start (B93).
+
+    validate11, 00:52-01:16: agent_3 held `aero`, had its SU2 session ready, and needed a mesh
+    that belongs to `geometry` -- held by a peer that was not producing one. It could not
+    wait_for_board (it holds work), could not claim `mass` (no forward reservation), and its only
+    exit was to abandon a TODO it legitimately owned. Holding blocked work is a third state, and
+    the peer in it must be allowed to do something useful.
+    """
+    from src.tools.procedures import blocking_roles, role_for_todo
+
+    done = done_todo_names()
+    out = {}
+    for name in held_unfinished(agent):
+        role = role_for_todo(name)
+        if not role:
+            continue
+        waiting_on = blocking_roles(role, done)
+        if waiting_on:
+            out[name] = waiting_on
+    return out
+
+
+def all_holdings_blocked(agent: str) -> bool:
+    """True when this peer holds work and every piece of it is waiting on someone else (B93)."""
+    holding = held_unfinished(agent)
+    return bool(holding) and len(blocked_holdings(agent)) == len(holding)

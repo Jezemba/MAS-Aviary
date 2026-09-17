@@ -473,6 +473,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
+                _flag_zero_fuel(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -494,6 +495,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
+        _flag_zero_fuel(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
 
@@ -610,6 +612,48 @@ def _note_aero_capture_failure(reason: str, data: dict) -> None:
         "coupled even though the aero stage 'succeeded'. Columns seen: %s",
         reason, col_preview,
     )
+
+
+_ZERO_FUEL_FLOOR_KG = 0.0
+
+
+def _flag_zero_fuel(tool_name: str, data: dict) -> None:
+    """A design that burns 0.0 kg of fuel is not VALID (B92).
+
+    `set_aircraft_parameters` returns a validity probe:
+
+        "valid": true,
+        "summary": "VALID -- all static checks passed and model evaluation produced finite outputs.",
+        "model_eval": {"outputs": {"fuel_burned_kg": 0.0, "gtow_kg": 79560.1, ...}, "nan_outputs": []}
+
+    0.0 is finite and is not NaN, so it passes both checks. The agent is then told its design is
+    valid and handed a fuel burn it can never beat -- and fuel burn is the quantity the whole
+    study minimises. Seen twice in validate10 and twice in validate11, before any aero existed,
+    so it is not a coupling artefact. `_is_zero_fuel` in the runner catches it afterwards, which
+    is too late to stop an agent optimising against it.
+    """
+    if tool_name not in ("set_aircraft_parameters", "run_simulation", "get_results"):
+        return
+    evaluation = data.get("model_eval") if isinstance(data.get("model_eval"), dict) else data
+    outputs = evaluation.get("outputs") if isinstance(evaluation, dict) else None
+    if not isinstance(outputs, dict) or "fuel_burned_kg" not in outputs:
+        return
+    try:
+        fuel = float(outputs["fuel_burned_kg"])
+    except (TypeError, ValueError):
+        return
+    if fuel > _ZERO_FUEL_FLOOR_KG:
+        return
+    data["valid"] = False
+    data["error_code"] = "ZERO_FUEL"
+    data["summary"] = (
+        f"NOT VALID -- the model evaluated but burned {fuel} kg of fuel, which no aircraft can do "
+        f"over this mission. A fuel burn at or below {_ZERO_FUEL_FLOOR_KG} kg means the mission did "
+        "not actually fly: the design was applied but nothing integrated it. Do NOT treat this as "
+        "an optimum. Check that the mission is configured (configure_mission) and that "
+        "run_simulation has completed for THIS design, then read the fuel burn from its result."
+    )
+    logger.warning("[B92] %s returned fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:

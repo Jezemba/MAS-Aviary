@@ -396,7 +396,33 @@ class ClaimTodo(Tool):
         # Auto-claim-on-touch is deliberately NOT capped: a claim made by actually running the
         # work means "I am doing this now", and blocking that would strand a peer mid-flow.
         holding = work_claims.held_unfinished(self._agent_name)
-        if holding and todo_name not in holding:
+        # B93: holding BLOCKED work is a third state. validate11: agent_3 held 'aero', needed a
+        # mesh owned by 'geometry', could not wait (it holds work) and could not claim 'mass'
+        # (this rule) -- its only exit was to abandon a TODO it legitimately owned. A peer whose
+        # every holding is waiting on someone else may take independent work; its own stays
+        # reserved, so nothing is lost when the block clears.
+        if holding and todo_name in holding:
+            # B93: claiming what you already hold used to return a cheerful success and teach
+            # nothing -- 2,354 s of it across validate10 and validate11. Answer with the next step.
+            from src.tools.procedures import next_step_line, role_for_todo
+
+            blocked = work_claims.blocked_holdings(self._agent_name).get(todo_name)
+            body = (f"You already hold {todo_name!r} (claiming it again changes nothing). "
+                    + next_step_line(role_for_todo(todo_name)))
+            if blocked:
+                body += (f" That is BLOCKED on {', '.join(blocked)} right now: either "
+                         f"wait_for_board(reason='{todo_name} needs {blocked[0]}'), or claim "
+                         "something independent -- holding blocked work does not stop you.")
+            return json.dumps({
+                "success": True,
+                "todo_name": todo_name,
+                "attempted_by": self._agent_name,
+                "current_owner": self._agent_name,
+                "unclaimed": work_claims.unclaimed_now(),
+                "board": work_claims.board_snapshot(),
+                "message": body,
+            })
+        if holding and todo_name not in holding and not work_claims.all_holdings_blocked(self._agent_name):
             free = work_claims.unclaimed_now()
             return json.dumps({
                 "success": False,
@@ -521,10 +547,18 @@ class WaitForBoard(Tool):
         do_claim = True if claim_when_free is None else bool(claim_when_free)
 
         takeable = work_claims.claimable_now(self._agent_name)
-        if work_claims.held_unfinished(self._agent_name):
-            return self._answer(False, 0.0, "You already hold unfinished work -- do that instead of "
-                                            "waiting. Finish it with mark_todo_done(name, result=...) "
-                                            "or give it up with mark_todo_failed(name).")
+        # B93: "you hold work, go and do it" is wrong when the work is BLOCKED. validate11:
+        # agent_3 held 'aero' and needed a mesh owned by 'geometry'; this branch would have sent
+        # it back to work it could not start. A blocked holder is exactly who should wait.
+        blocked = work_claims.blocked_holdings(self._agent_name)
+        holding = work_claims.held_unfinished(self._agent_name)
+        if holding and len(blocked) < len(holding):
+            startable = [h for h in holding if h not in blocked]
+            from src.tools.procedures import next_step_line, role_for_todo
+
+            return self._answer(False, 0.0, f"You hold {', '.join(startable)} and it is not blocked -- "
+                                            "do that instead of waiting. "
+                                            + next_step_line(role_for_todo(startable[0])))
         if takeable:
             return self._maybe_claim(takeable, do_claim, 0.0, False,
                                      "There is work you can take right now, so there is nothing to "

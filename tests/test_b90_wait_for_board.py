@@ -87,7 +87,11 @@ def test_a_peer_holding_work_is_told_to_do_it():
 
     out = _wait(board, "agent_1", seconds=30)
     assert out["waited_seconds"] == 0.0
-    assert "already hold unfinished work" in out["message"]
+    # B93 kept the behaviour and sharpened the wording: a holder whose work is STARTABLE is still
+    # sent straight back to it, and is now also told which step to take (validate11: the geometry
+    # holder knew it held geometry and still could not work out that the mesh was next).
+    assert "instead of waiting" in out["message"]
+    assert "YOUR NEXT STEP IS" in out["message"]
 
 
 # ---- the case that stranded agent_3 ---------------------------------------------------------------

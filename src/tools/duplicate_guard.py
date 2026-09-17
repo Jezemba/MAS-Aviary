@@ -243,6 +243,32 @@ def _has_usable_result(entry: dict) -> bool:
     return bool(entry.get("_result")) or bool(entry.get("outputs"))
 
 
+
+def _next_step_hint(tool: str) -> str:
+    """What the caller should do NEXT, appended to an ALREADY_DONE refusal (B93).
+
+    validate11: the geometry holder was refused a repeated open_cpacs and its following steps were
+    a re-claim and another open_cpacs -- it did not know that generate_volume_mesh was next. The
+    procedure table knows, and the knowledge base knows what has already succeeded, so say it here
+    rather than hoping for a read_procedure call that has never once been made.
+    """
+    try:
+        from src.tools.procedures import next_step_line, role_for_todo
+        from src.tools.work_claims import todo_for_tool
+
+        from src.tools.procedures import _succeeded_tools
+
+        todo = todo_for_tool(tool)
+        if not todo:
+            return ""
+        # The refused call IS this tool, so count it as done even if the knowledge base is
+        # unavailable -- otherwise the hint would name the very tool we just refused.
+        line = next_step_line(role_for_todo(todo), _succeeded_tools() | {tool})
+        return (" " + line) if line else ""
+    except Exception:      # pragma: no cover - a hint must never break a refusal
+        return ""
+
+
 def _result_text(prior: dict) -> str:
     if prior.get("_result"):
         return prior["_result"]
@@ -299,7 +325,8 @@ def check(tool: str, fp: str | None, agent: str) -> dict | None:
             subject = f"you ({agent}) already did" if own else f"{prior['agent']} already did"
             message = (
                 f"{subject} {tool} for this design (seq {prior['seq']}, {prior['time_utc']}). "
-                f"Use its result: {_result_text(prior)}. Call read_design_knowledge(tool='{tool}') "
+                f"Use its result: {_result_text(prior)}.{_next_step_hint(tool)} "
+                f"Call read_design_knowledge(tool='{tool}') "
                 "for details. If it really must be redone, call it again and it will run."
             )
             done_by, seq = prior["agent"], prior["seq"]
