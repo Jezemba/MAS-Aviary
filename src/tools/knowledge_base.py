@@ -155,6 +155,8 @@ class KnowledgeBase:
             "kb_reads_full": 0,
             "kb_reads_summary": 0,
             "kb_summary_calls": 0,
+            "kb_summary_cache_hits": 0,
+            "kb_summary_coalesced": 0,
             "kb_summary_seconds": 0.0,
             "duplicate_refusals": {},
             "duplicate_repeats_after_refusal": {},
@@ -367,6 +369,60 @@ _SUMMARY_INSTRUCTION = (
 _SUMMARY_RECORDS_CAP_CHARS = 12000
 
 
+# -- B94: what a summary actually depends on ----------------------------------------------------
+#
+# The cache key used ``len(kb.entries)``, so ANY new record invalidated every cached summary.
+# Every tool call by any peer appends a record, so in a networked link each peer's next summary
+# was a fresh 42 s generation: validate4 measured **58 summary calls, 2,447.8 s = 12.3% of a
+# 19,980 s link**, against 7-9 calls in the sequential and orchestrated structures.
+#
+# But the summary answers "what is DONE, what is STILL MISSING for a coupled result, and what
+# conflicts or failed" -- which changes when a tool SUCCEEDS or FAILS for a design, not when a
+# peer is refused a duplicate or repeats a read-only call. So the key is the state the answer
+# depends on: which (tool, design fingerprint) pairs have succeeded, which have failed, and how
+# many records exist per discipline. A repeat of work already recorded now costs nothing.
+
+# Concurrent identical requests: the three peers ask within the same turn, so without this they
+# each pay the same 42 s generation for the same answer (B94). The first caller generates; the
+# others wait for it, bounded well under the B85 tool watchdog, and fall through to generating
+# themselves if it does not arrive.
+_INFLIGHT_WAIT_SECONDS = 180.0
+_inflight: dict = {}
+_inflight_lock = threading.Lock()
+
+
+def _await_inflight(key) -> tuple:
+    """(should_generate, event). When should_generate is False the caller waits on the event."""
+    with _inflight_lock:
+        event = _inflight.get(key)
+        if event is None:
+            _inflight[key] = threading.Event()
+            return True, _inflight[key]
+    event.wait(_INFLIGHT_WAIT_SECONDS)
+    return False, event
+
+
+def _release_inflight(key) -> None:
+    with _inflight_lock:
+        event = _inflight.pop(key, None)
+    if event is not None:
+        event.set()
+
+
+def state_signature(kb: "KnowledgeBase", entries: list[dict] | None = None) -> tuple:
+    """The part of the KB's state a summary's content actually depends on (B94)."""
+    rows = kb.entries if entries is None else entries
+    done, failed = set(), set()
+    for e in rows:
+        status = e.get("status")
+        pair = (e.get("tool"), e.get("design_fingerprint"))
+        if status == "success":
+            done.add(pair)
+        elif status == "failed":
+            failed.add(pair)
+    return (tuple(sorted(map(str, done))), tuple(sorted(map(str, failed))))
+
+
 def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: bool = True,
               **filters) -> str:
     """Summary of the matching entries by the already-loaded LOCAL model, else the digest.
@@ -385,46 +441,65 @@ def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: b
     entries = kb.select(**filters)
     if not entries:
         return "No design work recorded yet."
-    key = (tuple(sorted((k, v) for k, v in filters.items() if v is not None)), question or "", len(kb.entries))
+    # B94: keyed on the state the answer depends on, not on how many records exist.
+    key = (tuple(sorted((k, v) for k, v in filters.items() if v is not None)), question or "",
+           state_signature(kb, entries))
     with kb._lock:
         cached = kb._summary_cache.get(key)
     if cached is not None:
+        kb.bump("kb_summary_cache_hits")
         return cached
 
-    # B82: summaries run on the SMALL summary model, never the big one -- they cost
-    # 40.8 minutes of the 32B's time in one link -- and take no generation slot, so
-    # they never compete with the peers. No summary model configured (or it failed
-    # to load) means the deterministic digest, never the big model.
-    from src.llm.generation_slots import get_summary_model
+    # B94: if a peer is already generating this exact summary, wait for it rather than paying
+    # for the same answer again. A second look at the cache after the wait is what makes it free.
+    mine, _event = _await_inflight(key)
+    if not mine:
+        with kb._lock:
+            cached = kb._summary_cache.get(key)
+        if cached is not None:
+            kb.bump("kb_summary_coalesced")
+            return cached
 
-    model = get_summary_model()
-    text = None
-    if model is not None:
-        need = question or "the current state of the design work"
-        records = json.dumps(_newest_within(entries, 9000), default=str)
-        instruction = (
-            "Summarize these design records for an agent that needs: " + need + ".\n"
-            "Return, in under 300 words: what is DONE (with key values and data refs), what is "
-            "STILL MISSING for a coupled result (volume mesh, SU2 solve, mass estimate, engine cycle, "
-            "mission simulation), and any conflicts or failures. Use only these records.\n\n"
-            "RECORDS:\n" + records + "\n\nDeterministic digest of the same records:\n" + digest(entries)
-        )
-        messages = [{"role": "user", "content": [{"type": "text", "text": instruction}]}]
-        t0 = time.monotonic()
-        try:
-            text = _call_summary_model(model, messages)
-            kb.bump("kb_summary_calls")
-        except Exception as exc:  # a failed summary must never break the caller
-            kb.bump("kb_summary_failures")
-            text = None
-            _ = exc
-        finally:
-            kb.bump("kb_summary_seconds", round(time.monotonic() - t0, 3))
-    if not text:
-        text = digest(entries)
-    with kb._lock:
-        kb._summary_cache[key] = text
-    return text
+    try:
+        # B82: summaries run on the SMALL summary model, never the big one -- they cost
+        # 40.8 minutes of the 32B's time in one link -- and take no generation slot, so
+        # they never compete with the peers. No summary model configured (or it failed
+        # to load) means the deterministic digest, never the big model.
+        from src.llm.generation_slots import get_summary_model
+
+        model = get_summary_model()
+        text = None
+        if model is not None:
+            need = question or "the current state of the design work"
+            records = json.dumps(_newest_within(entries, 9000), default=str)
+            instruction = (
+                "Summarize these design records for an agent that needs: " + need + ".\n"
+                "Return, in under 300 words: what is DONE (with key values and data refs), what is "
+                "STILL MISSING for a coupled result (volume mesh, SU2 solve, mass estimate, engine cycle, "
+                "mission simulation), and any conflicts or failures. Use only these records.\n\n"
+                "RECORDS:\n" + records + "\n\nDeterministic digest of the same records:\n" + digest(entries)
+            )
+            messages = [{"role": "user", "content": [{"type": "text", "text": instruction}]}]
+            t0 = time.monotonic()
+            try:
+                text = _call_summary_model(model, messages)
+                kb.bump("kb_summary_calls")
+            except Exception as exc:  # a failed summary must never break the caller
+                kb.bump("kb_summary_failures")
+                text = None
+                _ = exc
+            finally:
+                kb.bump("kb_summary_seconds", round(time.monotonic() - t0, 3))
+        if not text:
+            text = digest(entries)
+        with kb._lock:
+            kb._summary_cache[key] = text
+        return text
+    finally:
+        # Whatever happens, never leave the key in flight: the waiters would each pay the full
+        # wait and then generate anyway, which is worse than the bug this fixes.
+        if mine:
+            _release_inflight(key)
 
 
 def _newest_within(entries: list[dict], cap_chars: int) -> list[dict]:
