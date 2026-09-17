@@ -353,6 +353,8 @@ class TestPeerToolNames:
             "claim_todo",
             "mark_todo_done",
             "mark_todo_failed",
+            # B90: a peer with nothing it can start waits for the board instead of idling.
+            "wait_for_board",
         }
 
 

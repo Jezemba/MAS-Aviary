@@ -709,6 +709,7 @@ class NetworkedStrategy(CoordinationStrategy):
             MarkTodoDone,
             MarkTodoFailed,
             ReadTodos,
+            WaitForBoard,
         )
 
         peer_tools = [
@@ -724,6 +725,9 @@ class NetworkedStrategy(CoordinationStrategy):
             ClaimTodo(self._context, agent_name=agent_name),
             MarkTodoDone(self._context, agent_name=agent_name),
             MarkTodoFailed(self._context, agent_name=agent_name),
+            # B90: a peer with nothing it can start says so, instead of burning 300-450 s
+            # steps on claims it cannot win (validate10: agent_3, four steps, 1,394 s, no work).
+            WaitForBoard(self._context, agent_name=agent_name),
         ]
         return list(self._domain_tools) + peer_tools
 
@@ -1407,9 +1411,15 @@ class NetworkedStrategy(CoordinationStrategy):
                              "TODO is reserved: its tools refuse everyone else until the holder calls "
                              "mark_todo_done(name, result='<short summary of what it produced>') or "
                              "mark_todo_failed(name). If your claim is rejected, the reply lists what "
-                             "is free at that moment -- take one of those rather than guessing again.")
+                             "is free at that moment -- take one of those rather than guessing again. "
+                             "If what is left is BLOCKED because it depends on work another peer is "
+                             "still doing, call wait_for_board(reason='<what you are waiting for>') "
+                             "instead of retrying: it returns as soon as the board moves.")
             else:
-                lines.append("Everything is claimed or done -- carry on with your own TODO.")
+                lines.append("Everything is claimed or done. If you hold a TODO, carry on with it. "
+                             "If you hold none, call wait_for_board(reason='everything is claimed') "
+                             "rather than retrying claims -- it costs no thinking time and hands you "
+                             "the next TODO that frees up.")
             blocks.append("\n".join(lines))
 
         from src.tools.procedures import component_uid_block

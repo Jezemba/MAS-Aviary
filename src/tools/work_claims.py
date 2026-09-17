@@ -96,7 +96,8 @@ def reset() -> None:
     with _lock:
         _blackboard, _structure = None, ""
         _first_call_refused.clear()
-        _stats.update({"claims_made": {}, "first_call_refusals": {}, "claim_violations": {}})
+        _stats.update({"claims_made": {}, "first_call_refusals": {}, "claim_violations": {},
+                       "board_waits": {}})
 
 
 def _tool_todos() -> dict[str, str]:
@@ -228,7 +229,9 @@ def _refuse_claimed(tool_name: str, todo_name: str, owner: str, agent: str) -> d
     alternatives = (
         "Unclaimed right now: " + ", ".join(free) + ". Call claim_todo(<name>) and take one of those"
         if free else
-        "Everything else is claimed, so post what you have to the blackboard and mark your own TODO done"
+        "Everything else is claimed, so do not go looking for more: call "
+        "wait_for_board(reason='everything is claimed') and it will hand you the next TODO that "
+        "frees up, or mark your own TODO done if you have finished it"
     )
     return {
         "success": False,
@@ -286,6 +289,9 @@ def stats() -> dict:
             "first_call_refusals_total": sum(_stats["first_call_refusals"].values()),
             "claim_violations": violations,
             "claim_violations_total": sum(sum(t.values()) for t in violations.values()),
+            "board_waits": {a: dict(v) for a, v in (_stats.get("board_waits") or {}).items()},
+            "board_wait_seconds_total": round(
+                sum(v["seconds"] for v in (_stats.get("board_waits") or {}).values()), 1),
         }
 
 # -- B89: the board a peer acts on must be the board as it is NOW -------------------------------
@@ -319,3 +325,62 @@ def suggest_split(peer_names: list[str]) -> dict:
     if not free or not peer_names:
         return {}
     return {peer: free[i % len(free)] for i, peer in enumerate(peer_names)}
+
+# -- B90: waiting is a state, not idling ---------------------------------------------------------
+
+def board_signature() -> tuple:
+    """Cheap fingerprint of the board, so a waiter can tell when anything moved."""
+    return tuple(sorted((t.name, str(t.status), t.assigned_to or "") for t in _todos()))
+
+
+def claimable_now(agent: str | None = None) -> list[str]:
+    """TODOs takeable RIGHT NOW: free AND their dependencies are done.
+
+    Different from ``unclaimed_now``, which ignores dependencies -- a peer told to take
+    'mission' while aero is still running would only lose another step.
+    """
+    board = _blackboard
+    if board is None:
+        return []
+    try:
+        available = [t.name for t in board.read_available_todos()]
+    except Exception:      # pragma: no cover - a board problem must never block work
+        return []
+    if agent and held_unfinished(agent):
+        return []          # it already has work; it should be doing that, not taking more
+    return available
+
+
+def blocked_now() -> list[dict]:
+    """What is left but not yet takeable, and which unfinished TODO each is waiting on."""
+    from src.coordination.blackboard import TODO_STATUS_DONE, TODO_STATUS_FAILED, TODO_STATUS_PENDING
+
+    by_name = {t.name: t for t in _todos()}
+    out = []
+    for todo in by_name.values():
+        if str(todo.status) not in (TODO_STATUS_PENDING, TODO_STATUS_FAILED):
+            continue
+        unmet = [d for d in (todo.depends_on or [])
+                 if d not in by_name or str(by_name[d].status) != TODO_STATUS_DONE]
+        if unmet:
+            out.append({"name": todo.name, "waiting_on": unmet,
+                        "owners": [by_name[d].assigned_to for d in unmet if d in by_name]})
+    return out
+
+
+def anyone_working(excluding: str | None = None) -> bool:
+    """Is another peer holding unfinished work? If not, waiting can change nothing."""
+    from src.coordination.blackboard import TODO_STATUS_CLAIMED
+
+    return any(str(t.status) == TODO_STATUS_CLAIMED and t.assigned_to != excluding
+               for t in _todos())
+
+
+def note_wait(agent: str, seconds: float, woke_on_change: bool) -> None:
+    with _lock:
+        waits = _stats.setdefault("board_waits", {})
+        entry = waits.setdefault(agent, {"waits": 0, "seconds": 0.0, "woken_by_change": 0})
+        entry["waits"] += 1
+        entry["seconds"] = round(entry["seconds"] + seconds, 1)
+        entry["woken_by_change"] += 1 if woke_on_change else 0
+

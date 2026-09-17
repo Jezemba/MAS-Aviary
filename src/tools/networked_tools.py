@@ -29,6 +29,7 @@ PEER_TOOL_NAMES = frozenset({
     "claim_todo",
     "mark_todo_done",
     "mark_todo_failed",
+    "wait_for_board",
 })
 
 
@@ -435,9 +436,11 @@ class ClaimTodo(Tool):
                    f"call claim_todo('{free[0]}') and start there. Structures and propulsion "
                    "need no aero, so they can run while someone else solves.")
         elif not ok:
-            msg = (f"{msg}. Nothing is unclaimed right now, so do not keep trying: if you hold a "
-                   "TODO, get on with it; if you hold none, post what you can help with via "
-                   "write_blackboard(entry_type='gap') and stop.")
+            msg = (f"{msg}. Nothing is unclaimed right now, so do not keep trying. If you hold a "
+                   "TODO, get on with it. If you hold none, call "
+                   "wait_for_board(reason='everything is claimed') -- it costs you no thinking "
+                   "time, returns the moment a peer finishes or gives up a TODO, and claims the "
+                   "first one that becomes takeable.")
         return json.dumps(
             {
                 "success": ok,
@@ -449,6 +452,136 @@ class ClaimTodo(Tool):
                 "message": msg,
             }
         )
+
+
+
+class WaitForBoard(Tool):
+    """Wait for the board to move, instead of losing steps to claims you cannot win (B90).
+
+    validate10: agent_3 spent four steps and 1,394 s losing claims and doing nothing, while
+    `mission`, `simulation` and `evaluation` sat unclaimed but BLOCKED -- their dependencies
+    were still being worked by the other two peers. There was no way for a peer to say "there
+    is nothing I can start yet"; the only options were to retry a claim or to stop.
+
+    So waiting is a state a peer can enter (Jessica, 2026-09-16). It costs no generation -- the
+    peer is inside a tool call, not thinking -- so the other peers get the whole batch while it
+    waits. It returns THE MOMENT the board moves, and it is bounded well under the B85 tool
+    watchdog so it can never wedge a run.
+
+    It refuses to waste time: if something is takeable now, or nobody else is working (so
+    nothing can change), it returns immediately and says so.
+    """
+
+    name = "wait_for_board"
+    description = (
+        "Wait until another peer changes the TODO board -- claims, finishes or gives up a TODO. "
+        "Use this when everything is claimed, or when what is left is BLOCKED because it depends "
+        "on work another peer is still doing: it is how you say 'there is nothing I can start "
+        "yet' instead of retrying a claim you cannot win. It costs you no thinking time, returns "
+        "as soon as the board moves, and tells you what became claimable. If something is "
+        "already takeable, or nobody else is working, it returns straight away and says so -- so "
+        "it can never trap you. By default it claims the first TODO that becomes takeable; pass "
+        "claim_when_free=false if you only want to look."
+    )
+    inputs: dict = {
+        "reason": {
+            "type": "string",
+            "description": "What you are waiting for, e.g. 'aero is blocked on geometry'.",
+            "nullable": True,
+        },
+        "seconds": {
+            "type": "number",
+            "description": "How long to wait at most (default 120, capped at 300).",
+            "nullable": True,
+        },
+        "claim_when_free": {
+            "type": "boolean",
+            "description": "Claim the first TODO that becomes takeable (default true).",
+            "nullable": True,
+        },
+    }
+    output_type = "string"
+
+    _POLL_SECONDS = 1.0
+    _DEFAULT_SECONDS = 120.0
+    _MAX_SECONDS = 300.0        # far below the B85 tool watchdog, so a wait is never a wedge
+
+    def __init__(self, context: NetworkedContext, agent_name: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+        self._agent_name = agent_name
+
+    def forward(self, reason: str | None = None, seconds: float | None = None,
+                claim_when_free: bool | None = None) -> str:  # type: ignore[override]
+        import time
+
+        from src.tools import work_claims
+
+        budget = min(float(seconds or self._DEFAULT_SECONDS), self._MAX_SECONDS)
+        do_claim = True if claim_when_free is None else bool(claim_when_free)
+
+        takeable = work_claims.claimable_now(self._agent_name)
+        if work_claims.held_unfinished(self._agent_name):
+            return self._answer(False, 0.0, "You already hold unfinished work -- do that instead of "
+                                            "waiting. Finish it with mark_todo_done(name, result=...) "
+                                            "or give it up with mark_todo_failed(name).")
+        if takeable:
+            return self._maybe_claim(takeable, do_claim, 0.0, False,
+                                     "There is work you can take right now, so there is nothing to "
+                                     "wait for.")
+        if not work_claims.anyone_working(self._agent_name):
+            return self._answer(False, 0.0, "Nobody else is working, so the board cannot change. "
+                                            "Nothing here needs you: post what you can help with via "
+                                            "write_blackboard(entry_type='gap') and stop.")
+
+        before = work_claims.board_signature()
+        started = time.monotonic()
+        changed = False
+        while time.monotonic() - started < budget:
+            time.sleep(self._POLL_SECONDS)
+            if work_claims.board_signature() != before:
+                changed = True
+                break
+        waited = round(time.monotonic() - started, 1)
+        work_claims.note_wait(self._agent_name, waited, changed)
+
+        takeable = work_claims.claimable_now(self._agent_name)
+        if changed and takeable:
+            return self._maybe_claim(takeable, do_claim, waited, True,
+                                     "The board moved while you waited.")
+        if changed:
+            return self._answer(True, waited, "The board moved, but nothing is takeable yet -- what "
+                                              "is left still depends on work in progress.")
+        return self._answer(False, waited, f"Nothing moved in {waited:.0f}s. Wait again if the work "
+                                           "you need is still in progress, or stop if you have "
+                                           "nothing to contribute.")
+
+    def _maybe_claim(self, takeable: list, do_claim: bool, waited: float, changed: bool,
+                     note: str) -> str:
+        if not do_claim:
+            return self._answer(changed, waited, f"{note} Claimable now: {', '.join(takeable)}.")
+        ok, msg = self._context.blackboard.claim_todo(takeable[0], self._agent_name)
+        if ok:
+            return self._answer(changed, waited,
+                                f"{note} Claimed {takeable[0]!r} for you -- start it now. "
+                                "read_procedure(role='<name>') lists its tools in order.",
+                                claimed=takeable[0])
+        return self._answer(changed, waited, f"{note} Claimable now: {', '.join(takeable)} "
+                                             f"(the claim on {takeable[0]!r} did not land: {msg}).")
+
+    def _answer(self, changed: bool, waited: float, message: str, claimed: str | None = None) -> str:
+        from src.tools import work_claims
+
+        return json.dumps({
+            "success": True,
+            "waited_seconds": waited,
+            "board_changed": changed,
+            "claimed": claimed,
+            "claimable_now": work_claims.claimable_now(self._agent_name),
+            "blocked": work_claims.blocked_now(),
+            "board": work_claims.board_snapshot(),
+            "message": message,
+        })
 
 
 class MarkTodoDone(Tool):

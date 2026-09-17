@@ -1,5 +1,45 @@
 ## [Unreleased]
 
+### 2026-09-16 — ADDED: waiting is a state a peer can enter (B90)
+
+**The gap B89 exposed.** Once a peer knows what is left, it still has nothing to do when
+everything is claimed, or when what remains is **blocked** because it depends on work another
+peer is still running. validate10: agent_3 spent four steps and **1,394 s** losing claims and
+doing no work, while `mission`, `simulation` and `evaluation` sat unclaimed but blocked. Its
+only options were to retry a claim or to stop — so it retried, including one attempt at the
+TODO it had lost fourteen minutes earlier.
+
+**`wait_for_board`** (Jessica, 2026-09-16) makes that an explicit state instead of idling:
+
+- It **costs no generation**. The peer is inside a tool call, not thinking, so the other peers
+  get the whole B83 batch while it waits — the opposite of burning a 300–450 s step on a claim
+  it cannot win.
+- It **returns the moment the board moves** (a TODO claimed, finished or given up), and by
+  default **claims the first thing that becomes takeable**, so waking up does not cost another
+  step either.
+- It **reports what is blocked and on what**: `aero waiting_on geometry`, `mission waiting_on
+  aero, mass` — built from the board's own DAG (`read_available_todos`), so a peer is never sent
+  at a TODO whose dependencies are unmet.
+- It **refuses to waste time**. If something is takeable now, or the peer already holds
+  unfinished work, or nobody else is working at all (so nothing can change), it returns
+  immediately and says which.
+- It is **bounded** (B85's lesson): 120 s by default, hard-capped at 300 s, far below the tool
+  watchdog, so a wait can never become a wedge.
+
+**The peer is told the state exists exactly where it needs it** — the claim rejection when
+nothing is free, the tool-path refusal when everything else is claimed, and the peer prompt
+when what is left is blocked. All three used to end in "post a gap and stop".
+
+**Measured per run:** `board_waits` per agent (count, seconds, how many ended in a real board
+change) and `board_wait_seconds_total`. A high wait time with low `woken_by_change` means the
+work is badly divided, not that peers are lazy.
+
+**Tests:** `tests/test_b90_wait_for_board.py` (16) — returning at once when there is work, when
+the peer already holds work, and when nobody else is working; the agent_3 case waiting and being
+handed the freed TODO; blocked work reported with its unmet dependencies; looking without
+claiming; a wait ending on its own; the cap clamped below the watchdog; a board move that frees
+nothing still returning; the three places that point at it; and the metrics.
+
 ### 2026-09-16 — FIXED: peers act on the live board, and a lost claim names what is free (B89)
 
 **B86/B87/B88 worked.** On the first link that ran with them (`validate10_net_7960`): 3 of 3

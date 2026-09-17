@@ -95,7 +95,8 @@ def test_a_fully_claimed_board_tells_the_peer_to_stop_trying():
     lost = _claim(board, "agent_2", "geometry")
     assert lost["unclaimed"] == []
     assert "do not keep trying" in lost["message"]
-    assert "write_blackboard" in lost["message"], "give it something to do other than retry"
+    # B90 gave it something better than "post a gap and stop": a state it can sit in.
+    assert "wait_for_board" in lost["message"], "give it something to do other than retry"
 
 
 def test_two_peers_racing_one_todo_leave_exactly_one_winner():
