@@ -473,6 +473,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
+                _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
@@ -495,6 +496,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
+        _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         response = _intercept_binaries(tool_name, response)
         return response
@@ -665,6 +667,28 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
         "design, then run it again."
     )
     logger.warning("[B92] %s reported fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
+
+
+
+def _capture_applied_design(tool_name: str, data: dict) -> None:
+    """Remember the design the mission holder has applied (B95).
+
+    `set_aircraft_parameters` reports what it changed:
+        "applied": [{"name": "Aircraft.Wing.ASPECT_RATIO", "old_value": 12.4177, "new_value": 11.5}, ...]
+    Keeping it lets the geometry guard say WHICH aircraft is about to be meshed, with numbers, rather
+    than "the design has changed" -- the B81 refusal that changed behaviour named the result.
+    """
+    if _design_state is None or tool_name != "set_aircraft_parameters":
+        return
+    applied = data.get("applied")
+    if not isinstance(applied, list):
+        return
+    current = dict(_design_state.data_store.get("design_params_applied") or {})
+    for item in applied:
+        if isinstance(item, dict) and item.get("name") is not None and "new_value" in item:
+            current[str(item["name"])] = item["new_value"]
+    if current:
+        _design_state.data_store["design_params_applied"] = current
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:

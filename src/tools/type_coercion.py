@@ -274,6 +274,15 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         from src.tools import work_claims
         # B88: a solve on a mesh-less session aborts in 2.6 s and leaves the link with no
         #      path to aero at all. Refuse before the server is touched, naming the ref.
+        # B95: a mesh or export of the BASELINE while the design has moved on describes the
+        #      wrong aircraft, and everything downstream inherits it. Refuse before the server.
+        from src.tools import geometry_guard
+
+        _stale = geometry_guard.stale_geometry(tool.name, resolved)
+        if _stale is not None:
+            duplicate_guard.release(tool.name, _fp)
+            _kb_record(tool.name, resolved, _stale, status="refused")
+            return _json.dumps(_stale)
         from src.tools import mesh_guard
         _no_mesh = mesh_guard.mesh_missing(tool.name, resolved)
         if _no_mesh is not None:
