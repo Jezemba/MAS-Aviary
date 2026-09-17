@@ -64,7 +64,11 @@ GEOMETRY = Procedure(
         Step("generate_volume_mesh", "produce the volume mesh the aero stage solves on."),
     ),
     notes=("A design change here makes every downstream result stale: aero and mass must be "
-           "re-run after a morph, or the mission will refuse them as produced for an earlier geometry.",),
+           "re-run after a morph, or the mission will refuse them as produced for an earlier geometry.",
+           "component_uid is a CPACS UID, not a display name: the DLR-F25 baseline has Fuselage1, "
+           "Wing1 (main wing), Wing2H (horizontal tail) and Wing3V (vertical tail). 'Wing' is not a "
+           "UID and every run so far has lost a step to it. Call read_procedure or check the task "
+           "text for the UIDs of the CPACS actually open.",),
 )
 
 AERO = Procedure(
@@ -186,3 +190,30 @@ def budget_warning(refusals_so_far: int) -> str:
         "produce what, in order. If another agent is already doing this work, call read_todos and "
         "take something unclaimed instead; mass and propulsion do not depend on aero."
     )
+
+
+# The DLR-F25 baseline's UIDs, used until the live ones are captured from the open session.
+BASELINE_COMPONENT_UIDS = ("Fuselage1", "Wing1", "Wing2H", "Wing3V")
+
+
+def component_uids() -> tuple:
+    """The real UIDs of the CPACS in play, live ones preferred over the baseline."""
+    try:
+        from src.tools.data_plane import get_design_state
+
+        state = get_design_state()
+        live = list((getattr(state, "data_store", None) or {}).get("component_uids") or []) if state else []
+    except Exception:      # pragma: no cover - never fail a prompt over this
+        live = []
+    return tuple(live) if live else BASELINE_COMPONENT_UIDS
+
+
+def component_uid_block() -> str:
+    """The UID line for a peer's task text (B86 3.5)."""
+    uids = component_uids()
+    if not uids:
+        return ""
+    return ("COMPONENT UIDs for this CPACS -- use these EXACTLY, they are UIDs and not display "
+            "names: " + ", ".join(uids) + ". The main wing is "
+            + next((u for u in uids if u.lower().startswith("wing")), uids[0])
+            + ", not 'Wing'.")

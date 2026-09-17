@@ -436,6 +436,24 @@ class MarkTodoDone(Tool):
         self._agent_name = agent_name
 
     def forward(self, todo_name: str, result: str) -> str:  # type: ignore[override]
+        # B86: releasing is how the work stops being reserved, so it must carry the summary
+        # the next peer reads off the board. An empty result releases the claim and tells
+        # nobody anything, which is how a peer ends up redoing work that was already done.
+        mine = any(t.name == todo_name and t.assigned_to == self._agent_name
+                   for t in self._context.blackboard.read_todos())
+        if mine and len((result or "").strip()) < 8:
+            return json.dumps({
+                "success": False,
+                "error_code": "SUMMARY_REQUIRED",
+                "todo_name": todo_name,
+                "error": (
+                    f"{todo_name} was not released: mark_todo_done needs a short result summary, "
+                    "because that summary is what the other peers read off the blackboard. "
+                    "Give the values your tools actually produced, e.g. "
+                    "result='CL=0.589, CD=0.0303, L/D=19.4' or result='mesh 660k cells, ref "
+                    "generate_volume_mesh__mesh_base64'. Your claim is still yours until you do."
+                ),
+            })
         ok, msg = self._context.blackboard.complete_todo(
             todo_name, self._agent_name, result
         )

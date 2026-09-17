@@ -265,6 +265,13 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         if _guard is not None and not _deliberate:
             _kb_record(tool.name, resolved, _guard, status="refused", fingerprint=_fp)
             return _json.dumps(_guard)
+        # 2a''''. B86: a claim must actually RESERVE the work. claim_todo is atomic but
+        #        nothing in the tool path ever read it, so two peers created their own SU2
+        #        session for the same design three minutes apart and neither was refused.
+        #        A claimed TODO stays reserved until its holder releases it with
+        #        mark_todo_done(result=<summary>) or mark_todo_failed. Unclaimed work
+        #        auto-claims on first touch, so a peer is never blocked by its own diligence.
+        from src.tools import work_claims
         # B88: a solve on a mesh-less session aborts in 2.6 s and leaves the link with no
         #      path to aero at all. Refuse before the server is touched, naming the ref.
         from src.tools import mesh_guard
@@ -273,6 +280,11 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, _no_mesh, status="refused")
             return _json.dumps(_no_mesh)
+        _claim = work_claims.check(tool.name, current_agent_name())
+        if _claim is not None:
+            duplicate_guard.release(tool.name, _fp)     # nothing ran; drop any in-flight claim
+            _kb_record(tool.name, resolved, _claim, status="refused")
+            return _json.dumps(_claim)
         # 2b. B84: the coupled quantities are REQUIRED PARAMETERS of the mission call.
         #     Advisory hints were ignored every time (validate7 link 1: 5 aero warnings,
         #     7 mass hints, 0 estimate_mass, 0 run_cycle), and aviary's stand-in values

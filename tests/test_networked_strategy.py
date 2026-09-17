@@ -711,7 +711,11 @@ class TestConcurrentBlackboardMode:
         assert action.action_type == "parallel_run"
         assert action.agent_name is None
         assert set(action.metadata["peers"]) == {"agent_1", "agent_2", "agent_3"}
-        assert action.input_context == "F25 design"
+        # B86: the task now carries the TODO board and the real component UIDs, so a peer
+        # does not spend a 400-600 s step discovering either.
+        assert action.input_context.startswith("F25 design")
+        assert "TODO BOARD" in action.input_context
+        assert "COMPONENT UIDs" in action.input_context and "Wing1" in action.input_context
 
     def test_max_concurrent_runs_then_terminate(self, worker_tools):
         """After max_concurrent_runs cycles, next_step returns terminate

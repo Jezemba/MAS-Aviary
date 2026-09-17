@@ -168,6 +168,13 @@ class NetworkedStrategy(CoordinationStrategy):
         from src.tools.duplicate_guard import register_blackboard
 
         register_blackboard(self._blackboard)
+        # B86: the tool path must be able to see who holds which TODO. Only the networked
+        # strategy registers here, so sequential and orchestrated never see a claim refusal.
+        from src.tools import work_claims
+
+        work_claims.reset()
+        work_claims.register_blackboard(self._blackboard)
+        work_claims.set_structure("networked")
 
         # Toggle config dict for context filtering.
         toggle_config = {
@@ -403,7 +410,8 @@ class NetworkedStrategy(CoordinationStrategy):
             return CoordinationAction(
                 action_type="parallel_run",
                 agent_name=None,
-                input_context=self._task or current_state.get("task", ""),
+                input_context=self._with_board_and_uids(
+                    self._task or current_state.get("task", "")),
                 metadata={
                     "peers": list(self._agent_order),
                     "turn": self._total_turns + 1,
@@ -1355,6 +1363,50 @@ class NetworkedStrategy(CoordinationStrategy):
             if result.matched:
                 return trans.target
         return None
+
+
+    def _with_board_and_uids(self, task: str) -> str:
+        """Put the TODO board and the real component UIDs in front of every peer (B86).
+
+        Two things peers could not know at the moment they needed them:
+
+        * The board. In validate9 all three peers opened with the same read-only call and
+          then wrote conflicting wing areas into one session, having made 0 read_todos calls.
+          The framework can read the board itself, so the peer does not have to spend a step
+          (400-600 s) discovering it.
+        * The component UIDs. Agents called generate_volume_mesh with 'Wing' instead of
+          'Wing1' in every networked run measured (validate5 2x, validate7 3x, validate8 3x,
+          validate9 1x). tigl's error is already excellent and they do correct themselves,
+          but each mistake costs a whole step -- and the names are knowable before the call.
+        """
+        blocks = [task or ""]
+        try:
+            from src.coordination.blackboard import TODO_STATUS_PENDING
+
+            todos = list(self._blackboard.read_todos()) if self._blackboard is not None else []
+        except Exception:      # pragma: no cover - a board problem must never block a run
+            todos = []
+        if todos:
+            lines = ["TODO BOARD (read for you -- you do not need to call read_todos):"]
+            for todo in todos:
+                owner = f" -- {todo.assigned_to}" if todo.assigned_to else ""
+                lines.append(f"  [{todo.status}{owner}] {todo.name}")
+            free = [t.name for t in todos if str(t.status) == TODO_STATUS_PENDING]
+            if free:
+                lines.append("CLAIM ONE BEFORE YOU START: claim_todo('" + free[0] + "') -- unclaimed: "
+                             + ", ".join(free) + ". A claimed TODO is reserved: its tools refuse "
+                             "everyone else until the holder calls mark_todo_done(name, result='<short "
+                             "summary of what it produced>') or mark_todo_failed(name).")
+            else:
+                lines.append("Everything is claimed or done -- carry on with your own TODO.")
+            blocks.append("\n".join(lines))
+
+        from src.tools.procedures import component_uid_block
+
+        uids = component_uid_block()
+        if uids:
+            blocks.append(uids)
+        return "\n\n".join(b for b in blocks if b)
 
     def _build_context(
         self,

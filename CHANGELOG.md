@@ -1,5 +1,136 @@
 ## [Unreleased]
 
+### 2026-09-16 — FIXED: a failed call is no longer filed as a success (B87), and no solve without a mesh (B88)
+
+**B87 — the one that gated everything.** `classify_result` json-parsed a tool's return value
+and, when that failed, returned `("success", {}, "")`. But an MCP tool error arrives as a
+**plain string**:
+
+```
+Error calling tool 'generate_volume_mesh': Component 'Wing' not found. Did you mean 'Wing1'?
+Available UIDs: Fuselage1, Wing1, Wing2H, Wing3V.
+```
+
+so every string-form failure was written to the knowledge base as a **successful call with
+empty outputs**, and the B81 duplicate guard was armed by it. In validate9 that locked all
+three peers out of meshing: agent_1's wrong-UID failure was recorded as done, agent_3 meshed
+*correctly* three minutes later and was refused with *"agent_1 already did
+generate_volume_mesh … Use its result: {}"* — there was no result — and agent_1 was later
+refused for its own failed call. **28 phantom successes across every run measured on the 7960,
+19 of them `generate_volume_mesh`**: 12 wrong-UID and **7 with the correct `Wing1`**, which
+were cell-cap refusals. A recoverable attempt was thus recorded as done and could never be
+retried with a coarser setting.
+
+- A non-JSON string beginning `Error calling tool` / `Error:` / `Exception:`, or containing a
+  traceback, is **failed**, with the string kept as the note.
+- Anything else unparseable is **unknown**, never `success`: a result we cannot read is not
+  evidence that work was completed. (`duplicate_guard` only ever matched `success`, so unknown
+  entries cannot arm it either.)
+- A prior with **nothing usable** is no longer treated as a duplicate — neither `{}` nor a bare
+  `{"success": true}`, which tells the next peer just as little. `Use its result: {}` cannot be
+  emitted any more.
+
+**B88 — no solve without a mesh.** `set_mesh` had **0** calls in the whole run. The 34.5 MB mesh
+existed only as a data-plane ref, both SU2 workdirs held `config.cfg` and nothing else, and
+`run_su2_solver` was allowed to start and died in 2.6 s with *"The SU2 mesh file named mesh.su2
+was not found"* → MPI_ABORT. B31 enforces meshing before **finishing**, not before **solving**;
+B84 then correctly refused `run_simulation` for missing aero, so the link had no way out.
+`run_su2_solver` on a session with no mesh is now refused before the server is touched, naming
+the ref the peer already holds (`set_mesh(session_id=…, mesh_base64='generate_volume_mesh__mesh_base64')`)
+or telling it to mesh first when no mesh exists at all. An unknown session is still left to the
+server to judge.
+
+**B88, second hazard — a silently redirected session.** `resolve_request` rewrote agent_2's
+solve from its own session onto agent_1's, so the log and the knowledge base disagreed about
+which session ran. The rewrite is right with one session per design and wrong with two peers
+each holding one, so it is now **recorded** (`_session_redirects`: tool, server, asked, used)
+rather than inferred. The deeper fix is B86's claiming, which stops the second session existing.
+
+**Tests:** `tests/test_b87_b88_failed_calls_and_meshless_solves.py` (21) — the exact tigl error
+string and the exact cap-refusal string classified as failed, the other error shapes, unparseable
+as unknown, real successes unaffected, a failed mesh retried immediately by another peer *and* by
+its own caller, a real duplicate still refused, no refusal citing an empty result, the mesh-less
+solve refused through the middleware with the ref named, a meshed session solving, an unknown
+session left alone, only the solver gated, and the session redirect recorded.
+
+### 2026-09-16 — FIXED: a claim actually reserves the work, and peers are given the board and the UIDs (B86)
+
+**What validate9 showed** (first networked link, first 25 minutes): **0** `claim_todo`, **0**
+`read_todos`, **0** `read_procedure` calls. All three peers spent their whole first step on the
+identical read-only `get_design_space` (166 s / 278 s / 382 s), then all three wrote conflicting
+wing areas (136.3 / 130.0 / unset) into the *same* aviary session in one round with nothing
+simulated between — so two peers held a design that no longer existed. Later two peers created
+their own SU2 session for the same design three minutes apart, and a third tried to re-mesh it,
+stopped only by a typo in the component UID.
+
+**Two separate defects, and only the second is new code.**
+
+1. *Peers never claim.* The tools were always there — `_build_tool_list` gives every peer
+   `ReadTodos`/`ClaimTodo`/`MarkTodoDone`/`MarkTodoFailed` — and the prompt and `procedures.py`
+   both tell them to claim. As with B31, B81 and B84: instruction does not change behaviour
+   here, mechanism does.
+2. *A claim reserved nothing even when made.* `Blackboard.claim_todo` is properly atomic — at
+   most one winner — but **nothing in the tool path ever consulted it**. A peer that never
+   claimed "aero" could still run `create_su2_session`, `generate_volume_mesh`, `set_mesh` and
+   `run_su2_solver`.
+
+**The claim machinery is unchanged.** `claim_todo` is still the atomic primitive and
+`mark_todo_done(name, result)` is still the release; this only makes the tool path honour them
+(`src/tools/work_claims.py`). A tool belongs to the TODO whose work it performs, and that
+mapping is read out of the B85 procedure table, so the refusal and the reference cannot drift
+apart:
+
+- **claimed by another peer** → refused in the B81 shape, naming who holds it, since when, what
+  is free instead, and that it stays reserved until the holder calls
+  `mark_todo_done(result='<summary>')` or `mark_todo_failed`;
+- **claimed by the caller** → proceeds silently;
+- **unclaimed** → the peer's *first* domain call is refused once with `CLAIM_FIRST`, which is
+  what makes every peer look at the board before choosing; after that one refusal, touching
+  unclaimed work **auto-claims** it, so doing the work is the claim and no peer is blocked by
+  its own diligence. One refusal per peer is the whole budget, of either kind.
+- Only a **live claim** reserves: `done` means finished (repeats are B81's business) and
+  `failed` frees it — and a failed TODO is listed as takeable, since that is the one a peer
+  most needs pointing at.
+
+**Releasing now requires the summary** (`MarkTodoDone`): an empty result released the claim and
+told the next peer nothing, which is how work gets redone. A release without one is refused,
+shows what a good summary looks like, and **keeps the claim**.
+
+**Bounded, always** (B85's lesson): never issued when the board is empty or everything is
+claimed, at most one first-call refusal per peer, every message names something the peer *can*
+do, and networked only — `set_structure` is called by the networked strategy and nothing else,
+so sequential and orchestrated never see a claim refusal. `AVION_ENFORCE_CLAIMS=0` switches it
+off for a probe.
+
+**The board and the UIDs are put in front of the peers** (`_with_board_and_uids`), because both
+were things a peer could not know at the moment it needed them:
+
+- the **TODO board** is read by the framework and printed in the task — who holds what, what is
+  free — so discovering it costs no step;
+- the **component UIDs**. Agents called `generate_volume_mesh` with `'Wing'` instead of
+  `'Wing1'` in *every* networked run measured (validate5 2×, validate7 3×, validate8 3×,
+  validate9 1×). tigl's error already names the right UID and the agent does correct itself, but
+  each mistake costs a 400–600 s step. The real UIDs are now captured from
+  `list_geometric_components` *and* from tigl's own "Available UIDs:" error text, so one wrong
+  guess anywhere teaches every later prompt, with the DLR-F25 baseline (`Fuselage1`, `Wing1`,
+  `Wing2H`, `Wing3V`) until a live session reports otherwise.
+
+**Measured per run** (`result.json` + `[B86] claims N (aero->agent_1, ...); first-call refusals
+M; claim violations V`): `claims_made`, `claims_made_count`, `first_call_refusals`,
+`claim_violations` per agent and tool, and their totals.
+
+**Tests:** `tests/test_b86_claims_reserve_work.py` (23) — the tool→TODO mapping, another peer's
+claimed work refused, the holder never refused, work reserved until released and usable after,
+a stalled peer's TODO taken over, the single CLAIM_FIRST and auto-claim after it, a peer holding
+several TODOs, an empty board and non-networked structures never refusing, release without a
+summary refused while keeping the claim, only the holder releasing, one winner under eight
+concurrent claimers, the metrics, and the UIDs — baseline, live, and recovered from tigl's error.
+
+**Not in this change:** §3.2 (the note on unevaluated and conflicting design writes) and §3.3
+(the duplicate read-only hint). Claims should remove most of §3.2 by construction —
+`set_aircraft_parameters` belongs to the `mission` TODO, so only its holder writes the design —
+so it is worth measuring the next run before adding another annotation path.
+
 ### 2026-09-16 — FIXED: no call can wedge a run, and the design sequence is written down (B85 + B84 follow-ups)
 
 **B85, what happened.** `validate8_net_7960`'s first networked link stopped progressing at

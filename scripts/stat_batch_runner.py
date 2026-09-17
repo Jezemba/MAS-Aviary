@@ -558,6 +558,13 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
             state_summary["_coupling_status"] = coupling_status()
         except Exception:
             pass
+        # B86: who claimed what, and who tried to work on someone else's TODO.
+        try:
+            from src.tools.work_claims import stats as claim_stats
+
+            state_summary["_claim_stats"] = claim_stats()
+        except Exception:
+            pass
         # B85: any tool call the watchdog had to abandon, so a wedge shows up as data.
         try:
             from src.tools.call_watchdog import stats as watchdog_stats
@@ -1251,6 +1258,18 @@ def run_stat_batch(
                     if _cs.get("mission_coupled") is False:
                         print("  [B84] WARNING: this run's fuel figure is NOT this design's "
                               "aero/mass -- excluded from fuel ranking")
+                    # B86: claiming is what stops three peers doing the same discipline.
+                    _cl = dict(_store.get("_claim_stats") or {})
+                    for _k in ("claims_made", "claims_made_count", "first_call_refusals",
+                               "first_call_refusals_total", "claim_violations",
+                               "claim_violations_total"):
+                        result_dict[_k] = _cl.get(_k)
+                    if _cl:
+                        _claims = _cl.get("claims_made") or {}
+                        _detail = ", ".join(f"{t}->{a}" for t, a in _claims.items()) or "none"
+                        print(f"  [B86] claims {_cl.get('claims_made_count', 0)} ({_detail}); "
+                              f"first-call refusals {_cl.get('first_call_refusals_total', 0)}; "
+                              f"claim violations {_cl.get('claim_violations_total', 0)}")
                     # B85: a call that never answered was abandoned so the run could finish.
                     _wd = dict(_store.get("_watchdog_stats") or {})
                     result_dict["tool_call_timeouts"] = _wd.get("tool_call_timeouts") or {}
