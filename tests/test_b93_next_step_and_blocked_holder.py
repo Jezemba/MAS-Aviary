@@ -271,3 +271,30 @@ def test_finish_yours_first_says_what_finishing_means():
     assert "mark_todo_done('geometry'" in refused["message"]
     assert "mark_todo_failed('geometry')" in refused["message"]
 
+# ---- a prerequisite is satisfied by the ARTIFACT, not by the board's bookkeeping ---------------
+#
+# validate14 04:10: agent_3 produced the mesh at 03:52 and had not called mark_todo_done('geometry'),
+# so agent_1 was told its `aero` was "BLOCKED on geometry" when set_mesh could have run -- and
+# wait_for_board would have idled it for 120 s waiting for an event it did not need.
+
+def test_a_produced_mesh_unblocks_aero_even_if_the_todo_is_not_marked_done():
+    board = _board()
+    _claim(board, "agent_3", "geometry")
+    _claim(board, "agent_1", "aero")
+    assert wc.blocked_holdings("agent_1") == {"aero": ("geometry",)}
+    kbm.get_kb().append(tool="generate_volume_mesh", server="tigl", agent="agent_3", role="",
+                        status="success", inputs={}, outputs={"mesh_size_bytes": 1234},
+                        design_fingerprint="geo:1")
+    assert wc.blocked_holdings("agent_1") == {}
+    assert wc.all_holdings_blocked("agent_1") is False
+
+
+def test_a_FAILED_mesh_does_not_unblock_anything():
+    """B87 made failures trustworthy; a cap refusal must not look like a produced mesh."""
+    board = _board()
+    _claim(board, "agent_3", "geometry")
+    _claim(board, "agent_1", "aero")
+    kbm.get_kb().append(tool="generate_volume_mesh", server="tigl", agent="agent_3", role="",
+                        status="failed", inputs={}, outputs={}, design_fingerprint="geo:1")
+    assert wc.blocked_holdings("agent_1") == {"aero": ("geometry",)}
+

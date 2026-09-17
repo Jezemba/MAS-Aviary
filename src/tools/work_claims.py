@@ -403,6 +403,22 @@ def done_todo_names() -> set:
     return {t.name for t in _todos() if str(t.status) == TODO_STATUS_DONE}
 
 
+
+def _milestone_roles_done() -> set:
+    """Board names whose defining work has actually SUCCEEDED, whatever the board says (B95)."""
+    try:
+        from src.tools.knowledge_base import _MILESTONES, get_kb
+        from src.tools.procedures import _todo_name
+
+        kb = get_kb()
+        if kb is None:
+            return set()
+        succeeded = {e["tool"] for e in kb.entries if e.get("status") == "success"}
+        return {_todo_name(role) for role, tool, _label in _MILESTONES if tool in succeeded}
+    except Exception:      # pragma: no cover - never fail a message over this
+        return set()
+
+
 def blocked_holdings(agent: str) -> dict:
     """{held TODO -> the roles it is waiting on}, for the holdings this peer CANNOT start (B93).
 
@@ -414,7 +430,13 @@ def blocked_holdings(agent: str) -> dict:
     """
     from src.tools.procedures import blocking_roles, role_for_todo
 
-    done = done_todo_names()
+    # B95 follow-up (validate14 04:10): asking the BOARD whether a prerequisite is done is the
+    # wrong question. agent_3 had produced the mesh at 03:52 and simply not called
+    # mark_todo_done('geometry'), so aero was reported BLOCKED while set_mesh could have run --
+    # and wait_for_board would have idled the peer for 120 s waiting for an event it did not need.
+    # What matters is whether the ARTIFACT exists: the knowledge base records the milestone tool
+    # succeeding for this design, which is the same fact B94 keys its summaries on.
+    done = done_todo_names() | _milestone_roles_done()
     out = {}
     for name in held_unfinished(agent):
         role = role_for_todo(name)
