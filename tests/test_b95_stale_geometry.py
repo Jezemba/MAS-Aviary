@@ -147,3 +147,79 @@ def test_later_parameter_calls_merge_rather_than_replace():
 def test_a_result_with_no_applied_list_is_ignored():
     dp._capture_applied_design("set_aircraft_parameters", {"success": False, "error": "nope"})
     assert "design_params_applied" not in dp._design_state.data_store
+
+
+# ---- B91: structures must size the design, not the fixture -------------------------------------
+#
+# validate15 05:13-05:16 is the cleanest statement of it: the wing had just been morphed
+# (span 33.91 -> 45.40 m, aspect ratio 9.37 -> 15.89, rebuilt: true) and estimate_mass ran three
+# minutes later on mass-mcp/tests/fixtures/D150_simple.xml. The right geometry was in the tigl
+# session; the mass model read the wrong file off disk, because nobody had called export_cpacs.
+
+from src.tools.geometry_guard import mass_on_baseline
+
+FIXTURE = "/home/jezemba/Avion/mass-mcp/tests/fixtures/D150_simple.xml"
+
+
+def _morphed_session():
+    from src.tools.duplicate_guard import _state
+    _state()["geometry_epoch"][SESSION] = 1
+
+
+def test_sizing_the_fixture_is_refused_once_a_design_exists():
+    _open_session(epoch=0)
+    _design_applied()
+    refusal = mass_on_baseline("estimate_mass", {"cpacs_file_path": FIXTURE})
+    assert refusal is not None
+    assert refusal["error_code"] == "MASS_ON_BASELINE"
+    assert "MASS_SCALER" in refusal["error"]
+
+
+def test_a_morphed_but_unexported_geometry_is_told_to_export():
+    """The validate15 case exactly: geometry deformed in the session, never written out."""
+    _morphed_session()
+    _design_applied()
+    error = mass_on_baseline("estimate_mass", {"cpacs_file_path": FIXTURE})["error"]
+    assert "HAS been morphed" in error
+    assert "export_cpacs(session_id=" in error
+
+
+def test_an_unmorphed_geometry_is_told_to_morph_first():
+    _open_session(epoch=0)
+    _design_applied()
+    error = mass_on_baseline("estimate_mass", {"cpacs_file_path": FIXTURE})["error"]
+    assert "has not been morphed yet" in error
+    assert "set_high_level_parameters(component_uid='Wing1'" in error
+
+
+def test_with_no_design_applied_the_fixture_is_the_current_design():
+    _open_session(epoch=0)
+    assert mass_on_baseline("estimate_mass", {"cpacs_file_path": FIXTURE}) is None
+
+
+def test_a_morphed_export_on_disk_proceeds(tmp_path):
+    exported = tmp_path / "morphed_design.xml"
+    exported.write_text("<cpacs/>")
+    _morphed_session()
+    _design_applied()
+    dp._design_state.data_store["morphed_cpacs_path"] = str(exported)
+    assert mass_on_baseline("estimate_mass", {"cpacs_file_path": str(exported)}) is None
+
+
+def test_a_deliberate_non_fixture_path_is_left_alone():
+    _morphed_session()
+    _design_applied()
+    assert mass_on_baseline("estimate_mass", {"cpacs_file_path": "/tmp/some_other_design.xml"}) is None
+
+
+def test_other_tools_are_untouched_by_the_mass_guard():
+    _open_session(epoch=0)
+    _design_applied()
+    assert mass_on_baseline("generate_volume_mesh", {"cpacs_file_path": FIXTURE}) is None
+
+
+def test_the_mass_guard_can_be_switched_off(monkeypatch):
+    monkeypatch.setenv("AVION_REQUIRE_MORPHED_MASS", "0")
+    _open_session(epoch=0)
+    _design_applied()
+    assert mass_on_baseline("estimate_mass", {"cpacs_file_path": FIXTURE}) is None

@@ -116,3 +116,84 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
         "session_id": session_id,
         "design_parameters": applied,
     }
+
+# -- B91: structures must size the design, not the fixture ---------------------------------------
+
+_MASS_TOOLS = ("estimate_mass",)
+
+
+def _morphed_export() -> str | None:
+    """The exported morphed CPACS, if geometry has written one for this design."""
+    import os
+
+    try:
+        from src.tools.data_plane import get_design_state
+
+        state = get_design_state()
+        path = ((getattr(state, "data_store", None) or {}).get("morphed_cpacs_path")) if state else None
+        return str(path) if path and os.path.isfile(str(path)) else None
+    except Exception:      # pragma: no cover
+        return None
+
+
+def _any_session_morphed() -> bool:
+    """Has any tigl session actually been deformed for this design?"""
+    try:
+        from src.tools.duplicate_guard import _state
+
+        gs = _state()
+        return bool(gs) and any(int(v or 0) > 0 for v in (gs.get("geometry_epoch") or {}).values())
+    except Exception:      # pragma: no cover
+        return False
+
+
+def mass_on_baseline(tool_name: str, resolved: dict) -> dict | None:
+    """Refuse `estimate_mass` on the baseline fixture once the design exists (B91).
+
+    validate15, 05:13-05:16, is the cleanest statement of the problem: the wing had just been
+    morphed -- span 33.91 -> 45.40 m, aspect ratio 9.37 -> 15.89, `rebuilt: true` -- and
+    `estimate_mass` ran 3 minutes later on
+    `mass-mcp/tests/fixtures/D150_simple.xml`. The right geometry was in the tigl session and the
+    mass model read the wrong file off disk, because nobody had called `export_cpacs` and the data
+    plane's preferred morphed path did not exist, so it silently fell back to the fixture
+    (`resolve_request`, data_plane.py:1321-1332). Every run measured on this machine sized the
+    baseline this way.
+    """
+    import os
+
+    if tool_name not in _MASS_TOOLS:
+        return None
+    if os.environ.get("AVION_REQUIRE_MORPHED_MASS", "1") != "1":
+        return None
+    if not _applied_design():
+        return None                     # no design yet: the baseline IS the current design
+    if _morphed_export():
+        return None                     # geometry exported: resolve_request will inject it
+
+    path = str((resolved or {}).get("cpacs_file_path") or "")
+    looks_like_fixture = "tests/fixtures" in path.replace("\\", "/")
+    if path and not looks_like_fixture:
+        return None                     # some other file the caller chose deliberately
+
+    wing = _main_wing_uid()
+    if _any_session_morphed():
+        how = ("The geometry HAS been morphed for this design -- it just has not been written to a "
+               "file. Whoever holds geometry must call export_cpacs(session_id=<the tigl session>, "
+               "output_path='/tmp/morphed_design.xml'); then estimate_mass again and the path is "
+               "injected for you.")
+    else:
+        how = (f"The geometry has not been morphed yet either: set_high_level_parameters(component_uid="
+               f"'{wing}', updates={{'area': ..., 'aspect_ratio': ..., 'sweep': ...}}) using the design "
+               "values, then export_cpacs, then estimate_mass.")
+    return {
+        "success": False,
+        "error_code": "MASS_ON_BASELINE",
+        "error": (
+            f"{path or 'the baseline fixture'} is the BASELINE aircraft, not this design. Sizing it "
+            "would report the structural mass of an aircraft nobody is evaluating, and that mass is "
+            "injected into the mission as Aircraft.Wing.MASS_SCALER. " + how
+        ),
+        "cpacs_file_path": path or None,
+        "design_parameters": _applied_design(),
+    }
+
