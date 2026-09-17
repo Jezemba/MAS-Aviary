@@ -91,6 +91,37 @@ def _cap_json(obj: dict, cap: int) -> dict:
     return kept
 
 
+# An MCP tool error arrives as a PLAIN STRING, not JSON (B87).
+_ERROR_PREFIXES = ("error calling tool", "error:", "exception:", "traceback")
+_ERROR_MARKERS = ("traceback (most recent call last)", "error calling tool")
+
+
+def _string_status(text: str) -> str:
+    """``failed`` | ``unknown`` for a tool result that is not JSON (B87).
+
+    ``classify_result`` used to return ``success`` for anything it could not parse. But
+    an MCP tool error is exactly that -- a plain string:
+
+        Error calling tool 'generate_volume_mesh': Component 'Wing' not found.
+        Did you mean 'Wing1'? Available UIDs: Fuselage1, Wing1, Wing2H, Wing3V.
+
+    so every string-form failure was filed as a SUCCESSFUL call with empty outputs, and
+    the B81 duplicate guard was then armed by it. In validate9 that locked all three peers
+    out of meshing: agent_3 meshed correctly and was refused with "agent_1 already did
+    generate_volume_mesh ... Use its result: {}" -- there was no result, the call had
+    failed. 28 phantom successes across every run measured on the 7960, 19 of them
+    generate_volume_mesh: 12 wrong-UID and 7 cap refusals, all recoverable attempts that
+    could never be retried.
+
+    Anything still unparseable is ``unknown``, never ``success``: a result we cannot read
+    is not evidence that work was completed.
+    """
+    head = text.strip()[:200].lower()
+    if head.startswith(_ERROR_PREFIXES) or any(m in head for m in _ERROR_MARKERS):
+        return "failed"
+    return "unknown"
+
+
 def classify_result(result: Any) -> tuple[str, dict, str]:
     """(status, parsed dict, note) for a tool response string or dict."""
     parsed: Any = result
@@ -98,9 +129,10 @@ def classify_result(result: Any) -> tuple[str, dict, str]:
         try:
             parsed = json.loads(result)
         except (json.JSONDecodeError, TypeError):
-            return "success", {}, ""
+            status = _string_status(result)
+            return status, {}, (result.strip()[:_SMALL_STR] if status == "failed" else "")
     if not isinstance(parsed, dict):
-        return "success", {}, ""
+        return "unknown", {}, ""
     failed = (
         parsed.get("success") is False
         or str(parsed.get("status", "")).lower() in ("error", "failed", "failure")

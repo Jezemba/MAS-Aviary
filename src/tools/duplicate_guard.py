@@ -224,9 +224,23 @@ def _prior(tool: str, fp: str, gs: dict) -> dict | None:
                     return {**entry, "_result": f"SU2 session_id {sid}, which already has this design's mesh"}
         return None
     for e in reversed(kb.entries):
-        if e["tool"] == tool and e.get("design_fingerprint") == fp and e["status"] == "success":
+        # B87: a success with nothing to show for it is not a duplicate. A refusal that
+        # says "Use its result: {}" points at nothing and locks the tool for everyone.
+        if e["tool"] == tool and e.get("design_fingerprint") == fp and e["status"] == "success" \
+                and _has_usable_result(e):
             return e
     return None
+
+
+def _has_usable_result(entry: dict) -> bool:
+    """Did this call leave anything at all to point at? (B87)
+
+    Narrow on purpose: this is the "Use its result: {}" case from validate9 and nothing more.
+    A terse-but-real success still counts as work done, because B81's job is to stop the work
+    being repeated, not to judge how informative the response was. What must never happen is a
+    refusal that cites nothing -- that is the shape a phantom success takes.
+    """
+    return bool(entry.get("_result")) or bool(entry.get("outputs"))
 
 
 def _result_text(prior: dict) -> str:
