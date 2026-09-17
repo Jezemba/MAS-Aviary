@@ -257,3 +257,17 @@ def test_a_claim_refusal_to_a_peer_holding_nothing_says_nothing_about_its_own_wo
     refusal = check("set_aircraft_parameters", "agent_1")
     assert refusal is not None
     assert "You hold" not in refusal["error"]
+
+def test_finish_yours_first_says_what_finishing_means():
+    """validate14 03:37: the only actions offered were to claim a result it did not have,
+    or to abandon work it should be doing. The procedure's next step must be in the message."""
+    board = _board()
+    _claim(board, "agent_3", "geometry")
+    refused = _claim(board, "agent_3", "mass")
+    assert refused["success"] is False
+    assert "left on the board" in refused["message"]
+    assert "YOUR NEXT STEP IS" in refused["message"]
+    # and it still offers the release path, for when the work really is done
+    assert "mark_todo_done('geometry'" in refused["message"]
+    assert "mark_todo_failed('geometry')" in refused["message"]
+

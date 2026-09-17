@@ -355,6 +355,15 @@ class ReadTodos(Tool):
         return self._context.blackboard.render_todos()
 
 
+
+def _next_step_for_todo(todo_name: str) -> str:
+    """The next step of a held TODO's procedure, for a message that says 'finish yours first'."""
+    from src.tools.procedures import next_step_line, role_for_todo
+
+    line = next_step_line(role_for_todo(todo_name))
+    return (line + " ") if line else ""
+
+
 class ClaimTodo(Tool):
     """Atomically claim a pending TODO for this peer.
 
@@ -433,9 +442,14 @@ class ClaimTodo(Tool):
                 "board": work_claims.board_snapshot(),
                 "message": (
                     f"You still hold {', '.join(holding)} and it is not finished, so "
-                    f"{todo_name!r} was left on the board for a peer who has nothing. Finish "
-                    f"yours first: mark_todo_done('{holding[0]}', result='<short summary of what "
-                    f"it produced>'), or mark_todo_failed('{holding[0]}') if you cannot. "
+                    f"{todo_name!r} was left on the board for a peer who has nothing. "
+                    # B93 follow-up (validate14 03:37): "finish yours first" used to offer only
+                    # mark_todo_done or mark_todo_failed. agent_3 had done open_cpacs and nothing
+                    # else, so the only ways to obey were to claim a result it did not have or to
+                    # abandon work it should be doing. Say what finishing actually means.
+                    + _next_step_for_todo(holding[0])
+                    + f" When it really is finished: mark_todo_done('{holding[0]}', result='<the "
+                    f"values it produced>'), or mark_todo_failed('{holding[0]}') if you cannot do it. "
                     + (f"Still unclaimed for others: {', '.join(free)}." if free else "")
                 ),
             })
