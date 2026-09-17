@@ -615,27 +615,38 @@ def _note_aero_capture_failure(reason: str, data: dict) -> None:
 
 
 _ZERO_FUEL_FLOOR_KG = 0.0
+# Only tools that FLY the mission; the set_aircraft_parameters probe never does (B92 correction).
+_FLOWN_MISSION_TOOLS = ("run_simulation", "get_results")
 
 
 def _flag_zero_fuel(tool_name: str, data: dict) -> None:
-    """A design that burns 0.0 kg of fuel is not VALID (B92).
+    """A FLOWN mission that burns no fuel is not a result (B92).
 
-    `set_aircraft_parameters` returns a validity probe:
+    CORRECTED 2026-09-17, from validate13. The first version of this check also covered
+    `set_aircraft_parameters`, whose validity probe reported
 
-        "valid": true,
-        "summary": "VALID -- all static checks passed and model evaluation produced finite outputs.",
-        "model_eval": {"outputs": {"fuel_burned_kg": 0.0, "gtow_kg": 79560.1, ...}, "nan_outputs": []}
+        "valid": true, "model_eval": {"outputs": {"fuel_burned_kg": 0.0, ...}}
 
-    0.0 is finite and is not NaN, so it passes both checks. The agent is then told its design is
-    valid and handed a fuel burn it can never beat -- and fuel burn is the quantity the whole
-    study minimises. Seen twice in validate10 and twice in validate11, before any aero existed,
-    so it is not a coupling artefact. `_is_zero_fuel` in the runner catches it afterwards, which
-    is too late to stop an agent optimising against it.
+    That probe is a STATIC check -- "does the model evaluate to finite outputs" -- and it never
+    flies the mission: **116 of 116 `set_aircraft_parameters` results across every run ever
+    recorded on this machine return 0.0**, including runs whose missions later flew and produced
+    16,645 kg and 21,438 kg. So 0.0 there is the normal unflown value, not a defect, and marking
+    it NOT VALID told the mission holder to fix a non-problem -- which it began doing in
+    validate13 at 02:52 and 03:05, iterating parameters against an invented error.
+
+    What the original evidence actually showed is that in validate10-12 no `run_simulation` ever
+    completed, so the only fuel figure anyone saw was the probe's 0.0. The mission not being flown
+    is B84's business, not this check's.
+
+    A flown mission is different: `run_simulation` reports
+    `"summary": {"fuel_burned_kg": 16645.6, ...}`, and 0.0 there means the solver returned nothing
+    for a design the agent is about to treat as optimal. That case, and only that case, is caught
+    here.
     """
-    if tool_name not in ("set_aircraft_parameters", "run_simulation", "get_results"):
+    if tool_name not in _FLOWN_MISSION_TOOLS:
         return
-    evaluation = data.get("model_eval") if isinstance(data.get("model_eval"), dict) else data
-    outputs = evaluation.get("outputs") if isinstance(evaluation, dict) else None
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
+    outputs = summary.get("outputs") if isinstance(summary.get("outputs"), dict) else summary
     if not isinstance(outputs, dict) or "fuel_burned_kg" not in outputs:
         return
     try:
@@ -646,14 +657,14 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
         return
     data["valid"] = False
     data["error_code"] = "ZERO_FUEL"
-    data["summary"] = (
-        f"NOT VALID -- the model evaluated but burned {fuel} kg of fuel, which no aircraft can do "
-        f"over this mission. A fuel burn at or below {_ZERO_FUEL_FLOOR_KG} kg means the mission did "
-        "not actually fly: the design was applied but nothing integrated it. Do NOT treat this as "
-        "an optimum. Check that the mission is configured (configure_mission) and that "
-        "run_simulation has completed for THIS design, then read the fuel burn from its result."
+    data["summary_note"] = (
+        f"NOT VALID -- {tool_name} completed but reported {fuel} kg of fuel burned, which no "
+        "aircraft can do over this mission. The mission did not actually fly: do NOT treat this "
+        "as an optimum or compare it against other designs. Check that the mission is configured "
+        "and that the coupled inputs (aero CL/CD, wing mass, engine cycle) were produced for THIS "
+        "design, then run it again."
     )
-    logger.warning("[B92] %s returned fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
+    logger.warning("[B92] %s reported fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:

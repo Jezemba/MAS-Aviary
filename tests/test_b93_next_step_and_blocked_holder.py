@@ -180,36 +180,50 @@ def test_a_holder_with_startable_work_is_sent_back_to_it_with_its_next_step():
     assert "YOUR NEXT STEP IS" in answer["message"]
 
 
-# ---- B92: zero fuel is not a valid design ------------------------------------------------------
+# ---- B92: a FLOWN mission that burns no fuel is not a result ------------------------------------
+#
+# CORRECTED 2026-09-17 from validate13. The first version also covered set_aircraft_parameters,
+# whose validity probe is a STATIC check that never flies the mission: 116 of 116 of its results
+# across every run on this machine report fuel_burned_kg 0.0, including runs whose missions later
+# flew and produced 16,645 kg. Marking that NOT VALID invented an error and the mission holder
+# started chasing it. Only a tool that actually flies the mission is checked now.
 
-def test_zero_fuel_is_not_reported_as_valid():
-    """validate10 23:57 and validate11 00:24/00:30: valid:true beside fuel_burned_kg 0.0."""
+def test_the_parameter_probe_is_left_alone_even_at_zero_fuel():
+    """set_aircraft_parameters never flies the mission; 0.0 there is normal, not a defect."""
     payload = {"valid": True,
                "summary": "VALID -- all static checks passed and model evaluation produced finite outputs.",
                "model_eval": {"success": True, "outputs": {"fuel_burned_kg": 0.0,
                                                            "gtow_kg": 79560.101698}, "nan_outputs": []}}
     dp._flag_zero_fuel("set_aircraft_parameters", payload)
-    assert payload["valid"] is False
-    assert payload["error_code"] == "ZERO_FUEL"
-    assert "0.0 kg of fuel" in payload["summary"]
-    assert "Do NOT treat this as an optimum" in payload["summary"]
-
-
-def test_a_real_fuel_burn_is_left_alone():
-    payload = {"valid": True, "summary": "VALID",
-               "model_eval": {"outputs": {"fuel_burned_kg": 19230.4}, "nan_outputs": []}}
-    dp._flag_zero_fuel("set_aircraft_parameters", payload)
     assert payload["valid"] is True
     assert "error_code" not in payload
 
 
-def test_zero_fuel_is_caught_on_the_mission_call_too():
-    payload = {"outputs": {"fuel_burned_kg": 0.0}}
+def test_a_flown_mission_reporting_no_fuel_is_not_valid():
+    """run_simulation reports summary.fuel_burned_kg; 0.0 there means it returned nothing."""
+    payload = {"success": True, "converged": True,
+               "summary": {"fuel_burned_kg": 0.0, "gtow_kg": 82692.26, "wing_mass_kg": 8498.77}}
     dp._flag_zero_fuel("run_simulation", payload)
+    assert payload["valid"] is False
+    assert payload["error_code"] == "ZERO_FUEL"
+    assert "did not actually fly" in payload["summary_note"]
+
+
+def test_a_real_flight_is_left_alone():
+    payload = {"success": True, "summary": {"fuel_burned_kg": 16645.646376874487,
+                                            "gtow_kg": 82692.26012630484}}
+    dp._flag_zero_fuel("run_simulation", payload)
+    assert "error_code" not in payload
+    assert payload.get("valid") is not False
+
+
+def test_get_results_is_checked_too():
+    payload = {"outputs": {"fuel_burned_kg": 0.0}}
+    dp._flag_zero_fuel("get_results", payload)
     assert payload["valid"] is False and payload["error_code"] == "ZERO_FUEL"
 
 
 def test_a_result_with_no_fuel_figure_is_untouched():
-    payload = {"valid": True, "outputs": {"gtow_kg": 79560.1}}
-    dp._flag_zero_fuel("set_aircraft_parameters", payload)
+    payload = {"valid": True, "summary": {"gtow_kg": 79560.1}}
+    dp._flag_zero_fuel("run_simulation", payload)
     assert payload["valid"] is True
