@@ -616,7 +616,7 @@ def _note_aero_capture_failure(reason: str, data: dict) -> None:
     )
 
 
-_ZERO_FUEL_FLOOR_KG = 0.0
+_ZERO_FUEL_FLOOR_KG = 100.0   # see ZERO_FUEL_FLOOR_KG in stat_batch_runner.py
 # Only tools that FLY the mission; the set_aircraft_parameters probe never does (B92 correction).
 _FLOWN_MISSION_TOOLS = ("run_simulation", "get_results")
 
@@ -967,6 +967,28 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
         coupling.put_var(_design_state, "geom.reference_area", data.get("reference_area"), source_tool=tool_name)
     elif tool_name == "get_fuselage_summary":
         coupling.put_var(_design_state, "geom.fuselage_wetted_area", data.get("wetted_area"), source_tool=tool_name)
+    elif tool_name == "set_high_level_parameters":
+        # B99: these two values are what the data plane INJECTS into create_su2_session /
+        # configure_from_cpacs as ref_area / ref_length. They were captured once, from the baseline
+        # get_wing_summary, and never refreshed after a morph -- so horizon10 sequential link 1 solved a
+        # 200.01 m^2 morphed wing against ref_area 61.39 (the baseline's semi-span area) and MAC 4.19,
+        # overstating CL and CD by at least 63%. The morph reports its own result; record it.
+        # Convention: get_wing_summary reports the SEMI-span reference area (61.39 for the baseline) while
+        # the morph reports the full area (122.78 before -- exactly twice), so halve it to stay consistent.
+        morph = data.get("geometry_morph")
+        after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
+        if isinstance(after, dict):
+            try:
+                if after.get("reference_area") is not None:
+                    coupling.put_var(_design_state, "geom.reference_area",
+                                     float(after["reference_area"]) / 2.0, source_tool=tool_name)
+                if after.get("mac_length") is not None:
+                    coupling.put_var(_design_state, "geom.mac_length",
+                                     float(after["mac_length"]), source_tool=tool_name)
+                logger.info("[B99] refreshed geom.reference_area/mac_length from the morph: %s m^2 (semi), %s m",
+                            after.get("reference_area"), after.get("mac_length"))
+            except (TypeError, ValueError):
+                pass
 
 
 def _capture_session(tool_name: str, data: dict) -> None:

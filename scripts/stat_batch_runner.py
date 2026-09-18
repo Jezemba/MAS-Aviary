@@ -413,6 +413,75 @@ _DEFAULT_MDO_F25_TASK = (
 MDO_F25_CONSTRAINTS = {"fuel_burned_kg": 15000.0, "gtow_kg": 90000.0}
 
 
+
+def measured_fuel_from_kb(kb_path) -> float | None:
+    """The fuel burn of the LAST mission this link actually flew, from its knowledge base (B102).
+
+    Only a `run_simulation` / `get_results` call recorded with status `success` counts. Anything else --
+    a number in the agents' text, the constraint bound echoed from the task -- is not a measurement.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    path = _Path(kb_path)
+    if not path.is_file():
+        return None
+    measured = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = _json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("tool") not in ("run_simulation", "get_results") or entry.get("status") != "success":
+            continue
+        outputs = entry.get("outputs") or {}
+        for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
+            if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
+                try:
+                    measured = float(holder["fuel_burned_kg"])
+                except (TypeError, ValueError):
+                    pass
+                break
+    return measured
+
+
+def reconcile_measured_fuel(result, result_dict: dict, kb_path) -> str:
+    """Make the link's reported fuel the one its missions actually produced (B102).
+
+    validate15 recorded eval_classification/fuel_burned_kg = 15000.0 for a link whose five
+    run_simulation calls were ALL refused -- 15000 is the constraint bound, echoed verbatim in the task
+    text -- and the next link was told "constraint <= 15000: PASS". The classifier reads text; this
+    reads the knowledge base, which records only what tools returned.
+
+    Returns the source now behind the figure: "run_simulation", "not_measured" or "zero_fuel".
+    """
+    measured = measured_fuel_from_kb(kb_path)
+    ec_obj = getattr(result, "eval_classification", None)
+    ec_dict = result_dict.get("eval_classification")
+    targets = [d for d in (ec_obj, ec_dict) if isinstance(d, dict)]
+    classified = next((d.get("fuel_burned_kg") for d in targets if d.get("fuel_burned_kg") is not None), None)
+
+    if measured is None:
+        source = "not_measured"
+        new_value = None
+    elif measured <= ZERO_FUEL_FLOOR_KG:
+        source = "zero_fuel"
+        new_value = None
+    else:
+        source = "run_simulation"
+        new_value = measured
+    for d in targets:
+        d["fuel_burned_kg"] = new_value
+    result_dict["fuel_source"] = source
+    result_dict["fuel_measured_kg"] = measured
+    if classified is not None and (new_value is None or abs(float(classified) - new_value) > 1.0):
+        result_dict["fuel_classifier_value"] = classified
+        print(f"  [B102] eval classifier said fuel_burned_kg={classified}, but the knowledge base "
+              f"records {'no successful mission' if measured is None else f'{measured:.1f} kg'} "
+              f"-- reporting {'NOT MEASURED' if new_value is None else f'{new_value:.1f} kg'} ({source})")
+    return source
+
+
 def build_quick_metrics(ec: dict | None) -> str:
     """Render one link's metrics for the NEXT link's task prompt.
 
@@ -441,9 +510,11 @@ def build_quick_metrics(ec: dict | None) -> str:
             value = float(ec.get(name))
         except (TypeError, ValueError):
             value = 0.0
-        if value == 0.0:
+        if value == 0.0 or (name == "fuel_burned_kg" and value <= ZERO_FUEL_FLOOR_KG):
+            # B102: None (no mission flown) and near-zero artefacts land here too. Never give a
+            # verdict on a number no mission produced.
             verdict = f"constraint <= {limit:g}: UNKNOWN" if limit is not None else "no constraint"
-            lines.append(f"  {name} = not extracted ({verdict})")
+            lines.append(f"  {name} = not measured -- no mission was flown successfully ({verdict})")
             continue
         verdict = (
             f"constraint <= {limit:g}: {'PASS' if value <= limit else 'FAIL'}"
@@ -801,11 +872,26 @@ def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=N
     return value
 
 
+# A fuel figure at or below this is not a result (zero-fuel floor). The smallest REAL fuel burn recorded
+# on the 7960 is 9,020 kg (validate4); the artefacts that slipped through an exact `== 0.0` test were
+# 1.5696e-05 kg (validate3) and 0.00093 kg (validate4) and 1.05e-05 kg (validate15). 100 kg sits two
+# orders of magnitude below any real figure and five above the artefacts.
+ZERO_FUEL_FLOOR_KG = 100.0
+
+
 def _is_zero_fuel(result) -> bool:
-    """Check if a result has zero fuel (simulation didn't produce output)."""
+    """Check if a result has (effectively) zero fuel -- the simulation did not produce output.
+
+    Used to test `fuel == 0.0` exactly, so a near-zero artefact passed as a legitimate result: three of
+    them are in the published data (see ZERO_FUEL_FLOOR_KG). A transport aircraft cannot fly the
+    canonical mission on a milligram of fuel.
+    """
     ec = getattr(result, "eval_classification", None) or {}
     fuel = ec.get("fuel_burned_kg", None)
-    return fuel is not None and fuel == 0.0
+    try:
+        return fuel is not None and float(fuel) <= ZERO_FUEL_FLOOR_KG
+    except (TypeError, ValueError):
+        return False
 
 
 def read_end_state_design(tool_map: dict, session_id: str) -> dict:
@@ -1154,6 +1240,11 @@ def run_stat_batch(
 
                     # Save result
                     result_dict = _safe_result_dict(result)
+                    # B102: the fuel figure must be one a mission actually produced. Reconciled here,
+                    # before result.json, the zero-fuel check and the next link's feedback read it.
+                    reconcile_measured_fuel(
+                        result, result_dict,
+                        out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl")
                     result_dict["repeat_index"] = repeat_idx
                     # Anchor seed is the chain's Run-1 seed (identical for every combo).
                     result_dict["seed"] = base_seed
