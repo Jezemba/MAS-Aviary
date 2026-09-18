@@ -162,3 +162,45 @@ def test_a_measured_figure_still_gets_its_verdict():
 
 def test_the_floor_is_far_below_any_real_fuel_burn():
     assert ZERO_FUEL_FLOOR_KG < 9020.14 / 10
+
+
+# ---- B105: a morph that did not rebuild must not count as a morph ---------------------------------
+#
+# horizon10 links 3 and 8: set_high_level_parameters(updates={'sweep_deg': 20.0, 'taper_ratio': 0.3})
+# returned success with no geometry_morph -- the keys are not ones the morph reads -- and the wing was
+# untouched. The geometry epoch advanced anyway, so STALE_GEOMETRY let the baseline be meshed. Those are
+# the two worst links in the run, both 23,193.45 kg, identical to validate4's baseline to 14 figures.
+
+from src.tools import duplicate_guard as dg
+from src.tools import knowledge_base as kbm
+
+
+def _guard_state_with_session(sid="tigl-1"):
+    kbm.configure_run(None, 0, 1, None)
+    gs = dg._state()
+    gs["geometry_epoch"][sid] = 0
+    return gs
+
+
+def _observe(result):
+    dg.observe("set_high_level_parameters", {"session_id": "tigl-1"}, json.dumps(result), "success", None)
+
+
+def test_a_no_op_morph_does_not_advance_the_epoch():
+    gs = _guard_state_with_session()
+    _observe({"component_uid": "Wing1", "new_parameters": {"sweep_deg": 20.0, "taper_ratio": 0.3},
+              "warnings": []})                                   # no geometry_morph: nothing rebuilt
+    assert gs["geometry_epoch"]["tigl-1"] == 0
+
+
+def test_a_reported_non_rebuild_does_not_advance_the_epoch():
+    gs = _guard_state_with_session()
+    _observe({"component_uid": "Wing1", "geometry_morph": {"rebuilt": False}})
+    assert gs["geometry_epoch"]["tigl-1"] == 0
+
+
+def test_a_real_morph_advances_the_epoch():
+    gs = _guard_state_with_session()
+    _observe({"component_uid": "Wing1", "geometry_morph": {"rebuilt": True,
+                                                           "after": {"reference_area": 200.01}}})
+    assert gs["geometry_epoch"]["tigl-1"] == 1

@@ -367,7 +367,16 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
             return
         sid = args.get("session_id") or parsed.get("session_id")
         if tool in GEOMETRY_CHANGE_TOOLS:
-            gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
+            # B105: count the geometry changing, not the attempt. horizon10 links 3 and 8 called
+            # set_high_level_parameters with keys the morph does not recognise (sweep_deg,
+            # taper_ratio): success, no geometry_morph, wing untouched -- yet the epoch advanced, so
+            # B95's STALE_GEOMETRY treated the baseline as morphed and let it be meshed. Those two
+            # links are exactly the two worst in the horizon run. When the result says whether it
+            # rebuilt, believe it; a result that does not report a morph is not a morph.
+            morph = parsed.get("geometry_morph") if tool == "set_high_level_parameters" else None
+            rebuilt = bool(morph.get("rebuilt")) if isinstance(morph, dict) else tool != "set_high_level_parameters"
+            if rebuilt:
+                gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
         elif tool == "open_cpacs" and parsed.get("session_id"):
             gs["geometry_epoch"][parsed["session_id"]] = 0
             fp = entry.get("design_fingerprint") if entry else None
