@@ -142,12 +142,28 @@ def test_row5_the_agent_that_did_it_is_refused_once_with_reason(srv):
 
 
 def test_row6_a_changed_design_runs_normally(srv):
+    # B105: the design has changed only when the morph REPORTS a rebuild. The stub answers the way
+    # tigl-mcp does when a morph actually fires; `span` alone would not, which is exactly the no-op
+    # that let horizon10 links 3 and 8 mesh the baseline (see the next test).
+    srv.responses["set_high_level_parameters"] = {"component_uid": "Wing1",
+                                                  "geometry_morph": {"rebuilt": True}}
     m, geo = mesh_tool(srv), srv.tool("set_high_level_parameters", ["session_id", "component_uid", "updates"])
     call(m, "agent_1", session_id="g")
-    call(geo, "agent_1", session_id="g", updates={"span": 40})
+    call(geo, "agent_1", session_id="g", updates={"area": 140.0})
     assert call(m, "agent_2", session_id="g")["success"] is True
     assert call(m, "agent_1", session_id="g", component_uid="Wing2")["success"] is True   # different args
     assert srv.calls["generate_volume_mesh"] == 3
+
+
+def test_row6b_a_morph_that_did_not_rebuild_is_not_a_changed_design(srv):
+    """B105: success with no geometry_morph means the wing is untouched, so a repeat mesh IS a duplicate."""
+    srv.responses["set_high_level_parameters"] = {"component_uid": "Wing1",
+                                                  "new_parameters": {"sweep_deg": 20.0}, "warnings": []}
+    m, geo = mesh_tool(srv), srv.tool("set_high_level_parameters", ["session_id", "component_uid", "updates"])
+    call(m, "agent_1", session_id="g")
+    call(geo, "agent_1", session_id="g", updates={"sweep_deg": 20.0, "taper_ratio": 0.3})
+    assert call(m, "agent_2", session_id="g")["error_code"] == "ALREADY_DONE"
+    assert srv.calls["generate_volume_mesh"] == 1
 
 
 def test_row7_a_failed_or_refused_prior_does_not_count(srv):
