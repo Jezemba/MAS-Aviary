@@ -66,7 +66,7 @@ class TestMCPConnector:
         assert tools[0].name == "tool_a"
         assert tools[1].name == "tool_b"
         mock_from_mcp.assert_called_once_with(
-            {"url": "http://server1/mcp", "transport": "streamable-http"},
+            {"url": "http://server1/mcp", "transport": "streamable-http", "sse_read_timeout": 3600.0},
             trust_remote_code=True,
         )
 

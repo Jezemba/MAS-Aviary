@@ -12,6 +12,7 @@ Supports multiple named MCP servers with:
 """
 
 import logging
+import os
 
 from smolagents import Tool, ToolCollection
 
@@ -99,6 +100,20 @@ def _restore_optional_arguments(
     return restored
 
 
+def _sse_read_timeout() -> float:
+    """Seconds a tool call's reply stream may stay silent (B110); AVION_MCP_READ_TIMEOUT overrides."""
+    try:
+        from src.tools.call_watchdog import _DEFAULT_TIMEOUT, _TOOL_TIMEOUTS
+
+        floor = max([_DEFAULT_TIMEOUT, *_TOOL_TIMEOUTS.values()])
+    except Exception:  # pragma: no cover
+        floor = 3600.0
+    try:
+        return float(os.environ.get("AVION_MCP_READ_TIMEOUT", floor))
+    except ValueError:
+        return floor
+
+
 class MCPConnector:
     """Manages connections to one or more MCP servers and exposes their tools."""
 
@@ -160,6 +175,13 @@ class MCPConnector:
             "url": server.url,
             "transport": server.transport,
         }
+        if server.transport == "streamable-http":
+            # B110: the MCP client's default sse_read_timeout is 300 s. A tool that sends nothing
+            # for longer -- an SU2 solve that ran ~420 s (they usually take 234-296 s) -- has its
+            # reply stream dropped at DEBUG level with no error delivered, so the call waits until
+            # call_watchdog gives up an hour later, and the agent retries into the same wall.
+            # Wait at least as long as the longest per-tool watchdog budget.
+            mcp_config["sse_read_timeout"] = _sse_read_timeout()
         collection_cm = ToolCollection.from_mcp(
             mcp_config,
             trust_remote_code=True,
