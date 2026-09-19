@@ -419,7 +419,12 @@ def base_task_for(combo_name: str, chain_cpacs=None) -> str:
     if not combo_name.startswith("mdo_f25_"):
         return _DEFAULT_AVIARY_TASK
     if chain_cpacs and Path(str(chain_cpacs)).is_file():
-        return _DEFAULT_MDO_F25_TASK.replace(str(_D150_FIXTURE), str(chain_cpacs))
+        # ABSOLUTE, always. The path is opened by the tigl MCP SERVER, whose working directory is
+        # not the runner's: geoauth_all8_7960 link 2 was handed the relative
+        # 'logs/stat_results/.../geometry_end.xml', tigl answered "File not found", and the link
+        # failed with zero fuel. A resumed run reads the relative path stored by the earlier version
+        # from result.json, so resolve here too rather than only where the file is written.
+        return _DEFAULT_MDO_F25_TASK.replace(str(_D150_FIXTURE), str(Path(str(chain_cpacs)).resolve()))
     return _DEFAULT_MDO_F25_TASK
 
 
@@ -435,7 +440,7 @@ def carry_geometry_forward(store: dict, link_dir) -> str | None:
     src = (store or {}).get("morphed_cpacs_path")
     if not src or not Path(str(src)).is_file():
         return None
-    dest = Path(link_dir) / "geometry_end.xml"
+    dest = (Path(link_dir) / "geometry_end.xml").resolve()     # absolute: the tigl server opens it
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(str(src), str(dest))

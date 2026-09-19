@@ -226,3 +226,35 @@ def test_without_an_export_the_chain_keeps_its_geometry(tmp_path):
 
     assert carry_geometry_forward({}, tmp_path) is None
     assert carry_geometry_forward({"morphed_cpacs_path": "/no/such/file.xml"}, tmp_path) is None
+
+
+# ---- the carried geometry path must work from ANOTHER process's working directory ----------------
+#
+# geoauth_all8_7960 link 2: the runner handed the next link 'logs/stat_results/.../geometry_end.xml',
+# a path relative to the RUNNER's working directory. The file is opened by the tigl MCP server, which
+# runs elsewhere, so tigl answered "File not found", every geometry call after it failed with
+# "Unknown session_id", and the link was recorded as failed with zero fuel. The earlier carry-forward
+# test wrote to an absolute tmp_path and could not have seen it.
+
+def test_a_relative_link_directory_still_yields_an_absolute_path(tmp_path, monkeypatch):
+    from scripts.stat_batch_runner import carry_geometry_forward
+
+    monkeypatch.chdir(tmp_path)
+    exported = tmp_path / "morphed.xml"
+    exported.write_text("<cpacs/>")
+    carried = carry_geometry_forward({"morphed_cpacs_path": str(exported)},
+                                     os.path.join("logs", "stat_results", "x", "repeat_000", "combo"))
+    assert carried is not None and os.path.isabs(carried)
+
+
+def test_the_task_names_an_absolute_path_even_when_given_a_relative_one(tmp_path, monkeypatch):
+    """A resumed run reads the relative path the earlier version stored in result.json."""
+    from scripts.stat_batch_runner import base_task_for
+
+    monkeypatch.chdir(tmp_path)
+    rel = os.path.join("logs", "geometry_end.xml")
+    os.makedirs("logs")
+    open(rel, "w").write("<cpacs/>")
+    task = base_task_for("mdo_f25_sequential_staged_pipeline", rel)
+    assert str(tmp_path / "logs" / "geometry_end.xml") in task
+    assert f"at {rel}." not in task
