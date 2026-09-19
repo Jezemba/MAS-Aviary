@@ -187,3 +187,51 @@ def mission_off_geometry(tool_name: str, resolved: dict) -> dict | None:
         "geometry_wing": {k: v for k, v in wing.items() if not k.startswith("_")},
         "mission_applied": {k: applied.get(k) for k in _WING_CHECK},
     }
+
+
+# -- B108: CFD and structures must read the morph, not the file it was morphed from -----------------
+
+_FILE_READERS = ("estimate_mass", "configure_from_cpacs")
+
+
+def morph_not_exported(tool_name: str, resolved: dict) -> dict | None:
+    """Refuse SU2 / mass on a CPACS file while a rebuilt morph has not been exported (B108).
+
+    Both tools read a FILE; the morph exists only in the tigl session until export_cpacs writes it.
+    geoauth_all8 sequential-iterative link 2: morph to 200.78 m^2, no export, then
+    configure_from_cpacs (REF_AREA 100.39) and estimate_mass on the inherited 111.6 m^2 geometry while
+    the mission flew 200.78. B91's refusal only covered the baseline fixture; any other file passed.
+    """
+    import os
+
+    if tool_name not in _FILE_READERS:
+        return None
+    if os.environ.get("AVION_REQUIRE_MORPH_EXPORT", "1") != "1":
+        return None
+    try:
+        from src.tools.data_plane import design_authority, get_design_state
+
+        if design_authority() != "geometry":
+            return None
+        state = get_design_state()
+        pending = ((getattr(state, "data_store", None) or {}).get("morph_unexported")) if state else None
+    except Exception:      # pragma: no cover - a guard problem must never block work
+        return None
+    if not pending:
+        return None
+    sid = pending.get("session_id") or "<the tigl session>"
+    area = pending.get("reference_area")
+    shape = f" (wing area {float(area):.2f} m^2)" if isinstance(area, (int, float)) else ""
+    path = str((resolved or {}).get("cpacs_file_path") or "the CPACS file")
+    return {
+        "success": False,
+        "error_code": "MORPH_NOT_EXPORTED",
+        "error": (
+            f"The wing was reshaped{shape} but the new geometry has not been written to a file, so "
+            f"{tool_name} would read {path} -- the geometry BEFORE the morph. Call "
+            f"export_cpacs(session_id='{sid}', output_path='/tmp/morphed_design.xml'), then "
+            f"{tool_name} again: the exported file is used automatically."
+        ),
+        "cpacs_file_path": path,
+        "morph": pending,
+    }

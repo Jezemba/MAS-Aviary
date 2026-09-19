@@ -1448,6 +1448,13 @@ def run_stat_batch(
                     if _geo_out:
                         chain_cpacs = _geo_out
                     result_dict["chain_cpacs_out"] = chain_cpacs
+                    if _store.get("morph_unexported"):
+                        # B108: the link ended on a morph nobody wrote to disk. The next link inherits
+                        # the last EXPORTED geometry -- say so rather than pass it off as this link's design.
+                        result_dict["geometry_carry_warning"] = (
+                            "final morph never exported; next link inherits the last exported geometry")
+                        print("  [B108] WARNING: the final morph was never exported -- the next link "
+                              "inherits the last exported geometry, not the wing this link ended on")
                     result_dict["geometry_wing"] = {k: v for k, v in (_store.get("geometry_wing") or {}).items()
                                                     if not str(k).startswith("_")}
                     print(f"  [geometry] next link opens {chain_cpacs or 'the D150 baseline'}; "

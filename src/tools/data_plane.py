@@ -474,6 +474,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 _capture_geometry_wing(tool_name, data)
+                _track_morph_export(tool_name, data)
                 _annotate_geometry_authority(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
@@ -499,6 +500,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
         _capture_geometry_wing(tool_name, response)
+        _track_morph_export(tool_name, response)
         _annotate_geometry_authority(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
@@ -744,6 +746,31 @@ def _is_main_wing(uid) -> bool:
 
 def _plausible_wing(area, ar) -> bool:
     return area is not None and ar is not None and 20.0 <= area <= 600.0 and 3.0 <= ar <= 25.0
+
+
+def _track_morph_export(tool_name: str, data: dict) -> None:
+    """Remember a rebuilt morph until it is written to disk (B108).
+
+    Structures and CFD read a CPACS FILE; the morph lives in the tigl session. geoauth_all8 link 2
+    (sequential iterative) morphed the wing to 200.78 m^2, never exported it, and ran SU2 and
+    estimate_mass on the inherited 111.6 m^2 file while the mission flew 200.78 -- three disciplines,
+    two wings. `morph_unexported` is set by a rebuilt morph and cleared by the export that follows.
+    """
+    if _design_state is None or not isinstance(data, dict):
+        return
+    store = _design_state.data_store
+    if tool_name == "set_high_level_parameters":
+        morph = data.get("geometry_morph")
+        if isinstance(morph, dict) and morph.get("rebuilt"):
+            ctx = getattr(_call_ctx, "morph", None) or {}
+            after = morph.get("after") if isinstance(morph.get("after"), dict) else {}
+            store["morph_unexported"] = {"session_id": ctx.get("session_id"),
+                                         "component_uid": ctx.get("uid"),
+                                         "reference_area": after.get("reference_area")}
+    elif tool_name in ("export_cpacs", "close_cpacs"):
+        out_path = data.get("cpacs_file_path")
+        if out_path and isinstance(out_path, str) and os.path.isfile(out_path):
+            store.pop("morph_unexported", None)
 
 
 def _capture_geometry_wing(tool_name: str, data: dict) -> None:
@@ -1355,6 +1382,42 @@ def _auto_create_session(mcp_name: str) -> str | None:
     return None
 
 
+_MORPH_FILE_READERS = frozenset({"estimate_mass", "configure_from_cpacs"})
+
+
+def _auto_export_morph() -> str | None:
+    """Export a pending morph through the registered export_cpacs tool (B108).
+
+    Same pattern as _auto_create_session: the call goes through the full middleware, so it is
+    recorded in the knowledge base and its response clears `morph_unexported` and sets
+    `morphed_cpacs_path`. Returns the exported path, or None if nothing was pending or the export
+    could not be made -- geometry_guard.morph_not_exported then refuses the caller. Never raises.
+    """
+    import tempfile
+
+    if _design_state is None:
+        return None
+    pending = _design_state.data_store.get("morph_unexported")
+    if not pending or design_authority() != "geometry":
+        return None
+    sid = pending.get("session_id") or _design_state.sessions.get("tigl")
+    tool = (_registered_tools or {}).get("export_cpacs")
+    if not sid or tool is None:
+        return None
+    try:
+        out = os.path.join(tempfile.mkdtemp(prefix="avion_morph_"), "morphed_design.xml")
+        tool.forward(session_id=sid, output_path=out)
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[B108] auto-export of the morph failed: %s", exc)
+        return None
+    if _design_state.data_store.get("morph_unexported"):
+        logger.warning("[B108] export_cpacs did not produce a file for session %s", sid)
+        return None
+    path = _design_state.data_store.get("morphed_cpacs_path")
+    logger.info("[B108] exported the pending morph to %s before an SU2/mass call", path)
+    return path
+
+
 _MASS_WORKING_COPY_TOOLS = frozenset({"estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown"})
 
 
@@ -1490,6 +1553,11 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 # ran. Record it so the redirect can be seen rather than inferred.
                 _design_state.data_store.setdefault("_session_redirects", []).append(
                     {"tool": tool_name, "server": mcp_name, "asked": provided, "used": stored_sid})
+
+    # B108: a reshaped wing that was never exported exists only in the tigl session; SU2 and mass
+    # read a FILE. Write the morph out now so the injection below hands them the design's geometry.
+    if tool_name in _MORPH_FILE_READERS and _design_state:
+        _auto_export_morph()
 
     # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
     # current design's geometry) so structural mass is geometry-coupled; else fall back
@@ -1689,6 +1757,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _call_ctx.wing_uid = resolved.get("wing_uid") or resolved.get("component_uid")
     elif tool_name == "set_high_level_parameters":
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
+                           "session_id": resolved.get("session_id"),
                            "updates": dict(resolved.get("updates") or {})}
     if tool_name == "set_aircraft_parameters" and _design_state:
         _apply_geometry_authority(resolved)
