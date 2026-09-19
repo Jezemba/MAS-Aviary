@@ -74,7 +74,10 @@ def test_band_verdict_is_never_shown():
 def test_unextracted_metric_is_unknown_not_pass(missing):
     out = build_quick_metrics({"fuel_burned_kg": missing, "gtow_kg": 74000.0, "wing_mass_kg": 8000.0})
     fuel = _line(out, "fuel_burned_kg")
-    assert "not extracted" in fuel and "UNKNOWN" in fuel
+    # B102 reworded this from "not extracted" to "not measured -- no mission was flown successfully",
+    # because the reason a fuel figure is missing is that no mission flew, and a scraped constraint
+    # value must never be reported in its place. The behaviour asserted is unchanged: UNKNOWN, never PASS.
+    assert "not measured" in fuel and "UNKNOWN" in fuel
     assert "PASS" not in fuel
 
 

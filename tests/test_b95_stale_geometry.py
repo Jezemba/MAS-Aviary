@@ -28,6 +28,10 @@ DESIGN = {"Aircraft.Wing.ASPECT_RATIO": 11.5, "Aircraft.Wing.AREA": 124.6,
 
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
+    # STALE_GEOMETRY is the MISSION-authority rule; since 2026-09-18 geometry is authoritative by
+    # default and it stands down (tests/test_geometry_authority.py). These tests pin its behaviour
+    # in the mode where it still applies.
+    monkeypatch.setenv("AVION_DESIGN_AUTHORITY", "mission")
     monkeypatch.setattr(dp, "_design_state", DesignState())
     monkeypatch.setattr(dp, "_tool_server_map", {})
     kbm.configure_run(None, 0, 1, None)

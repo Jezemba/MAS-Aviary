@@ -279,6 +279,9 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         from src.tools import geometry_guard
 
         _stale = geometry_guard.stale_geometry(tool.name, resolved)
+        if _stale is None:
+            # Geometry authority: the mission may only fly the geometry's wing.
+            _stale = geometry_guard.mission_off_geometry(tool.name, resolved)
         if _stale is not None:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, _stale, status="refused")

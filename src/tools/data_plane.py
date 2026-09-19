@@ -69,7 +69,7 @@ _NO_SESSION_TOOLS = _SESSION_CREATION_TOOLS | frozenset({
 # a follow-up the caller will not make.
 _CPACS_PATH_TOOLS = frozenset({
     "estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown",
-    "create_su2_session",
+    "create_su2_session", "configure_from_cpacs",
 })
 
 # Tools whose responses ARE the analytical content the agent has to
@@ -473,6 +473,8 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
+                _capture_geometry_wing(tool_name, data)
+                _annotate_geometry_authority(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 data = _intercept_binaries(tool_name, data)
@@ -496,6 +498,8 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
+        _capture_geometry_wing(tool_name, response)
+        _annotate_geometry_authority(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         response = _intercept_binaries(tool_name, response)
@@ -689,6 +693,155 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
             current[str(item["name"])] = item["new_value"]
     if current:
         _design_state.data_store["design_params_applied"] = current
+
+
+
+# -- GEOMETRY IS AUTHORITATIVE for the wing (Jessica, 2026-09-18) -------------------------------
+#
+# The wing's area, aspect ratio and sweep are properties of the SHAPE. CFD and structural mass are
+# computed from the shape. So the CPACS geometry is the design, and the mission consumes its numbers
+# instead of keeping its own copy. That is the principle Jessica set for B84 -- "these quantities
+# must come from the current geometry" -- applied to the geometric parameters themselves.
+#
+# Why it had to be enforced (horizon10 sequential, 13 links measured): only 3 of 13 links flew a
+# mission whose wing matched the geometry the agents built. iterative_feedback's mission held AREA
+# at 130.1 for all ten links while geometry ranged 117-200 m^2 (B103); staged_pipeline's mission
+# copied the area FROM geometry but got get_wing_summary's semi-span figure, half the wing (B106).
+#
+# Mechanism:
+#   * the current geometry's FULL-wing area / aspect ratio (and sweep when the morph set it) are
+#     captured from set_high_level_parameters' geometry_morph.after and from get_wing_summary,
+#     converting the latter's semi-span convention;
+#   * set_aircraft_parameters always receives those values for the three wing keys, whatever the
+#     caller passed, and says so in its result;
+#   * run_simulation is refused while the mission's applied wing differs from the geometry's.
+# Non-geometric design variables (engine scale factor, taper, fuselage) stay with the mission.
+
+import threading as _threading
+
+_call_ctx = _threading.local()
+_GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP")
+_GEOMETRY_TOLERANCE = 0.02
+
+
+def design_authority() -> str:
+    """'geometry' (default) or 'mission'. Mission restores B95's direction: geometry follows."""
+    return os.environ.get("AVION_DESIGN_AUTHORITY", "geometry").strip().lower() or "geometry"
+
+
+def _is_main_wing(uid) -> bool:
+    if not uid:
+        return True
+    try:
+        from src.tools.procedures import component_uids
+
+        uids = component_uids()
+        main = next((u for u in uids if str(u).lower().startswith("wing")), None)
+        return main is None or str(uid) == str(main)
+    except Exception:      # pragma: no cover
+        return True
+
+
+def _plausible_wing(area, ar) -> bool:
+    return area is not None and ar is not None and 20.0 <= area <= 600.0 and 3.0 <= ar <= 25.0
+
+
+def _capture_geometry_wing(tool_name: str, data: dict) -> None:
+    """Record the CURRENT geometry's full-wing values -- the design, under geometry authority."""
+    if _design_state is None or not isinstance(data, dict):
+        return
+    record = None
+    if tool_name == "set_high_level_parameters":
+        ctx = getattr(_call_ctx, "morph", None) or {}
+        if not _is_main_wing(ctx.get("uid")):
+            return
+        morph = data.get("geometry_morph")
+        after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
+        if not isinstance(after, dict):
+            return
+        try:
+            area = float(after["reference_area"])
+            span = float(after["span"]) if after.get("span") is not None else None
+            ar = float(after["aspect_ratio"]) if after.get("aspect_ratio") is not None else (
+                span * span / area if span else None)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return
+        record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
+        # Sweep only when the morph actually read it -- tigl-mcp's _wing_targets reads `sweep`,
+        # not `sweep_deg` (B105), so an ignored key must not become the mission's sweep.
+        sweep = (ctx.get("updates") or {}).get("sweep")
+        if isinstance(sweep, (int, float)):
+            record["Aircraft.Wing.SWEEP"] = float(sweep)
+    elif tool_name == "get_wing_summary":
+        if not _is_main_wing(getattr(_call_ctx, "wing_uid", None)):
+            return
+        try:
+            semi = float(data["reference_area"])
+            span = float(data["span"])
+        except (KeyError, TypeError, ValueError):
+            return
+        # B106: get_wing_summary reports the SEMI-span reference area (61.39 for the D150 baseline,
+        # exactly half the morph's own 'before' of 122.78) and an aspect ratio computed from it
+        # (18.73, double the real 9.37). Convert to the full-wing values the mission uses.
+        area = 2.0 * semi
+        ar = span * span / area if area else None
+        record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
+        if isinstance(data.get("sweep_deg"), (int, float)):
+            record["Aircraft.Wing.SWEEP"] = float(data["sweep_deg"])
+    if not record or not _plausible_wing(record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"]):
+        return
+    previous = dict(_design_state.data_store.get("geometry_wing") or {})
+    if "Aircraft.Wing.SWEEP" not in record and "Aircraft.Wing.SWEEP" in previous:
+        record["Aircraft.Wing.SWEEP"] = previous["Aircraft.Wing.SWEEP"]    # sweep persists until changed
+    record["_source"] = tool_name
+    _design_state.data_store["geometry_wing"] = record
+    logger.info("[geometry-authority] wing is now AREA %.3f m^2, AR %.3f (from %s)",
+                record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"], tool_name)
+
+
+def _apply_geometry_authority(resolved: dict) -> None:
+    """set_aircraft_parameters: the wing keys come from the geometry, whatever the caller passed."""
+    if _design_state is None or design_authority() != "geometry":
+        return
+    wing = _design_state.data_store.get("geometry_wing") or {}
+    if not wing:
+        return
+    params = resolved.get("parameters")
+    if not isinstance(params, dict):
+        params = {}
+        resolved["parameters"] = params
+    used, overrode = {}, {}
+    for key in _GEOMETRY_WING_KEYS:
+        if wing.get(key) is None:
+            continue
+        value = round(float(wing[key]), 4)
+        asked = params.get(key)
+        try:
+            if asked is not None and abs(float(asked) - value) > max(1e-6, 0.005 * abs(value)):
+                overrode[key] = {"asked": asked, "used": value}
+        except (TypeError, ValueError):
+            overrode[key] = {"asked": asked, "used": value}
+        params[key] = value
+        used[key] = value
+    _design_state.data_store["_geometry_authority_last"] = {"used": used, "overrode": overrode}
+
+
+def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
+    """Tell the caller the wing came from the geometry, and what it asked for instead."""
+    if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
+        return
+    last = _design_state.data_store.pop("_geometry_authority_last", None)
+    if not last or not last.get("used"):
+        return
+    note = ("The wing's AREA / ASPECT_RATIO / SWEEP are taken from the current CPACS geometry -- "
+            "geometry is authoritative for the wing. To change the wing, reshape it with "
+            "set_high_level_parameters(component_uid=<main wing>, updates={'area': ..., "
+            "'aspect_ratio': ..., 'sweep': ...}); these values then follow automatically.")
+    if last.get("overrode"):
+        note += " Values you passed that differed were replaced: " + ", ".join(
+            f"{k.split('.')[-1]} {v['asked']} -> {v['used']}" for k, v in last["overrode"].items()) + "."
+    data["geometry_authority"] = {"wing_from_geometry": last["used"],
+                                  "overridden": last.get("overrode") or {}, "note": note}
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
@@ -1354,6 +1507,16 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             resolved["cpacs_file_path"] = morphed
         else:
             real_path = _design_state.cpacs_file_path
+            # Geometry authority + chain carry-forward: a link after the first opens the PREVIOUS
+            # link's geometry, so an agent that types the baseline fixture path must be pointed at the
+            # geometry actually open, or mass/SU2 would size the baseline (B91/B99 by another route).
+            _fixture = "tests/fixtures/" in str(cpacs_arg).replace("\\", "/")
+            if (real_path and os.path.isfile(str(real_path)) and _fixture
+                    and os.path.abspath(str(cpacs_arg)) != os.path.abspath(str(real_path))):
+                logger.info("Pointed %s at the OPEN geometry '%s' (was baseline '%s')",
+                            tool_name, real_path, cpacs_arg)
+                cpacs_arg = real_path
+                resolved["cpacs_file_path"] = real_path
             # If agent provided a path that doesn't exist, replace with the real one.
             if real_path and (not cpacs_arg or not os.path.isfile(str(cpacs_arg))):
                 if cpacs_arg and cpacs_arg != real_path:
@@ -1519,7 +1682,16 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # Phase J was reverted 2026-05-23 — SUBSONIC_FUEL_FLOW_SCALER had
     # no effect on the FwFm bench's tabular engine deck. K-A and K-B
     # were validated BEFORE shipping.
+    # Geometry authority: remember which wing a summary / morph call is about, so the response can
+    # be attributed (neither response names its component), and make the mission's wing the
+    # geometry's before anything downstream reads ASPECT_RATIO.
+    if tool_name == "get_wing_summary":
+        _call_ctx.wing_uid = resolved.get("wing_uid") or resolved.get("component_uid")
+    elif tool_name == "set_high_level_parameters":
+        _call_ctx.morph = {"uid": resolved.get("component_uid"),
+                           "updates": dict(resolved.get("updates") or {})}
     if tool_name == "set_aircraft_parameters" and _design_state:
+        _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
         _inject_phase_k_wing_mass(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":

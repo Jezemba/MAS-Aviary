@@ -408,6 +408,41 @@ _DEFAULT_MDO_F25_TASK = (
     "Report the optimality gap versus the F25 reference (MTOM 85700 kg, fuel 12100 kg)."
 )
 
+
+def base_task_for(combo_name: str, chain_cpacs=None) -> str:
+    """The task text for one link, naming the CPACS geometry it must open.
+
+    Geometry authority (2026-09-18): the wing is what the geometry says, so a chain must carry the
+    GEOMETRY forward, not only aviary's parameters. Link 1 opens the D150 baseline; every later link
+    opens the previous link's final morphed CPACS, so the wing it inherits is the wing that was built.
+    """
+    if not combo_name.startswith("mdo_f25_"):
+        return _DEFAULT_AVIARY_TASK
+    if chain_cpacs and Path(str(chain_cpacs)).is_file():
+        return _DEFAULT_MDO_F25_TASK.replace(str(_D150_FIXTURE), str(chain_cpacs))
+    return _DEFAULT_MDO_F25_TASK
+
+
+def carry_geometry_forward(store: dict, link_dir) -> str | None:
+    """Copy the link's final morphed CPACS to a stable per-link file, for the next link to open.
+
+    Copied rather than referenced: agents choose export paths freely, including inside the tracked
+    mass-mcp fixtures directory, and a later export in the same place would silently change what an
+    earlier link inherited.
+    """
+    import shutil
+
+    src = (store or {}).get("morphed_cpacs_path")
+    if not src or not Path(str(src)).is_file():
+        return None
+    dest = Path(link_dir) / "geometry_end.xml"
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(src), str(dest))
+    except OSError:
+        return None
+    return str(dest)
+
 # The task's HARD constraints, as stated to the agent in _DEFAULT_MDO_F25_TASK.
 # tests/test_chain_feedback_metrics.py asserts the two agree so they cannot drift.
 MDO_F25_CONSTRAINTS = {"fuel_burned_kg": 15000.0, "gtow_kg": 90000.0}
@@ -1107,10 +1142,14 @@ def run_stat_batch(
         chain_start_fuel: float | None = None
         # B81: what the previous link's knowledge base hands the next one.
         chain_kb_seed: dict | None = None
+        # Geometry authority: the CPACS the next link opens (None = the D150 baseline).
+        chain_cpacs: str | None = None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
                 chain_params = dict(done["chain_end_params"])
+                if done.get("chain_cpacs_out"):
+                    chain_cpacs = done["chain_cpacs_out"]
                 chain_feedback = done.get("chain_feedback") or chain_feedback
                 if done.get("kb_link_summary"):
                     chain_kb_seed = {"summary": done["kb_link_summary"],
@@ -1185,7 +1224,7 @@ def run_stat_batch(
                     )
                 continue
 
-            base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+            base_task = base_task_for(combo.name, chain_cpacs)
             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
 
             # Retry loop
@@ -1231,7 +1270,7 @@ def run_stat_batch(
                                 reset_design_state()
                                 setup = setup_session_with_params(tool_map, params)
                                 session_id = setup["session_id"]
-                                base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+                                base_task = base_task_for(combo.name, chain_cpacs)
                                 task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
                             except Exception as e:
                                 last_error = f"pre-hook retry: {e}"
@@ -1396,6 +1435,18 @@ def run_stat_batch(
                         print(f"  [B77] mission could not be read ({_mission.get('error')}) -- no simulation on {_end_sid[:8]}")
                     end_state = read_end_state_design(tool_map, _end_sid)
                     result_dict["chain_end_params"] = end_state
+                    # Geometry authority: carry the GEOMETRY forward too. Without a morphed export
+                    # the next link keeps opening what this one opened.
+                    result_dict["chain_cpacs_in"] = chain_cpacs
+                    _geo_out = carry_geometry_forward(
+                        _store, out_path / f"repeat_{repeat_idx:03d}" / combo.name)
+                    if _geo_out:
+                        chain_cpacs = _geo_out
+                    result_dict["chain_cpacs_out"] = chain_cpacs
+                    result_dict["geometry_wing"] = {k: v for k, v in (_store.get("geometry_wing") or {}).items()
+                                                    if not str(k).startswith("_")}
+                    print(f"  [geometry] next link opens {chain_cpacs or 'the D150 baseline'}; "
+                          f"wing {result_dict['geometry_wing'] or 'not read this link'}")
                     _fuel_now = (result_dict.get("eval_classification") or {}).get("fuel_burned_kg")
                     if _fuel_now is not None:
                         chain_start_fuel = _fuel_now
@@ -1532,7 +1583,7 @@ def run_stat_batch(
                             reset_design_state()
                             setup = setup_session_with_params(tool_map, params)
                             session_id = setup["session_id"]
-                            base_task = _DEFAULT_MDO_F25_TASK if combo.name.startswith("mdo_f25_") else _DEFAULT_AVIARY_TASK
+                            base_task = base_task_for(combo.name, chain_cpacs)
                             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
                         except Exception as re_e:
                             print(f"  pre-hook retry failed: {re_e}")

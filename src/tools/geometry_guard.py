@@ -80,6 +80,13 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
         return None
     if os.environ.get("AVION_REQUIRE_MORPH_BEFORE_MESH", "1") != "1":
         return None
+    # Under GEOMETRY authority (the default since 2026-09-18) the geometry IS the design, so meshing
+    # it is always correct and this mission-authority rule stands down; `mission_off_geometry` below
+    # enforces agreement from the other side. AVION_DESIGN_AUTHORITY=mission restores it.
+    from src.tools.data_plane import design_authority
+
+    if design_authority() == "geometry":
+        return None
     session_id = (resolved or {}).get("session_id")
     if session_id is None or not _never_morphed(session_id):
         return None
@@ -115,4 +122,68 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
         ),
         "session_id": session_id,
         "design_parameters": applied,
+    }
+
+
+# -- Geometry authority: the mission may only fly the geometry's wing ------------------------------
+
+_WING_CHECK = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO")
+
+
+def mission_off_geometry(tool_name: str, resolved: dict) -> dict | None:
+    """Refuse `run_simulation` while the mission's wing differs from the geometry's.
+
+    horizon10 sequential measured 13 links: only 3 flew a mission whose wing matched the geometry
+    that was designed -- 5 flew a different area (B103), 2 flew HALF the wing (B106). The two best
+    fuel figures of the run were both among the consistent three. set_aircraft_parameters now takes
+    the wing from the geometry automatically, so this refusal only fires when the geometry changed
+    AFTER the mission's parameters were last set, or the mission never set them this link.
+    """
+    import os
+
+    if tool_name != "run_simulation":
+        return None
+    if os.environ.get("AVION_REQUIRE_GEOMETRY_MATCH", "1") != "1":
+        return None
+    try:
+        from src.tools.data_plane import design_authority, get_design_state
+
+        if design_authority() != "geometry":
+            return None
+        state = get_design_state()
+        store = (getattr(state, "data_store", None) or {}) if state else {}
+        wing = store.get("geometry_wing") or {}
+        applied = store.get("design_params_applied") or {}
+        session = ((getattr(state, "sessions", None) or {}).get("aviary")) if state else None
+    except Exception:      # pragma: no cover - a guard problem must never block work
+        return None
+    if not wing:
+        return None                      # geometry has not been read or reshaped: nothing to compare
+    mismatches = []
+    for key in _WING_CHECK:
+        target = wing.get(key)
+        if target is None:
+            continue
+        have = applied.get(key)
+        try:
+            if have is None or abs(float(have) / float(target) - 1.0) > 0.02:
+                mismatches.append((key, have, float(target)))
+        except (TypeError, ValueError, ZeroDivisionError):
+            mismatches.append((key, have, float(target)))
+    if not mismatches:
+        return None
+    detail = "; ".join(f"{k.split('.')[-1]}: mission {'not set this link' if h is None else h}, "
+                       f"geometry {t:.4g}" for k, h, t in mismatches)
+    return {
+        "success": False,
+        "error_code": "GEOMETRY_NOT_APPLIED",
+        "error": (
+            "The mission would fly a different wing from the geometry (" + detail + "). Geometry is "
+            "authoritative for the wing, and CFD and structural mass were computed on the geometry's. "
+            f"Call set_aircraft_parameters(session_id='{session or '<aviary session>'}', parameters={{...}}) "
+            "-- the wing's AREA, ASPECT_RATIO and SWEEP are filled in from the geometry automatically, "
+            "you only need to pass anything else you want to change -- then run_simulation again."
+        ),
+        "geometry_wing": {k: v for k, v in wing.items() if not k.startswith("_")},
+        "mission_applied": {k: applied.get(k) for k in _WING_CHECK},
     }
