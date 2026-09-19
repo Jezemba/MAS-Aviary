@@ -1099,11 +1099,19 @@ def _capture_param_bounds(tool_name: str, data: dict) -> None:
         _design_state.data_store["param_bounds"] = bounds
 
 
+# aviary-mcp design_space.py declares these; used when get_design_space was never called this link
+# (B111: without them the CL check below never ran, and CL 1.42 and 0.0497 both reached aviary).
+_DECLARED_AERO_BOUNDS = {
+    "Mission.Design.LIFT_COEFFICIENT": (0.05, 1.0),
+    "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": (0.5, 2.0),
+}
+
+
 def _bounds_for(param: str):
     """Declared (min, max) for an aviary parameter, or None if not published."""
     if _design_state is None:
         return None
-    return (_design_state.data_store.get("param_bounds") or {}).get(param)
+    return (_design_state.data_store.get("param_bounds") or {}).get(param) or _DECLARED_AERO_BOUNDS.get(param)
 
 
 def _capture_geometry_ref(tool_name: str, data: dict) -> None:
