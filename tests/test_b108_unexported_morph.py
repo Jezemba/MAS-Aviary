@@ -177,3 +177,45 @@ def test_the_switch_turns_the_refusal_off(monkeypatch, fresh):
     monkeypatch.setenv("AVION_REQUIRE_MORPH_EXPORT", "0")
     _morph()
     assert gg.morph_not_exported("estimate_mass", {"cpacs_file_path": fresh}) is None
+
+
+# ---- B109: with no morph and no summary, the open file's wing is the geometry's ------------------
+
+VALIDATE_BASELINE = {"status": "warnings", "tigl_available": True, "extraction_mode": "tigl3",
+                     "parameters": {"wing_reference_area_m2": {"present": True, "value": 122.5},
+                                    "wing_span_m": {"present": True, "value": 33.91}}}
+
+
+def _validate(data=VALIDATE_BASELINE):
+    dp.intercept_response("validate_cpacs_inputs", json.dumps(data))
+    return dp._design_state.data_store.get("geometry_wing") or {}
+
+
+def test_the_files_wing_is_used_when_nothing_else_was_read():
+    wing = _validate()
+    assert wing["Aircraft.Wing.AREA"] == pytest.approx(122.5)
+    assert wing["Aircraft.Wing.ASPECT_RATIO"] == pytest.approx(33.91 ** 2 / 122.5)
+
+
+def test_the_mission_then_flies_the_files_wing_not_the_tasks():
+    _validate()
+    resolved = dp.resolve_request("set_aircraft_parameters",
+                                  {"session_id": "a", "parameters": {"Aircraft.Wing.AREA": 130.1}})
+    assert resolved["parameters"]["Aircraft.Wing.AREA"] == pytest.approx(122.5)
+
+
+def test_a_file_read_after_a_morph_never_replaces_the_morph(fresh):
+    _morph()
+    assert _validate()["Aircraft.Wing.AREA"] == pytest.approx(200.7821502878664)
+
+
+def test_a_file_read_after_an_exported_morph_never_replaces_it(tmp_path):
+    _morph()
+    out = tmp_path / "m.xml"
+    out.write_text("x")
+    dp.intercept_response("export_cpacs", json.dumps({"cpacs_file_path": str(out)}))
+    assert _validate()["Aircraft.Wing.AREA"] == pytest.approx(200.7821502878664)
+
+
+def test_an_xpath_fallback_with_no_values_records_nothing():
+    assert _validate({"status": "missing_required", "extraction_mode": "xpath_fallback", "parameters": {}}) == {}

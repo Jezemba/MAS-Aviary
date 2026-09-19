@@ -815,6 +815,25 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
         record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
         if isinstance(data.get("sweep_deg"), (int, float)):
             record["Aircraft.Wing.SWEEP"] = float(data["sweep_deg"])
+    elif tool_name == "validate_cpacs_inputs":
+        # B109: the FILE's wing, as a last resort. geoauth_all8 orchestrated staged L2 (attempt 2) opened
+        # the baseline, never morphed and never called get_wing_summary, so there was no geometry wing and
+        # the mission flew the task's 130.1 m^2 on a 122.78 m^2 geometry. Only when nothing better exists:
+        # after a morph this file may be the PRE-morph geometry (B108), so it must never replace one.
+        store = _design_state.data_store
+        if store.get("geometry_wing") or store.get("morph_unexported"):
+            return
+        params = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+
+        def _val(key):
+            item = params.get(key)
+            value = item.get("value") if isinstance(item, dict) else None
+            return float(value) if isinstance(value, (int, float)) else None
+
+        area, span = _val("wing_reference_area_m2"), _val("wing_span_m")
+        if not area or not span:
+            return
+        record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": span * span / area, "_span": span}
     if not record or not _plausible_wing(record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"]):
         return
     previous = dict(_design_state.data_store.get("geometry_wing") or {})
