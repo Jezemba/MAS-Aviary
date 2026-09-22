@@ -46,6 +46,7 @@ import json
 import logging
 import math
 import os
+import threading
 import re
 import sys
 import time
@@ -259,6 +260,56 @@ def _extract_session_id(resp) -> str:
     if m:
         return m.group(0)
     raise RuntimeError(f"create_session failed — no session_id: {resp}")
+
+
+# B113: aviary reaps a session after SESSION_IDLE_TIMEOUT (2 h). geoauth_all8_7960
+# networked_graph_routed L1 spent its first two hours on geometry, meshing and SU2 -- normal for
+# networked, where the mission goes last -- so the runner's session was cleaned up mid-link. Every
+# later aviary call returned NO_SESSION (27 of them) while session_creation_refusal kept pointing
+# the agents back at the dead id, and the link burned the full 480-minute timeout without flying a
+# mission. A cheap touch on a timer keeps it alive: check_constraints with no constraints reads the
+# session (SessionManager.get_session calls touch()) and changes nothing.
+AVIARY_HEARTBEAT_SECONDS = float(os.environ.get("AVION_AVIARY_HEARTBEAT_SECONDS", 20 * 60))
+
+
+class AviaryHeartbeat:
+    """Touch the runner's aviary session while a link runs, so it cannot idle out."""
+
+    def __init__(self, tool_map: dict, session_id: str, every: float = AVIARY_HEARTBEAT_SECONDS):
+        self._tool = (tool_map or {}).get("check_constraints")
+        self._sid = session_id
+        self._every = every
+        self._stop = threading.Event()
+        self._thread = None
+        self.beats = 0
+        self.failures = 0
+
+    def __enter__(self):
+        if self._tool is not None and self._sid and self._every > 0:
+            self._thread = threading.Thread(target=self._run, name="aviary-heartbeat", daemon=True)
+            self._thread.start()
+        return self
+
+    def _run(self):
+        from src.tools.knowledge_base import not_recorded
+
+        while not self._stop.wait(self._every):
+            try:
+                with not_recorded():
+                    self._tool.forward(session_id=self._sid, constraints=[])
+                self.beats += 1
+            except Exception as exc:      # a heartbeat must never break a run
+                self.failures += 1
+                print(f"  [B113] aviary heartbeat failed ({exc.__class__.__name__}: {exc}); "
+                      f"the session may have been lost")
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            if self.beats:
+                print(f"  [B113] aviary heartbeat: {self.beats} touch(es), {self.failures} failure(s)")
+        return False
 
 
 def setup_session_with_params(
@@ -1240,20 +1291,22 @@ def run_stat_batch(
             for attempt in range(1, max_retries + 1):
                 _LIVE_STATE["attempt"] = attempt
                 try:
-                    result = _run_with_timeout(
-                        combo,
-                        task,
-                        config,
-                        domain="aviary",
-                        timeout_seconds=timeout_sec,
-                        session_id=session_id,
-                        kb_context={
-                            "path": str(out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl"),
-                            "chain_link": repeat_idx,
-                            "attempt": attempt,
-                            "seed": chain_kb_seed,
-                        },
-                    )
+                    # B113: keep the runner's aviary session alive while the agents work.
+                    with AviaryHeartbeat(tool_map, session_id):
+                        result = _run_with_timeout(
+                            combo,
+                            task,
+                            config,
+                            domain="aviary",
+                            timeout_seconds=timeout_sec,
+                            session_id=session_id,
+                            kb_context={
+                                "path": str(out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl"),
+                                "chain_link": repeat_idx,
+                                "attempt": attempt,
+                                "seed": chain_kb_seed,
+                            },
+                        )
 
                     # Retry on zero fuel (simulation didn't produce output)
                     if _is_zero_fuel(result):
