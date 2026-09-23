@@ -43,6 +43,9 @@ CANONICAL_VARS: dict[str, VarSpec] = {
                              "SU2 cruise lift-to-drag ratio (diagnostic)."),
     "mass.wing_kg": VarSpec("mass.wing_kg", "mass", "kg", ("aviary",),
                             "mass-mcp structural wing mass."),
+    "aero.target_cl": VarSpec("aero.target_cl", "mass", "-", ("su2",),
+                              "Cruise lift coefficient the aircraft must make, W/(q*S) -- an INPUT "
+                              "to the aero solve, not something aero may choose (B111)."),
     "mass.mtom_kg": VarSpec("mass.mtom_kg", "mass", "kg", ("pycycle",),
                             "mass-mcp maximum take-off mass (sizes engine thrust)."),
     "prop.sfc_cruise": VarSpec("prop.sfc_cruise", "pycycle", "lb/hr/lbf", ("aviary",),
@@ -118,6 +121,35 @@ def skin_friction_cd(reynolds: float, swet_sref: float, form_factor: float = _WI
     re = max(float(reynolds), 1.0e5)
     cf = 0.455 / (math.log10(re)) ** 2.58
     return cf * float(swet_sref) * float(form_factor)
+
+
+def cruise_lift_coefficient(mass_kg: float, mach: float, altitude_ft: float,
+                            wing_area_m2: float) -> float | None:
+    """The CL the aircraft must make to hold altitude: CL = W / (q S) (B111).
+
+    Lift equals weight in level flight, so a cruise CL is decided by mass, the flight state and the
+    wing -- never by the aero solver. geoauth_all8_7960 had it backwards: SU2 flew at a fixed 2 deg,
+    produced CL 0.05-0.22 where this aircraft needs ~0.55, and that number was then handed to aviary
+    as the design cruise CL. Returns None if any input is missing or unusable.
+    """
+    import math
+
+    try:
+        mass_kg, mach = float(mass_kg), float(mach)
+        area = float(wing_area_m2)
+        rho, temperature = isa_density_temperature(float(altitude_ft))
+    except (TypeError, ValueError):
+        return None
+    if mass_kg <= 0 or mach <= 0 or area <= 0:
+        return None
+    speed = mach * math.sqrt(1.4 * 287.058 * temperature)
+    q = 0.5 * rho * speed * speed
+    if q <= 0:
+        return None
+    cl = (mass_kg * 9.80665) / (q * area)
+    # A transport in cruise sits near 0.5. Outside this band the inputs are wrong (a semi-span area,
+    # a mass in the wrong units), and trimming to a nonsense target is worse than not trimming.
+    return cl if 0.05 <= cl <= 1.2 else None
 
 
 def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: float,
