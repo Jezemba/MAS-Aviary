@@ -771,6 +771,48 @@ def _track_morph_export(tool_name: str, data: dict) -> None:
         out_path = data.get("cpacs_file_path")
         if out_path and isinstance(out_path, str) and os.path.isfile(out_path):
             store.pop("morph_unexported", None)
+def _inject_target_cl(resolved: dict) -> None:
+    """Give SU2 the cruise CL the aircraft must make, from mass x mission x geometry (B111).
+
+    CL = W / (q S) is an INPUT to the aero solve. Until this existed, SU2 flew at a fixed AOA of
+    2 deg, produced CL 0.05-0.22 where this aircraft needs ~0.57, and that number was handed to
+    aviary as the design cruise CL -- while its CD, ~1e-4 of true signal under ~1e-2 of mesh error,
+    came back negative in 5 of 16 links of geoauth_all8_7960.
+
+    Weight comes from mass-mcp, the flight state from the canonical mission, and the wing area from
+    the geometry (authoritative). If any is missing, nothing is injected and the solve stays as the
+    caller configured it.
+    """
+    if resolved.get("target_cl") is not None:
+        return                                  # the caller pinned one; do not override
+    store = _design_state.data_store
+    from src.tools import coupling
+
+    mass_kg = coupling.get_var(_design_state, "mass.mtom_kg") or store.get("mass_mtom_kg")
+    area = (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")
+    if area is None:
+        area = (store.get("design_params_applied") or {}).get("Aircraft.Wing.AREA")
+    if mass_kg is None or area is None:
+        logger.info("[B111] no target CL: mass=%s wing area=%s -- the solve keeps its configured AOA",
+                    mass_kg, area)
+        return
+    try:
+        from src.config.canonical import load_canonical
+
+        mission = load_canonical().get("mission", {})
+    except Exception:      # pragma: no cover - fall back to the F25 cruise point
+        mission = {}
+    target = coupling.cruise_lift_coefficient(
+        mass_kg, mission.get("cruise_mach", 0.78), mission.get("cruise_altitude_ft", 33000), area)
+    if target is None:
+        logger.warning("[B111] a cruise CL from mass %s kg and wing %s m^2 is out of range -- "
+                       "not trimming", mass_kg, area)
+        return
+    resolved["target_cl"] = target
+    coupling.put_var(_design_state, "aero.target_cl", target, source_tool="data_plane")
+    store["aero_target_cl"] = target
+    logger.info("[B111] trimming the solve to CL %.4f (mass %.0f kg, wing %.2f m^2)",
+                target, float(mass_kg), float(area))
 
 
 def _capture_geometry_wing(tool_name: str, data: dict) -> None:
@@ -1145,11 +1187,19 @@ def _capture_param_bounds(tool_name: str, data: dict) -> None:
         _design_state.data_store["param_bounds"] = bounds
 
 
+# aviary-mcp design_space.py declares these; used when get_design_space was never called this link
+# (B111: without them the CL check below never ran, and CL 1.42 and 0.0497 both reached aviary).
+_DECLARED_AERO_BOUNDS = {
+    "Mission.Design.LIFT_COEFFICIENT": (0.05, 1.0),
+    "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": (0.5, 2.0),
+}
+
+
 def _bounds_for(param: str):
     """Declared (min, max) for an aviary parameter, or None if not published."""
     if _design_state is None:
         return None
-    return (_design_state.data_store.get("param_bounds") or {}).get(param)
+    return (_design_state.data_store.get("param_bounds") or {}).get(param) or _DECLARED_AERO_BOUNDS.get(param)
 
 
 def _capture_geometry_ref(tool_name: str, data: dict) -> None:
@@ -1577,6 +1627,9 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # read a FILE. Write the morph out now so the injection below hands them the design's geometry.
     if tool_name in _MORPH_FILE_READERS and _design_state:
         _auto_export_morph()
+    # B111: the aero solve must be trimmed to the lift this aircraft has to make.
+    if tool_name == "configure_from_cpacs" and _design_state is not None:
+        _inject_target_cl(resolved)
 
     # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
     # current design's geometry) so structural mass is geometry-coupled; else fall back
