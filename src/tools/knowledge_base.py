@@ -280,10 +280,33 @@ def get_kb() -> KnowledgeBase | None:
 _CREATE_LOCK = threading.Lock()
 
 
+_no_record = threading.local()
+
+
+class not_recorded:
+    """Calls made inside this block are not written to the knowledge base (B113).
+
+    The runner's aviary heartbeat touches the session on a timer so a long link cannot idle it
+    out. It is bookkeeping, not design work: recording it would put a `check_constraints` the
+    agents never made into their knowledge base, and the duplicate guard and the ledger read
+    that file as the record of what the team did.
+    """
+
+    def __enter__(self):
+        _no_record.on = True
+        return self
+
+    def __exit__(self, *exc):
+        _no_record.on = False
+        return False
+
+
 def record_tool_result(tool_name: str, server: str, resolved: dict, result: Any = None,
                        *, error: BaseException | None = None, design_fingerprint: str | None = None,
                        status: str | None = None, note: str = "") -> dict | None:
     """Write one KB entry for a completed (or failed/refused) MCP tool call."""
+    if getattr(_no_record, "on", False):
+        return None
     kb = get_kb()
     if kb is None or not server:
         return None

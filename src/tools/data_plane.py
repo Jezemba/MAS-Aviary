@@ -284,6 +284,12 @@ def session_creation_refusal(tool_name: str, kwargs: dict) -> dict | None:
     sid = _presessions.get(mcp_name)
     if not sid:
         return None
+    if _design_state is not None and (_design_state.data_store.get("dead_sessions") or {}).get(mcp_name) == sid:
+        # B113: the server has told us this session no longer exists (NO_SESSION). Refusing a
+        # replacement here is what turned an expired session into an unrecoverable link: the agent
+        # could not create a working session and could not use the one it was handed.
+        logger.warning("Allowing %s: the %s session %s is gone from the server", tool_name, mcp_name, sid)
+        return None
     if _design_state is not None:
         store = _design_state.data_store
         store["create_session_refused"] = int(store.get("create_session_refused") or 0) + 1
@@ -464,6 +470,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
             data = json.loads(response)
             if isinstance(data, dict):
                 _capture_session(tool_name, data)
+                _note_dead_session(tool_name, data)
                 _capture_cpacs_path(tool_name, data)
                 _capture_mesh_markers(tool_name, data)
                 _capture_aero_coefficients(tool_name, data)
@@ -490,6 +497,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
 
     if isinstance(response, dict):
         _capture_session(tool_name, response)
+        _note_dead_session(tool_name, response)
         _capture_cpacs_path(tool_name, response)
         _capture_mesh_markers(tool_name, response)
         _capture_aero_coefficients(tool_name, response)
@@ -1240,6 +1248,30 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
                 pass
 
 
+def _note_dead_session(tool_name: str, data: dict) -> None:
+    """Remember a session the server says is gone, so a replacement can be made (B113).
+
+    aviary reaps a session after its idle timeout. Until the server says so there is no way to
+    know; once it has, the registered id is worthless and must not be injected or defended.
+    """
+    if _design_state is None or not isinstance(data, dict):
+        return
+    if data.get("error_code") != "NO_SESSION":
+        return
+    mcp_name = _tool_server_map.get(tool_name, "")
+    sid = _design_state.sessions.get(mcp_name)
+    if not mcp_name or not sid:
+        return
+    dead = dict(_design_state.data_store.get("dead_sessions") or {})
+    if dead.get(mcp_name) == sid:
+        return
+    dead[mcp_name] = sid
+    _design_state.data_store["dead_sessions"] = dead
+    _design_state.sessions.pop(mcp_name, None)
+    logger.warning("[B113] the %s server says session %s no longer exists -- dropping it so a "
+                   "replacement can be created", mcp_name, sid)
+
+
 def _capture_session(tool_name: str, data: dict) -> None:
     if _design_state is None:
         return
@@ -1445,6 +1477,8 @@ def _auto_create_session(mcp_name: str) -> str | None:
                 "Auto-created %s session %s (%s was never called)",
                 mcp_name, sid, tool_name,
             )
+            if mcp_name == "aviary":
+                _restore_aviary_session(sid)
             return sid
     except Exception as exc:  # pragma: no cover - never break a run on this
         logger.warning("Auto-create of %s session failed: %s", mcp_name, exc)
@@ -1485,6 +1519,43 @@ def _auto_export_morph() -> str | None:
     path = _design_state.data_store.get("morphed_cpacs_path")
     logger.info("[B108] exported the pending morph to %s before an SU2/mass call", path)
     return path
+
+
+def _restore_aviary_session(session_id: str) -> None:
+    """Give a replacement aviary session the run's mission and design back (B113).
+
+    A blank session is aviary's DEFAULT mission (1500 nmi, 162 pax, M0.785, FL350), not this
+    study's -- measured at 7,864 kg against 16,774 kg on the real one. So a session created to
+    replace an expired one must be re-configured before anything flies on it, or the recovery is
+    worse than the failure.
+    """
+    tools = _registered_tools or {}
+    try:
+        from src.config.canonical import load_canonical
+
+        mission = load_canonical().get("mission", {})
+        configure = tools.get("configure_mission")
+        if configure is not None:
+            configure.forward(
+                session_id=session_id,
+                range_nmi=mission.get("range_nmi", 2500),
+                num_passengers=mission.get("num_passengers", 239),
+                cruise_mach=mission.get("cruise_mach", 0.78),
+                cruise_altitude_ft=mission.get("cruise_altitude_ft", 33000),
+                optimizer_max_iter=mission.get("optimizer_max_iter", 200),
+            )
+            logger.info("[B113] re-applied the canonical mission to replacement session %s", session_id)
+    except Exception as exc:      # pragma: no cover - recovery must never break a run
+        logger.warning("[B113] could not re-apply the mission to %s: %s", session_id, exc)
+    applied = ((_design_state.data_store.get("design_params_applied") or {})
+               if _design_state is not None else {})
+    setter = tools.get("set_aircraft_parameters")
+    if applied and setter is not None:
+        try:
+            setter.forward(session_id=session_id, parameters=dict(applied))
+            logger.info("[B113] re-applied %d design parameter(s) to %s", len(applied), session_id)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[B113] could not re-apply design parameters to %s: %s", session_id, exc)
 
 
 _MASS_WORKING_COPY_TOOLS = frozenset({"estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown"})
