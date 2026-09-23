@@ -1381,7 +1381,11 @@ def _auto_create_session(mcp_name: str) -> str | None:
                 "Auto-created %s session %s (%s was never called)",
                 mcp_name, sid, tool_name,
             )
-            if mcp_name == "aviary":
+            if mcp_name == "aviary" and (_design_state.data_store.get("dead_sessions") or {}).get("aviary"):
+                # Only when this REPLACES a session the server lost (B113). An auto-create that is
+                # not a replacement must stay as blank as it has always been: tests/test_b77 uses
+                # exactly that case as its control for "the child did not get the runner's session",
+                # and quietly configuring it would hide a real failure rather than fix one.
                 _restore_aviary_session(sid)
             return sid
     except Exception as exc:  # pragma: no cover - never break a run on this
