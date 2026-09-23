@@ -149,3 +149,25 @@ def test_the_heartbeat_is_not_written_to_the_knowledge_base():
         assert kb.record_tool_result("check_constraints", "aviary", {}, {"ok": True}) is None
     # and recording works again afterwards
     assert not getattr(kb._no_record, "on", False)
+
+
+def test_an_auto_create_that_is_not_a_replacement_stays_blank(fresh, monkeypatch):
+    """B77's control case: a session the runner never registered must NOT be quietly configured.
+
+    Configuring every auto-created session would hide "the child did not get the runner's session",
+    which is what tests/test_b77_runner_session.py detects by flying the wrong mission.
+    """
+    configure = FakeTool("configure_mission")
+    dp._registered_tools.update({"create_session": FakeTool("create_session", {"session_id": "fresh-one"}),
+                                 "configure_mission": configure})
+    assert dp._auto_create_session("aviary") == "fresh-one"
+    assert not configure.calls
+
+
+def test_a_replacement_for_a_dead_session_is_configured(fresh):
+    fresh.data_store["dead_sessions"] = {"aviary": "gone"}
+    configure = FakeTool("configure_mission")
+    dp._registered_tools.update({"create_session": FakeTool("create_session", {"session_id": "replacement"}),
+                                 "configure_mission": configure})
+    assert dp._auto_create_session("aviary") == "replacement"
+    assert configure.calls and configure.calls[0]["session_id"] == "replacement"
