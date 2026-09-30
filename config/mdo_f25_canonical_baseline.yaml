@@ -50,13 +50,16 @@ su2_config:
   LINEAR_SOLVER_PREC: "ILU"
   LINEAR_SOLVER_ITER: 10
   LINEAR_SOLVER_ERROR: 1.0e-10         # float (not "1E-10" string, which YAML mis-types)
-  ITER: 120                            # TEMP coarse/fast (was 500): cap solver iters for the deadline run; revert to 500 for final
+  ITER: 500                            # back to 500 for the study: FIXED_CL_MODE updates AOA only after the
+                                       # flow converges (~65 iters), then re-converges, so 120 left the trim no room (B111)
   CONV_FIELD: "RMS_DENSITY"
   CONV_RESIDUAL_MINVAL: -6
   CONV_STARTITER: 10
   HISTORY_OUTPUT: "( ITER, RMS_RES, AERO_COEFF )"
   SCREEN_OUTPUT: "( INNER_ITER, RMS_DENSITY, LIFT, DRAG )"
-  OUTPUT_FILES: "( RESTART, PARAVIEW, SURFACE_CSV )"
+  # SURFACE_PARAVIEW writes surface_flow.vtu -- the aircraft's skin with Cp, openable in ParaView.
+  # Its absence is why a one-winged mesh (B115) was solved in every study without anyone seeing it.
+  OUTPUT_FILES: "( RESTART, PARAVIEW, SURFACE_PARAVIEW, SURFACE_CSV )"
   RESTART_SOL: "NO"
   MARKER_EULER: "( aircraft )"
   MARKER_FAR: "( farfield )"
