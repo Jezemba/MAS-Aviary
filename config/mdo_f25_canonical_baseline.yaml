@@ -15,12 +15,14 @@
 geometry:
   wing_component_uid: "Wing1"          # was "Wing" in orch/net (caused NotFound retries)
   fuselage_component_uid: "Fuselage1"
-  far_field_distance: 5.0              # TEMP coarse/fast (was 10.0): smaller domain -> fewer cells
-  # TEMP coarse mesh for the deadline run: cap the max cell size larger so gmsh
-  # produces a COARSER volume mesh (fewer cells -> faster meshing + faster SU2 solve).
-  # Revert both (far_field 10.0, mesh_size_max null) for the accurate/final run.
-  mesh_size_min: null
-  mesh_size_max: 2.0
+  far_field_distance: 10.0             # B116 mesh study (2026-09-30): see mesh_size_min below
+  mesh_size_min: 0.33                  # the knee. L0 (default 0.663, 736k cells, 5 min) gives CD -0.0124;
+                                       # this (2.32M cells, 15 min) gives CD +0.00070; 4x finer (11.3M, 95 min)
+                                       # gives +0.00116 for 6x the cost. Absolute CD is still ~40% under the
+                                       # 11.3M value, so quote drag as comparative, not absolute. Replaces the
+                                       # TEMP deadline settings of 2026-07-30 (B6/B45), which the mesh guard now
+                                       # refuses outright (~6.9M estimated cells against a 3M cap).
+  mesh_size_max: 12.0
 
 # ---- AERODYNAMICS (su2-mcp, port 8200) -------------------------------------
 # Full SU2 numerics, verified end-to-end in run6 (real 155 s converged solve).
