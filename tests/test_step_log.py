@@ -1,0 +1,209 @@
+"""Per-step LLM I/O log (src/logging/step_log.py) and its renderer (scripts/render_step_log.py)."""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+from smolagents import Tool, ToolCallingAgent, TransformersModel
+from smolagents.models import ChatMessage, MessageRole, Model
+
+from src.llm.reliability import ReliabilityConfig
+from src.llm.thinking_model import ThinkingModel
+from src.logging import step_log
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import render_step_log  # noqa: E402
+
+THINK_CALL = ('<think>\nThe span is 33.9 m; I should read the wing first.\n</think>\n\n'
+              '<tool_call>\n{"name": "get_wing", "arguments": {"wing_uid": "Wing1"}}\n</tool_call>')
+FINAL = '<think>\nDone.\n</think>\n{"name": "final_answer", "arguments": {"answer": "area 122"}}'
+
+
+@pytest.fixture
+def log_file(tmp_path):
+    path = tmp_path / "link" / "step_log_attempt1.jsonl"
+    step_log.configure(path)
+    step_log._pending().clear()
+    step_log._tls.prompt = None
+    yield path
+    step_log.configure(None)
+
+
+def rows(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+# -- split_think --------------------------------------------------------------------------------
+
+def test_split_think_separates_reasoning_from_the_call():
+    out = step_log.split_think(THINK_CALL)
+    assert out["think"] == "The span is 33.9 m; I should read the wing first."
+    assert out["visible"].startswith("<tool_call>") and "<think>" not in out["visible"]
+    assert out["think_closed"] is True
+
+
+def test_split_think_without_tags_and_with_an_empty_block():
+    assert step_log.split_think("plain") == {"think": None, "visible": "plain", "think_closed": True}
+    assert step_log.split_think("<think>\n\n</think>\n\n{}")["think"] == ""
+
+
+def test_split_think_unclosed_block_is_truncation():
+    out = step_log.split_think("<think>\nstill reasoning when the token cap hit")
+    assert out == {"think": "still reasoning when the token cap hit", "visible": "", "think_closed": False}
+
+
+def test_split_think_closing_tag_only_and_several_blocks():
+    out = step_log.split_think("opened in the template\n</think>\nanswer")
+    assert out["think"] == "opened in the template" and out["visible"] == "answer"
+    out = step_log.split_think("<think>a</think>x<think>b</think>y")
+    assert out["think"] == "a\n\nb" and out["visible"] == "xy"
+
+
+# -- writer --------------------------------------------------------------------------------------
+
+def test_disabled_log_writes_nothing(tmp_path):
+    step_log.configure(None)
+    step_log.record_prompt([{"role": "user", "content": "x"}], 5)
+    step_log.record_generation(ChatMessage(role=MessageRole.ASSISTANT, content=THINK_CALL), attempt=0, thinking=True)
+    step_log.on_action_step(NS(step_number=1))
+    assert step_log._pending() == [] and not list(tmp_path.iterdir())
+
+
+def test_configure_from_env_only_when_switched_on(tmp_path, monkeypatch):
+    kb = tmp_path / "repeat_000" / "combo" / "knowledge_base.jsonl"
+    monkeypatch.delenv("MAS_STEP_LOG", raising=False)
+    assert step_log.configure_from_env(kb, 2) is None and not step_log.enabled()
+    monkeypatch.setenv("MAS_STEP_LOG", "1")
+    try:
+        assert step_log.configure_from_env(kb, 2) == kb.parent / "step_log_attempt2.jsonl"
+        assert step_log.enabled()
+    finally:
+        step_log.configure(None)
+
+
+def test_a_step_row_pairs_prompt_raw_text_tool_call_and_result(log_file):
+    step_log.record_prompt([{"role": MessageRole.USER, "content": [{"type": "text", "text": "x" * 20000}]}], 4321)
+    step_log.record_generation(ChatMessage(role=MessageRole.ASSISTANT, content=THINK_CALL), attempt=0, thinking=True)
+    step = NS(step_number=3, timing=NS(start_time=1.0, end_time=2.5), error=None, is_final_answer=False,
+              tool_calls=[NS(name="get_wing", arguments={"wing_uid": "Wing1"}, id="c1")],
+              observations='{"area": 122.4}')
+    step_log.on_action_step(step, agent=NS(name="geometry_engineer"))
+    (row,) = rows(log_file)
+    assert row["kind"] == "step" and row["agent"] == "geometry_engineer" and row["agent_step"] == 3
+    (gen,) = row["generations"]
+    assert gen["prompt"]["prompt_tokens"] == 4321
+    assert gen["prompt"]["messages"][0] == {"role": "user", "content": "x" * 20000}   # never truncated
+    assert "<think>" in gen["raw_text"] and gen["think"].startswith("The span")
+    assert row["tool_calls"] == [{"name": "get_wing", "arguments": {"wing_uid": "Wing1"}, "id": "c1"}]
+    assert row["observations"] == '{"area": 122.4}'
+    assert step_log._pending() == []
+
+
+def test_unclaimed_generations_are_flushed_not_lost(log_file):
+    step_log.record_generation(ChatMessage(role=MessageRole.ASSISTANT, content="late answer"), attempt=0, thinking=False)
+    step_log.flush_unclaimed(NS(name="mdo_integrator"))
+    step_log.flush_unclaimed(NS(name="mdo_integrator"))          # nothing left: no second row
+    (row,) = rows(log_file)
+    assert row["kind"] == "generation_without_step" and row["generations"][0]["visible"] == "late answer"
+
+
+# -- ThinkingModel hooks ------------------------------------------------------------------------
+
+def _stub_thinking_model(outputs, monkeypatch):
+    """A ThinkingModel with no weights: _generate_once replays ``outputs`` and builds its prompt
+    through the real _prepare_completion_args (B80 budget) over a fake token count."""
+    monkeypatch.setattr(TransformersModel, "_prepare_completion_args",
+                        lambda self, messages, **kw: {"inputs": NS(shape=(1, 100 * len(messages)))})
+    model = ThinkingModel.__new__(ThinkingModel)
+    Model.__init__(model, model_id="stub-qwen")
+    model._reliability = ReliabilityConfig(max_retries=2)
+    model._thinking_enabled = True
+    queue = list(outputs)
+
+    def _generate_once(msgs, **kw):
+        model._prepare_completion_args(msgs)
+        return ChatMessage(role=MessageRole.ASSISTANT, content=queue.pop(0))
+
+    model._generate_once = _generate_once
+    return model
+
+
+def test_think_is_logged_before_parse_strips_it_and_retries_are_kept(log_file, monkeypatch):
+    model = _stub_thinking_model(["<think>hmm</think> I will not call a tool", THINK_CALL], monkeypatch)
+    msg = model._generate_in_slot([{"role": "user", "content": [{"type": "text", "text": "go"}]}],
+                                  None, None, None)
+    assert "<think>" not in msg.content                      # what smolagents keeps
+    first, second = step_log._pending()
+    assert first["attempt"] == 0 and first["think"] == "hmm"
+    assert second["attempt"] == 1 and "<think>" in second["raw_text"]
+    assert first["prompt"]["prompt_tokens"] == 100
+    assert second["prompt"]["prompt_tokens"] == 300          # retry prompt carries the failed output + error
+
+
+# -- end to end: real smolagents agent through the runner's trace capture, then the renderer ----
+
+class GetWing(Tool):
+    name = "get_wing"
+    description = "Read a wing summary."
+    inputs = {"wing_uid": {"type": "string", "description": "wing uid"}}
+    output_type = "string"
+
+    def forward(self, wing_uid):
+        return json.dumps({"wing_uid": wing_uid, "area": 122.4})
+
+
+def test_agent_run_produces_one_row_per_step_and_renders_four_sections(log_file, monkeypatch):
+    from src.runners.batch_runner import _install_trace_capture
+
+    model = _stub_thinking_model([THINK_CALL, FINAL], monkeypatch)
+    agent = ToolCallingAgent(tools=[GetWing()], model=model, max_steps=4, name="geometry_engineer")
+    coord = NS(agents={"geometry_engineer": agent})
+    _install_trace_capture(coord)
+    coord._wrap_agent_for_trace("geometry_alias", agent)     # a second wrap must not double-log
+    agent.run("Read Wing1")
+
+    logged = rows(log_file)
+    assert [r["kind"] for r in logged] == ["step", "step"]
+    first = logged[0]
+    assert first["agent"] == "geometry_engineer"
+    assert first["generations"][0]["think"] == "The span is 33.9 m; I should read the wing first."
+    assert first["tool_calls"][0]["name"] == "get_wing"
+    assert "122.4" in first["observations"]
+    assert logged[1]["tool_calls"][0]["name"] == "final_answer"
+
+    kb = log_file.parent / "knowledge_base.jsonl"
+    kb.write_text(json.dumps({"seq": 2, "attempt": 1, "agent": "geometry_engineer", "tool": "get_wing",
+                              "status": "success",
+                              "inputs": "{'wing_uid': 'Wing1', 'session_id': 'injected-by-middleware'}"}) + "\n")
+    out_dir = render_step_log.render(log_file, kb)
+    page = (out_dir / "01_geometry_engineer.md").read_text()
+    for heading in ("### 1. Input", "### 2. Assistant", "### 3. Tool invocation", "### 4. Tool result"):
+        assert page.count(heading) == 2
+    assert "I should read the wing first." in page
+    assert "injected-by-middleware" in page                  # arguments as executed, from the KB
+    assert "showing the" in page                             # second step shows only new messages
+    assert "geometry_engineer" in (out_dir / "00_index.md").read_text()
+
+
+# -- renderer helpers ---------------------------------------------------------------------------
+
+def test_new_messages_reports_a_trimmed_prefix():
+    a, b, c, d = ({"role": "user", "content": s} for s in "abcd")
+    assert render_step_log.new_messages(None, [a, b]) == ([a, b], 0)
+    assert render_step_log.new_messages([a, b], [a, b, c]) == ([c], 0)
+    assert render_step_log.new_messages([a, b, c], [a, d]) == ([d], 2)
+
+
+def test_fence_outlasts_backticks_in_the_text():
+    assert render_step_log.fence("x ``` y").startswith("````\n")
+
+
+def test_kb_rows_are_filtered_to_the_attempt(tmp_path):
+    kb = tmp_path / "knowledge_base.jsonl"
+    kb.write_text("\n".join(json.dumps({"seq": i, "attempt": a, "agent": "g", "tool": "t", "inputs": {}})
+                            for i, a in ((1, 1), (2, 2), (3, 2))) + "\n")
+    got = render_step_log.kb_calls_by_agent_tool(kb, attempt=2)
+    assert [r["seq"] for r in got[("g", "t")]] == [2, 3]

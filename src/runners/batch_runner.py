@@ -32,6 +32,7 @@ from src.logging.eval_classifier import (
     detect_aviary_agent_signals,
 )
 from src.logging.org_theory_metrics import compute_org_theory_metrics
+from src.logging import step_log
 
 _log = logging.getLogger(__name__)
 
@@ -666,6 +667,15 @@ def _install_trace_capture(coordinator) -> None:
 
         original_run = agent.run
 
+        # Per-step LLM I/O log (no-op unless MAS_STEP_LOG=1). Once per agent object: a graph
+        # alias wraps the same agent under a second name and must not log each step twice.
+        callbacks = getattr(agent, "step_callbacks", None)
+        if callbacks is not None and not getattr(agent, "_step_log_registered", False):
+            from smolagents.memory import ActionStep
+
+            callbacks.register(ActionStep, step_log.on_action_step)
+            agent._step_log_registered = True
+
         def _make_traced_run(agent_name, orig_run, agent_ref):
             def traced_run(*args, **kwargs):
                 # B81: every tool call this run makes is attributed to this agent
@@ -684,7 +694,10 @@ def _install_trace_capture(coordinator) -> None:
                     kwargs = {**kwargs, "task": handoff_text(kwargs["task"])}
 
                 with agent_scope(agent_name, getattr(agent_ref, "description", "") or ""):
-                    result = orig_run(*args, **kwargs)
+                    try:
+                        result = orig_run(*args, **kwargs)
+                    finally:
+                        step_log.flush_unclaimed(agent_ref)
                 try:
                     steps = agent_ref.memory.get_full_steps()
                     serialized = [_serialize_step(s) for s in steps]

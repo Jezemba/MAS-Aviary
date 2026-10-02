@@ -678,6 +678,10 @@ def _subprocess_target(pipe, combo, task, config, session_id, kb_context=None): 
             from src.tools.knowledge_base import configure_run
 
             configure_run(**kb_context)
+            # Per-step LLM I/O log beside the knowledge base, when MAS_STEP_LOG=1.
+            from src.logging import step_log
+
+            step_log.configure_from_env(kb_context.get("path"), kb_context.get("attempt"))
         result = run_combination(combo, task, config, session_id=session_id)
         # The result alone is NOT enough. The design ledger's authoritative
         # coupling check reads the data-plane state via get_design_state() in

@@ -560,6 +560,9 @@ def _call_summary_model(model: Any, messages: list) -> str:
         msg = model.generate(messages, max_new_tokens=SUMMARY_MAX_NEW_TOKENS, do_sample=False)
     content = msg.content if not isinstance(msg.content, list) else " ".join(
         part.get("text", "") for part in msg.content if isinstance(part, dict))
+    from src.logging import step_log
+
+    step_log.record_summary(messages, content or "", getattr(model, "model_id", None))
     return strip_think_blocks(content or "").strip()
 
 

@@ -38,6 +38,7 @@ from smolagents.models import (
 )
 
 from src.llm.reliability import ReliabilityConfig, add_strict_properties
+from src.logging import step_log
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +315,9 @@ class ThinkingModel(TransformersModel):
                     tools_to_call_from=tools_to_call_from,
                     **kwargs,
                 )
+                # Before parse_tool_calls, which strips the think block in place.
+                step_log.record_generation(raw_message, attempt=attempt,
+                                           thinking=self._thinking_for_call())
                 try:
                     parsed = self.parse_tool_calls(raw_message)
                     if attempt > 0:
@@ -450,6 +454,7 @@ class ThinkingModel(TransformersModel):
                 f"prompt is {tokens} tokens, above the model maximum of {HARD_PROMPT_LIMIT_TOKENS} "
                 "even after trimming and message truncation (B82)"
             )
+        step_log.record_prompt(fitted, tokens)
         for msgs, args in reversed(built):
             if msgs is fitted:
                 return args
