@@ -1,14 +1,21 @@
-"""Render a step_log JSONL (src/logging/step_log.py) into readable markdown, one file per agent.
+"""Render a step_log JSONL (src/logging/step_log.py) into one structured markdown file.
 
-Each step shows four sections: 1 Input (the messages new since that agent's previous step; the full
-prompt stays in the JSONL), 2 Assistant (think block, visible text, any parse-retry attempts),
-3 Tool invocation (as the LLM typed it, plus the arguments as executed from knowledge_base.jsonl when
-the middleware changed them), 4 Tool result (the observation fed back to the agent).
+Heading layout (shows as a table of contents in any markdown outline view):
+
+    # Step log (run, link, attempt)
+    ## Overview                       one table row per step, linked
+    ## Agent: <name>                  its system prompt (folded), its task, any handoff summary
+    ### Step N · <tool>               one line at a glance, then the four sections:
+    #### 1. Input to the model       only what is NEW this step; the previous step's call and result,
+                                      which the prompt repeats, are referenced instead of reprinted
+    #### 2. Model output             reasoning (<think>), visible response, any failed attempts
+    #### 3. Tool invocation          arguments as typed vs as executed (knowledge base)
+    #### 4. Tool result              status, values as a table, full text folded
 
 Usage:
     python scripts/render_step_log.py <link_dir>/step_log_attempt1.jsonl [--kb <link_dir>/knowledge_base.jsonl]
 
-Writes <jsonl stem>/ next to the JSONL: 00_index.md, NN_<agent>.md, summaries.md.
+Writes <jsonl stem>.md next to the JSONL.
 """
 from __future__ import annotations
 
@@ -20,6 +27,12 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+LONG_VALUE_CHARS = 100      # argument values longer than this move below the table
+RESULT_TABLE_ROWS = 30      # result leaves shown in the table before the rest is folded
+FOLD_LINES = 25             # text blocks longer than this are folded
+
+
+# -- loading -------------------------------------------------------------------------------------
 
 def load_rows(path: Path) -> list[dict]:
     rows = []
@@ -61,6 +74,75 @@ def kb_calls_by_agent_tool(kb_path: Path | None, attempt: int | None = None) -> 
     return grouped
 
 
+# -- small formatting helpers --------------------------------------------------------------------
+
+def fence(text: str, lang: str = "") -> str:
+    """A code fence longer than any backtick run inside the text."""
+    longest = max((len(m) for m in re.findall(r"`+", text or "")), default=0)
+    ticks = "`" * max(3, longest + 1)
+    return f"{ticks}{lang}\n{text or ''}\n{ticks}"
+
+
+def fold(summary: str, body: str, open_: bool = False) -> str:
+    return f"<details{' open' if open_ else ''}><summary>{summary}</summary>\n\n{body}\n\n</details>"
+
+
+def block(text: str, lang: str = "", label: str = "Full text") -> str:
+    """A code block, folded when it is long."""
+    text = text or ""
+    n = text.count("\n") + 1
+    if n > FOLD_LINES:
+        return fold(f"{label} ({n} lines)", fence(text, lang))
+    return fence(text, lang)
+
+
+def quote(text: str) -> str:
+    """Prose as a blockquote, so reasoning reads as text rather than code."""
+    return "\n".join("> " + line if line.strip() else ">" for line in (text or "").splitlines())
+
+
+def cell(value) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
+    return "`" + text.replace("|", "\\|").replace("`", "'") + "`"
+
+
+def _clock(ts) -> str:
+    try:
+        return datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return "?"
+
+
+def _num(n) -> str:
+    return f"{n:,}" if isinstance(n, int) else "?"
+
+
+def flatten(value, prefix: str = "") -> list[tuple[str, object]]:
+    """Leaves of a JSON value as (dotted.path, value) pairs."""
+    if isinstance(value, dict) and value:
+        out = []
+        for k, v in value.items():
+            out += flatten(v, f"{prefix}.{k}" if prefix else str(k))
+        return out
+    if isinstance(value, list) and value and any(isinstance(v, (dict, list)) for v in value):
+        out = []
+        for i, v in enumerate(value):
+            out += flatten(v, f"{prefix}[{i}]")
+        return out
+    return [(prefix or "(value)", value)]
+
+
+def parse_json(text):
+    if not isinstance(text, str):
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
+
+
+# -- what is new in a prompt ---------------------------------------------------------------------
+
 def new_messages(previous: list[dict] | None, current: list[dict]) -> tuple[list[dict], int]:
     """Messages after the longest common prefix with the previous prompt, and how many earlier
     messages changed or disappeared (the B80 budget trims old steps)."""
@@ -74,158 +156,286 @@ def new_messages(previous: list[dict] | None, current: list[dict]) -> tuple[list
     return current[common:], len(previous) - common
 
 
-def fence(text: str, lang: str = "") -> str:
-    """A code fence longer than any backtick run inside the text."""
-    longest = max((len(m) for m in re.findall(r"`+", text or "")), default=0)
-    ticks = "`" * max(3, longest + 1)
-    return f"{ticks}{lang}\n{text or ''}\n{ticks}"
+def is_echo(msg: dict, prev_step: dict | None) -> bool:
+    """True when a new prompt message only repeats the previous step's output, call or result."""
+    if not prev_step:
+        return False
+    role, content = msg.get("role"), (msg.get("content") or "").strip()
+    gens = prev_step.get("generations") or []
+    if role == "assistant" and gens:
+        return content in {(gens[-1].get("visible") or "").strip(), (gens[-1].get("raw_text") or "").strip()}
+    if role == "tool-call":
+        return bool(prev_step.get("tool_calls"))
+    if role == "tool-response":
+        obs = (prev_step.get("observations") or "").strip()
+        return content.startswith("Observation:") and bool(obs) and obs in content
+    return False
 
 
-def _clock(ts) -> str:
-    try:
-        return datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
-    except (TypeError, ValueError):
-        return "?"
+# -- sections ------------------------------------------------------------------------------------
 
-
-def _json(value) -> str:
-    return json.dumps(value, indent=2, default=str, ensure_ascii=False)
-
-
-def render_input(gen: dict, previous_prompt: list[dict] | None) -> list[str]:
-    prompt = gen.get("prompt")
+def section_input(gen: dict, prev_step: dict | None, prev_prompt: list[dict] | None) -> list[str]:
+    out = ["#### 1. Input to the model", ""]
+    prompt = gen.get("prompt") if gen else None
     if not prompt:
-        return ["_Prompt not captured (generated on another thread)._"]
+        return out + ["_Prompt not captured (generated on another thread)._", ""]
     messages = prompt.get("messages") or []
-    fresh, dropped = new_messages(previous_prompt, messages)
-    head = f"Prompt sent: {prompt.get('prompt_tokens', '?')} tokens, {len(messages)} messages"
-    if previous_prompt:
-        head += f"; showing the {len(fresh)} new since this agent's previous step"
+    meta = f"Prompt: {_num(prompt.get('prompt_tokens'))} tokens, {len(messages)} messages."
+    if prev_prompt is None:
+        return out + [meta, "", "First step of this agent: the system prompt and task shown under the agent "
+                      "heading above.", ""]
+    fresh, dropped = new_messages(prev_prompt, messages)
     if dropped:
-        head += f". {dropped} earlier message(s) changed or were dropped (B80 trim)"
-    out = [f"_{head}._", ""]
-    for msg in fresh:
-        out.append(f"**[{msg.get('role')}]**")
-        out.append(fence(msg.get("content", "")))
-        if msg.get("tool_calls"):
-            out.append(fence(_json(msg["tool_calls"]), "json"))
+        meta += f" {dropped} earlier message(s) were trimmed or changed (B80 prompt budget)."
+    news = [m for m in fresh if not is_echo(m, prev_step)]
+    echoed = len(fresh) - len(news)
+    out += [meta, ""]
+    if echoed:
+        out += [f"Repeats the previous step's response, tool call and result "
+                f"([Step {prev_step['seq']}](#step-{prev_step['seq']})).", ""]
+    if not news:
+        out += ["Nothing else is new.", ""]
+    for msg in news:
+        label = "Error fed back to the model" if "Error:" in (msg.get("content") or "")[:400] else "New message"
+        out += [f"**{label}** (role `{msg.get('role')}`):", "", block(msg.get("content", "")), ""]
     return out
 
 
-def render_generation(gen: dict) -> list[str]:
-    out = []
+def _reasoning(gen: dict) -> list[str]:
     think = gen.get("think")
     if think is None:
-        out.append("_No think tags in the output._")
-    elif think == "":
-        out.append("_Empty think block._")
+        return ["_No `<think>` block in the output._"]
+    if think == "":
+        return ["_Empty `<think>` block (thinking off or skipped)._"]
+    lines = [f"_{len(think):,} characters" + ("" if gen.get("think_closed", True)
+                                                  else "; UNCLOSED, the output hit the token limit") + "._", ""]
+    return lines + [quote(think)]
+
+
+def retry_reason(gen: dict, nxt: dict) -> str:
+    """Why ThinkingModel retried, read from what the next attempt actually did."""
+    if not gen.get("think_closed", True):
+        problem = "the output hit the token limit inside `<think>`"
+    elif "{" not in (gen.get("visible") or ""):
+        problem = "no tool call in the output (plain-text answer)"
     else:
-        note = "" if gen.get("think_closed", True) else " (UNCLOSED: output truncated)"
-        out.append(f"<details><summary>think ({len(think)} chars){note}</summary>\n")
-        out.append(fence(think))
-        out.append("</details>\n")
-    out.append("Visible text:")
-    out.append(fence(gen.get("visible", "")))
+        problem = "the tool call could not be parsed"
+    if gen.get("thinking_enabled") and not nxt.get("thinking_enabled"):
+        return problem + "; retried with thinking OFF"
+    return problem + "; retried with the parse error appended to the prompt"
+
+
+def section_output(gens: list[dict]) -> list[str]:
+    out = ["#### 2. Model output", ""]
+    if not gens:
+        return out + ["_No generation recorded._", ""]
+    used = gens[-1]
+    out += ["##### Reasoning", ""] + _reasoning(used)
+    if not used.get("thinking_enabled", True):
+        out += ["", "_Thinking was OFF for this attempt._"]
+    out += [""]
+    out += ["##### Visible response", "", block(used.get("visible", ""), label="Visible response"), ""]
+    if len(gens) > 1:
+        out += ["##### Failed attempts before this one", ""]
+        for gen, nxt in zip(gens, gens[1:]):
+            why = retry_reason(gen, nxt)
+            body = "\n".join(_reasoning(gen)) + "\n\nVisible response:\n\n" + fence(gen.get("visible", ""))
+            out += [f"- Attempt {gen.get('attempt')}: {why}.", "", fold(f"Attempt {gen.get('attempt')} output", body), ""]
     return out
 
 
-def render_step(row: dict, previous_prompt: list[dict] | None, kb: dict, kb_used: dict) -> list[str]:
-    gens = row.get("generations") or []
-    dur = ""
-    if row.get("start_time") and row.get("end_time"):
-        dur = f", {float(row['end_time']) - float(row['start_time']):.1f} s"
-    out = [f"## Step {row['seq']} · {row.get('agent')} · agent step {row.get('agent_step')} "
-           f"({_clock(row.get('start_time'))}{dur})", ""]
+def _argument_table(typed, executed) -> list[str]:
+    typed_flat = dict(flatten(typed if isinstance(typed, dict) else {"(arguments)": typed}))
+    exec_flat = dict(flatten(executed)) if isinstance(executed, dict) else None
+    keys = list(typed_flat) + [k for k in (exec_flat or {}) if k not in typed_flat]
+    if not keys:
+        return ["_No arguments._"]
+    show_exec = exec_flat is not None and exec_flat != typed_flat
+    head = "| Argument | As typed |" + (" As executed |" if show_exec else "")
+    out = [head, "|---|---|" + ("---|" if show_exec else "")]
+    long_values = []
+    for k in keys:
+        vals = [typed_flat.get(k, "—")] + ([exec_flat.get(k, "—")] if show_exec else [])
+        cells = []
+        for v in vals:
+            text = v if isinstance(v, str) else json.dumps(v, default=str)
+            if v == "—":
+                cells.append("—")
+            elif len(text) > LONG_VALUE_CHARS or "\n" in text:
+                cells.append("_(below)_")
+                long_values.append((k, text))
+            else:
+                cells.append(cell(v))
+        if show_exec and len(cells) == 2 and cells[0] != cells[1]:
+            k = f"**{k}**"
+        out.append(f"| {k} | " + " | ".join(cells) + " |")
+    for k, text in long_values:
+        out += ["", f"`{k}`:", "", block(text, label=k)]
+    if show_exec:
+        out += ["", "_Bold rows were added or changed by the middleware before the call reached the server._"]
+    return out
 
-    out += ["### 1. Input", ""]
-    if gens:
-        out += render_input(gens[-1], previous_prompt)
-    else:
-        out.append("_No generation recorded for this step._")
 
-    out += ["", "### 2. Assistant", ""]
-    for gen in gens[:-1]:
-        out.append(f"**Attempt {gen.get('attempt')} failed to parse** (thinking={gen.get('thinking_enabled')}); "
-                   "the retry prompt appends this output and an error message.")
-        out += render_generation(gen)
-    if gens:
-        if len(gens) > 1:
-            out.append(f"**Attempt {gens[-1].get('attempt')} (used):**")
-        out += render_generation(gens[-1])
-
-    out += ["", "### 3. Tool invocation", ""]
+def section_tool(row: dict, kb: dict, kb_used: dict) -> tuple[list[str], list[dict]]:
+    out = ["#### 3. Tool invocation", ""]
     calls = row.get("tool_calls") or []
+    matched = []
+    gens = row.get("generations") or []
+    written = (gens[-1].get("visible") or "").count("<tool_call>") if gens else 0
+    if written > len(calls):
+        out += [f"**Warning:** the model wrote {written} tool calls; only {len(calls)} executed (B127).", ""]
     if not calls:
-        out.append("_No tool call._")
+        return out + ["_No tool call._", ""], matched
     for call in calls:
         name = call.get("name")
-        out.append(f"`{name}` as typed by the model:")
-        out.append(fence(_json(call.get("arguments")), "json"))
         key = (str(row.get("agent")), str(name))
-        idx = kb_used[key]
-        if idx < len(kb.get(key, [])):
-            kb_row = kb[key][idx]
+        kb_row = None
+        if kb_used[key] < len(kb.get(key, [])):
+            kb_row = kb[key][kb_used[key]]
             kb_used[key] += 1
-            executed = _parse_kb_value(kb_row.get("inputs"))
-            status = kb_row.get("status")
-            if executed is not None and executed != call.get("arguments"):
-                out.append(f"As executed after middleware (KB seq {kb_row.get('seq')}, status {status}):")
-                out.append(fence(_json(executed), "json"))
-            else:
-                out.append(f"_Executed unchanged (KB seq {kb_row.get('seq')}, status {status})._")
+        matched.append(kb_row)
+        executed = _parse_kb_value(kb_row.get("inputs")) if kb_row else None
+        src = f" (knowledge base seq {kb_row.get('seq')})" if kb_row else " (not an MCP call: no knowledge-base row)"
+        out += [f"**Tool:** `{name}`{src}", ""] + _argument_table(call.get("arguments"), executed) + [""]
+    return out, matched
 
-    out += ["", "### 4. Tool result", ""]
-    out.append(fence(str(row.get("observations") or "")))
+
+def section_result(row: dict, kb_rows: list[dict]) -> list[str]:
+    out = ["#### 4. Tool result", ""]
+    statuses = [r.get("status") for r in kb_rows if r]
+    if statuses:
+        out += [f"**Status:** {', '.join(statuses)}", ""]
     if row.get("error"):
-        out.append("Step error:")
-        out.append(fence(str(row["error"])))
-    out.append("")
+        out += ["**Step error:**", "", block(str(row["error"])), ""]
+    text = str(row.get("observations") or "")
+    data = parse_json(text)
+    if isinstance(data, (dict, list)) and data:
+        leaves = flatten(data)
+        out += ["| Field | Value |", "|---|---|"]
+        for k, v in leaves[:RESULT_TABLE_ROWS]:
+            shown = v if isinstance(v, str) else json.dumps(v, default=str)
+            if len(shown) > LONG_VALUE_CHARS:
+                shown = shown[:LONG_VALUE_CHARS] + "…"
+            out.append(f"| {k} | {cell(shown)} |")
+        if len(leaves) > RESULT_TABLE_ROWS:
+            out.append(f"| … | {len(leaves) - RESULT_TABLE_ROWS} more fields in the full result |")
+        out += ["", fold("Full result (JSON)", fence(json.dumps(data, indent=2, ensure_ascii=False), "json")), ""]
+    else:
+        out += [block(text, label="Result") if text else "_Empty._", ""]
     return out
 
 
-def render(jsonl: Path, kb_path: Path | None = None, out_dir: Path | None = None) -> Path:
+# -- step and agent ------------------------------------------------------------------------------
+
+def _glance(row: dict, kb_rows: list[dict]) -> str:
+    gens = row.get("generations") or []
+    used = gens[-1] if gens else {}
+    calls = ", ".join(f"`{c.get('name')}`" for c in row.get("tool_calls") or []) or "no tool"
+    status = ", ".join(r.get("status", "?") for r in kb_rows if r) or ("error" if row.get("error") else "ok")
+    dur = ""
+    if row.get("start_time") and row.get("end_time"):
+        dur = f"{float(row['end_time']) - float(row['start_time']):.0f} s"
+    think = used.get("think")
+    parts = [f"called {calls} → **{status}**", dur,
+             f"prompt {_num((used.get('prompt') or {}).get('prompt_tokens'))} tokens",
+             f"reasoning {len(think):,} chars" if think else "no reasoning"]
+    if len(gens) > 1:
+        parts.append(f"{len(gens) - 1} failed attempt(s)")
+    return " · ".join(p for p in parts if p)
+
+
+def render_agent_header(agent: str, first_step: dict | None, summaries: list[dict]) -> list[str]:
+    out = [f"## Agent: {agent}", ""]
+    prompt = ((first_step or {}).get("generations") or [{}])[-1].get("prompt") or {}
+    msgs = prompt.get("messages") or []
+    system = [m for m in msgs if m.get("role") == "system"]
+    task = [m for m in msgs if m.get("role") == "user"]
+    for s in summaries:
+        out += render_summary(s, under_agent=True)
+    if system:
+        out += [fold(f"System prompt ({len(system[0].get('content', '')):,} chars)", fence(system[0]["content"])), ""]
+    if task:
+        out += ["### Task given to this agent", "", block(task[0].get("content", ""), label="Task"), ""]
+    return out
+
+
+def render_summary(row: dict, under_agent: bool = False) -> list[str]:
+    title = "Knowledge-base handoff given to this agent" if under_agent else "Knowledge-base summary"
+    prompt = ((row.get("prompt") or {}).get("messages") or [{}])[0].get("content", "")
+    return [f"### {title}", "",
+            f"_Written by the summary model `{row.get('model_id')}`; it prefixes the agent's task._", "",
+            quote(row.get("visible") or row.get("raw_text") or ""), "",
+            fold("Summary model input", fence(prompt)), ""]
+
+
+def render(jsonl: Path, kb_path: Path | None = None, out_path: Path | None = None) -> Path:
     rows = load_rows(jsonl)
-    out_dir = out_dir or jsonl.with_suffix("")
-    out_dir.mkdir(parents=True, exist_ok=True)
     m = re.search(r"attempt(\d+)", jsonl.stem)
     kb = kb_calls_by_agent_tool(kb_path, int(m.group(1)) if m else None)
     kb_used: dict[tuple[str, str], int] = defaultdict(int)
 
-    order: list[str] = []
-    per_agent: dict[str, list[str]] = defaultdict(list)
-    last_prompt: dict[str, list[dict]] = {}
-    summaries: list[str] = []
+    body: list[str] = []
+    overview: list[str] = []
+    current_agent = None
+    pending_summaries: list[dict] = []
+    prev_step: dict[str, dict] = {}
+    prev_prompt: dict[str, list[dict]] = {}
+
     for row in rows:
         agent = str(row.get("agent"))
-        if row.get("kind") == "summary":
-            summaries += [f"## Summary {row['seq']} (during {agent}, {row.get('model_id')})", "",
-                          "### Input", fence((row.get("prompt") or {}).get("messages", [{}])[0].get("content", "")),
-                          "### Output", fence(row.get("raw_text", "")), ""]
+        kind = row.get("kind")
+        if kind == "summary":
+            # A handoff summary is written just before the next agent starts, outside any agent scope.
+            if agent in ("unknown", "", "None") or agent != current_agent:
+                pending_summaries.append(row)
+            else:
+                body += render_summary(row)
             continue
-        if agent not in per_agent:
-            order.append(agent)
-        if row.get("kind") == "generation_without_step":
-            per_agent[agent].append(f"## Seq {row['seq']} · {agent} · generation not attached to a step\n")
+        if agent != current_agent:
+            current_agent = agent
+            body += render_agent_header(agent, row if kind == "step" else None, pending_summaries)
+            pending_summaries = []
+        if kind == "generation_without_step":
+            body += [f"### Generation not attached to a step (seq {row['seq']})", ""]
             for gen in row.get("generations") or []:
-                per_agent[agent] += render_input(gen, last_prompt.get(agent)) + render_generation(gen)
+                body += section_output([gen])
             continue
-        per_agent[agent] += render_step(row, last_prompt.get(agent), kb, kb_used)
-        gens = row.get("generations") or []
-        if gens and gens[-1].get("prompt"):
-            last_prompt[agent] = gens[-1]["prompt"]["messages"]
 
-    index = [f"# Step log: {jsonl.name}", "", f"{len(rows)} rows.", "", "| # | Agent | Steps |", "|---|---|---|"]
-    for i, agent in enumerate(order, 1):
-        fname = f"{i:02d}_{re.sub(r'[^A-Za-z0-9_.-]', '_', agent)}.md"
-        n = sum(1 for r in rows if str(r.get("agent")) == agent and r.get("kind") == "step")
-        (out_dir / fname).write_text(f"# {agent}\n\n" + "\n".join(per_agent[agent]), encoding="utf-8")
-        index.append(f"| {i} | [{agent}]({fname}) | {n} |")
-    if summaries:
-        (out_dir / "summaries.md").write_text("# Knowledge-base summaries\n\n" + "\n".join(summaries),
-                                              encoding="utf-8")
-        index += ["", f"[Knowledge-base summaries](summaries.md): {sum(1 for r in rows if r.get('kind') == 'summary')}"]
-    (out_dir / "00_index.md").write_text("\n".join(index) + "\n", encoding="utf-8")
-    return out_dir
+        gens = row.get("generations") or []
+        tool_lines, kb_rows = section_tool(row, kb, kb_used)
+        names = ", ".join(c.get("name") for c in row.get("tool_calls") or []) or "no tool call"
+        body += [f'<a id="step-{row["seq"]}"></a>', "",
+                 f"### Step {row['seq']} · {names}", "",
+                 f"_{agent}, its step {row.get('agent_step')}, started {_clock(row.get('start_time'))}._ "
+                 + _glance(row, kb_rows), ""]
+        body += section_input(gens[-1] if gens else {}, prev_step.get(agent), prev_prompt.get(agent))
+        body += section_output(gens)
+        body += tool_lines
+        body += section_result(row, kb_rows)
+        body += ["---", ""]
+
+        used = gens[-1] if gens else {}
+        status = ", ".join(r.get("status", "?") for r in kb_rows if r) or ("error" if row.get("error") else "ok")
+        think = used.get("think")
+        reasoning = f"{len(think):,}" if think else "—"
+        overview.append(f"| [{row['seq']}](#step-{row['seq']}) | {agent} | {names} | {status} | "
+                        f"{reasoning} | {len(gens) - 1 or ''} |")
+        prev_step[agent] = row
+        if used.get("prompt"):
+            prev_prompt[agent] = used["prompt"]["messages"]
+
+    for s in pending_summaries:      # a summary after the last step
+        body += render_summary(s)
+
+    head = [f"# Step log: {jsonl.parent.name} · {jsonl.stem}", "",
+            f"Source `{jsonl.name}`, {len(rows)} rows. Each step has four sections: input to the model, "
+            "model output (reasoning and visible response), tool invocation, tool result.", "",
+            "## Overview", "",
+            "| Step | Agent | Tool | Status | Reasoning chars | Failed attempts |",
+            "|---|---|---|---|---|---|"] + overview + [""]
+    out_path = out_path or jsonl.with_suffix(".md")
+    out_path.write_text("\n".join(head + body) + "\n", encoding="utf-8")
+    return out_path
 
 
 def main() -> None:

@@ -178,14 +178,16 @@ def test_agent_run_produces_one_row_per_step_and_renders_four_sections(log_file,
     kb.write_text(json.dumps({"seq": 2, "attempt": 1, "agent": "geometry_engineer", "tool": "get_wing",
                               "status": "success",
                               "inputs": "{'wing_uid': 'Wing1', 'session_id': 'injected-by-middleware'}"}) + "\n")
-    out_dir = render_step_log.render(log_file, kb)
-    page = (out_dir / "01_geometry_engineer.md").read_text()
-    for heading in ("### 1. Input", "### 2. Assistant", "### 3. Tool invocation", "### 4. Tool result"):
+    page = render_step_log.render(log_file, kb).read_text()
+    assert page.startswith("# Step log")
+    assert "## Overview" in page and "## Agent: geometry_engineer" in page
+    for heading in ("#### 1. Input to the model", "#### 2. Model output", "#### 3. Tool invocation",
+                    "#### 4. Tool result"):
         assert page.count(heading) == 2
-    assert "I should read the wing first." in page
-    assert "injected-by-middleware" in page                  # arguments as executed, from the KB
-    assert "showing the" in page                             # second step shows only new messages
-    assert "geometry_engineer" in (out_dir / "00_index.md").read_text()
+    assert "> The span is 33.9 m; I should read the wing first." in page     # reasoning as prose
+    assert "| **session_id** | — | `injected-by-middleware` |" in page        # added by the middleware
+    assert "Repeats the previous step's response, tool call and result" in page
+    assert "Nothing else is new." in page                                     # echo is not reprinted
 
 
 # -- renderer helpers ---------------------------------------------------------------------------
@@ -207,3 +209,53 @@ def test_kb_rows_are_filtered_to_the_attempt(tmp_path):
                             for i, a in ((1, 1), (2, 2), (3, 2))) + "\n")
     got = render_step_log.kb_calls_by_agent_tool(kb, attempt=2)
     assert [r["seq"] for r in got[("g", "t")]] == [2, 3]
+
+
+def _step(seq, visible="", calls=None, obs="", gens=None):
+    gens = gens or [{"attempt": 0, "thinking_enabled": True, "think": "t", "think_closed": True,
+                     "visible": visible, "raw_text": visible, "prompt": None}]
+    return {"seq": seq, "kind": "step", "agent": "a", "generations": gens,
+            "tool_calls": calls or [], "observations": obs}
+
+
+def test_echo_detection_hides_only_the_repeat_of_the_previous_step():
+    prev = _step(1, visible="<tool_call>x</tool_call>", calls=[{"name": "t"}], obs='{"k": 1}')
+    assert render_step_log.is_echo({"role": "assistant", "content": "<tool_call>x</tool_call>"}, prev)
+    assert render_step_log.is_echo({"role": "tool-call", "content": "Calling tools: ..."}, prev)
+    assert render_step_log.is_echo({"role": "tool-response", "content": 'Observation:\n{"k": 1}'}, prev)
+    assert not render_step_log.is_echo({"role": "tool-response", "content": "Call id: 1\nError:\nNOT FINISHED"}, prev)
+    assert not render_step_log.is_echo({"role": "user", "content": "new instruction"}, prev)
+
+
+def test_retry_reason_reads_what_the_next_attempt_did():
+    plain = {"think_closed": True, "visible": "DESIGN_STATE: ...", "thinking_enabled": True}
+    assert render_step_log.retry_reason(plain, {"thinking_enabled": False}) == (
+        "no tool call in the output (plain-text answer); retried with thinking OFF")
+    cut = {"think_closed": False, "visible": "", "thinking_enabled": True}
+    assert render_step_log.retry_reason(cut, {"thinking_enabled": False}).startswith("the output hit the token limit")
+    bad = {"think_closed": True, "visible": "{oops", "thinking_enabled": True}
+    assert render_step_log.retry_reason(bad, {"thinking_enabled": True}).endswith("parse error appended to the prompt")
+
+
+def test_dropped_second_tool_call_is_flagged(tmp_path):
+    two = "<tool_call>{}</tool_call>\n<tool_call>{}</tool_call>"
+    lines, _ = render_step_log.section_tool(_step(1, visible=two, calls=[{"name": "t", "arguments": {}}]),
+                                            {}, __import__("collections").defaultdict(int))
+    assert any("wrote 2 tool calls; only 1 executed" in line for line in lines)
+
+
+def test_handoff_summary_is_shown_under_the_agent_it_was_written_for(tmp_path):
+    path = tmp_path / "step_log_attempt1.jsonl"
+    summary = {"seq": 1, "kind": "summary", "agent": "unknown", "model_id": "small",
+               "prompt": {"messages": [{"role": "user", "content": "records"}]}, "raw_text": "DONE: mesh",
+               "think": None, "visible": "DONE: mesh", "think_closed": True}
+    path.write_text(json.dumps(summary) + "\n" + json.dumps({**_step(2, obs="x"), "agent": "aero"}) + "\n")
+    page = render_step_log.render(path).read_text()
+    assert page.index("## Agent: aero") < page.index("### Knowledge-base handoff given to this agent")
+    assert "> DONE: mesh" in page
+
+
+def test_json_results_become_a_field_table():
+    lines = render_step_log.section_result({"observations": '{"span": 45.3, "mac": {"x": 1}}'}, [{"status": "success"}])
+    text = "\n".join(lines)
+    assert "**Status:** success" in text and "| span | `45.3` |" in text and "| mac.x | `1` |" in text
