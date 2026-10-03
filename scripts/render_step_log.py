@@ -182,8 +182,7 @@ def section_input(gen: dict, prev_step: dict | None, prev_prompt: list[dict] | N
     messages = prompt.get("messages") or []
     meta = f"Prompt: {_num(prompt.get('prompt_tokens'))} tokens, {len(messages)} messages."
     if prev_prompt is None:
-        return out + [meta, "", "First step of this agent: the system prompt and task shown under the agent "
-                      "heading above.", ""]
+        return out + [meta, "", "First step of this run: the system prompt and task are shown above.", ""]
     fresh, dropped = new_messages(prev_prompt, messages)
     if dropped:
         meta += f" {dropped} earlier message(s) were trimmed or changed (B80 prompt budget)."
@@ -359,6 +358,20 @@ def render_agent_header(agent: str, first_step: dict | None, summaries: list[dic
     return out
 
 
+def render_run_header(agent: str, run: int, first_step: dict, summaries: list[dict]) -> list[str]:
+    """A re-run of an agent by its method handler; its task carries the handler's feedback."""
+    out = [f"### Run {run} of {agent}", "",
+           "_The method handler ran this agent again with a new task (iterative feedback or a stage retry)._", ""]
+    for s in summaries:
+        out += render_summary(s, under_agent=True)
+    prompt = (first_step.get("generations") or [{}])[-1].get("prompt") or {}
+    task = [m for m in prompt.get("messages") or [] if m.get("role") == "user"]
+    if task:
+        out += ["**Task for this run** (includes any feedback from the previous run):", "",
+                block(task[0].get("content", ""), label="Task"), ""]
+    return out
+
+
 def render_summary(row: dict, under_agent: bool = False) -> list[str]:
     title = "Knowledge-base handoff given to this agent" if under_agent else "Knowledge-base summary"
     prompt = ((row.get("prompt") or {}).get("messages") or [{}])[0].get("content", "")
@@ -380,6 +393,7 @@ def render(jsonl: Path, kb_path: Path | None = None, out_path: Path | None = Non
     pending_summaries: list[dict] = []
     prev_step: dict[str, dict] = {}
     prev_prompt: dict[str, list[dict]] = {}
+    runs: dict[str, int] = {}
 
     for row in rows:
         agent = str(row.get("agent"))
@@ -391,10 +405,20 @@ def render(jsonl: Path, kb_path: Path | None = None, out_path: Path | None = Non
             else:
                 body += render_summary(row)
             continue
-        if agent != current_agent:
-            current_agent = agent
+        # A method handler (iterative feedback, a retried stage) re-runs an agent: its step counter
+        # restarts at 1 and it gets a fresh prompt, so that is a new run, not a trimmed prompt.
+        restart = kind == "step" and row.get("agent_step") == 1 and agent in prev_step
+        if agent not in runs:
+            runs[agent] = 1
             body += render_agent_header(agent, row if kind == "step" else None, pending_summaries)
             pending_summaries = []
+        elif restart:
+            runs[agent] += 1
+            body += render_run_header(agent, runs[agent], row, pending_summaries)
+            pending_summaries = []
+            prev_step.pop(agent, None)
+            prev_prompt.pop(agent, None)
+        current_agent = agent
         if kind == "generation_without_step":
             body += [f"### Generation not attached to a step (seq {row['seq']})", ""]
             for gen in row.get("generations") or []:
@@ -418,7 +442,8 @@ def render(jsonl: Path, kb_path: Path | None = None, out_path: Path | None = Non
         status = ", ".join(r.get("status", "?") for r in kb_rows if r) or ("error" if row.get("error") else "ok")
         think = used.get("think")
         reasoning = f"{len(think):,}" if think else "—"
-        overview.append(f"| [{row['seq']}](#step-{row['seq']}) | {agent} | {names} | {status} | "
+        who = agent if runs[agent] == 1 else f"{agent} (run {runs[agent]})"
+        overview.append(f"| [{row['seq']}](#step-{row['seq']}) | {who} | {names} | {status} | "
                         f"{reasoning} | {len(gens) - 1 or ''} |")
         prev_step[agent] = row
         if used.get("prompt"):

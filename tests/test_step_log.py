@@ -259,3 +259,20 @@ def test_json_results_become_a_field_table():
     lines = render_step_log.section_result({"observations": '{"span": 45.3, "mac": {"x": 1}}'}, [{"status": "success"}])
     text = "\n".join(lines)
     assert "**Status:** success" in text and "| span | `45.3` |" in text and "| mac.x | `1` |" in text
+
+
+def test_a_rerun_of_the_same_agent_starts_a_new_run_not_a_trimmed_prompt(tmp_path):
+    def step(seq, agent_step, task):
+        prompt = {"prompt_tokens": 10, "messages": [{"role": "system", "content": "sys"},
+                                                     {"role": "user", "content": task}]}
+        gens = [{"attempt": 0, "thinking_enabled": True, "think": "t", "think_closed": True,
+                 "visible": "v", "raw_text": "v", "prompt": prompt}]
+        return {**_step(seq, gens=gens), "agent": "aero", "agent_step": agent_step}
+
+    path = tmp_path / "step_log_attempt1.jsonl"
+    rows = [step(1, 1, "Run SU2"), step(2, 1, "Run SU2. FEEDBACK: the solver diverged")]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    page = render_step_log.render(path).read_text()
+    assert "### Run 2 of aero" in page and "FEEDBACK: the solver diverged" in page
+    assert "B80" not in page                                  # not mistaken for a trimmed prompt
+    assert "| aero (run 2) |" in page
