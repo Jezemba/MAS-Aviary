@@ -51,12 +51,11 @@ mdo_f25_pipeline:
              do NOT guess "D150_Wing" or "Wing"; the actual UIDs are
              returned by that tool.
           3. generate_volume_mesh — ONCE — to produce the CFD mesh.
-             Use these EXACT parameters (measured: ~12 s on F25
-             geometry; tests/test_mesh_generation_live.py pins this):
-               component_uid="<<WING_UID>>",
+             Use these parameters:
+               (NO component_uid: the whole aircraft is meshed)
                far_field_distance=<<FAR_FIELD_DISTANCE>>,
-               (do NOT pass mesh_size_min/max — the tool auto-scales the mesh to
-                the geometry so cell count stays ~constant for any wing size)
+               (do NOT pass mesh_size_min/max: the framework sets the
+                calibrated mesh)
                boundary_layer_enabled=False,
                boundary_layer_thickness=0.01,
                boundary_layer_layers=5,

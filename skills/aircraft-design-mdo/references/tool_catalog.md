@@ -546,7 +546,7 @@ Evaluates whether the latest simulation results satisfy user-defined constraints
 1. `open_cpacs(source_type, source)` → returns `session_id`
 2. Inspect: `get_configuration_summary`, `list_geometric_components`, `get_wing_summary`, `get_fuselage_summary`
 3. Modify: `set_high_level_parameters(session_id, component_uid, updates)`
-4. CFD mesh: `generate_volume_mesh(session_id, component_uid)` (REQUIRED for SU2 — produces 3D volume mesh with farfield box and boundary markers via gmsh). Surface-only or CAD: `export_component_mesh(session_id, component_uid, format="stl")`, `export_configuration_cad(session_id, format="step")`
+4. CFD mesh: `generate_volume_mesh(session_id)` with no component_uid, so the whole aircraft is meshed (REQUIRED for SU2 — produces 3D volume mesh with farfield box and boundary markers via gmsh). Surface-only or CAD: `export_component_mesh(session_id, component_uid, format="stl")`, `export_configuration_cad(session_id, format="step")`
 5. `close_cpacs(session_id)`
 
 **su2-mcp:**
@@ -585,7 +585,7 @@ Evaluates whether the latest simulation results satisfy user-defined constraints
 ### Cross-MCP Workflows
 
 **Geometry → CFD (drag polar):**
-1. tigl: `open_cpacs` → modify geometry → `generate_volume_mesh(component_uid="Wing")` (do NOT use `export_component_mesh(format="su2")` — surface-only meshes fail SU2 `DistributeColoring`)
+1. tigl: `open_cpacs` → modify geometry → `generate_volume_mesh()` (no component_uid: whole aircraft) (do NOT use `export_component_mesh(format="su2")` — surface-only meshes fail SU2 `DistributeColoring`)
 2. su2: `create_su2_session` → `set_mesh(mesh_base64)` → `update_config_entries` → `run_su2_solver`
 3. su2: `read_history_csv` → extract CL, CD values
 

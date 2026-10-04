@@ -64,9 +64,10 @@ agents:
          Inspect: get_configuration_summary, list_geometric_components, get_wing_summary(session_id, wing_uid),
                   get_fuselage_summary(session_id, fuselage_uid), get_high_level_parameters, get_component_metadata
          Modify: set_high_level_parameters(session_id, component_uid, updates={param: value})
-                 Wing params: span (45m), root_chord, tip_chord, sweep (25deg), dihedral, twist_tip
-                 Fuselage params: length (37.79m), section_radius (~1.88m)
-         CFD mesh: generate_volume_mesh(session_id, component_uid="<<WING_UID>>") → base64 SU2 volume mesh (REQUIRED for SU2 — surface-only meshes from export_component_mesh fail DistributeColoring)
+                 Wings (main "<<WING_UID>>", tails "Wing2H", "Wing3V"): area (m², full), aspect_ratio, sweep (positioning angle, deg)
+                 Fuselage ("<<FUSELAGE_UID>>"): length (m), diameter (m)
+                 The morph really rebuilds the geometry; span, chords, dihedral, twist and taper are not inputs.
+         CFD mesh: generate_volume_mesh(session_id) with NO component_uid → base64 SU2 volume mesh of the whole aircraft (REQUIRED for SU2; surface-only meshes from export_component_mesh fail DistributeColoring)
          Surface only: export_component_mesh(session_id, component_uid, format="stl") → STL surface (visualization, NOT solveable)
                  export_configuration_cad(session_id, format="step") → base64 STEP file
          Geometry: sample_component_surface, intersect_with_plane, intersect_components

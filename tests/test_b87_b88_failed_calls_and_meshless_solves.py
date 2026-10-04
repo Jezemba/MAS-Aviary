@@ -191,7 +191,8 @@ def test_the_refusal_says_to_mesh_first_when_no_mesh_exists_at_all():
     refusal = mesh_guard.mesh_missing("run_su2_solver", {"session_id": sid})
     assert refusal is not None
     assert "generate_volume_mesh first" in refusal["error"]
-    assert "read_procedure" in refusal["error"]
+    # B130: meshing takes no component_uid (the whole aircraft), so there is no UID to look up.
+    assert "no component_uid" in refusal["error"]
 
 
 def test_a_session_with_a_mesh_solves():

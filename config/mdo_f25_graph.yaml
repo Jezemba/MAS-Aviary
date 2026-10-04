@@ -61,15 +61,12 @@ mdo_f25_graph:
            paraphrase the path. Captures TIGL_SESSION_ID.
         2. (optional) Call list_geometric_components(session_id) to
            confirm the wing UID present in this fixture is "Wing1".
-        3. Call generate_volume_mesh ONCE with these EXACT params —
-           they were measured to converge gmsh in ~12 s on this
-           fixture (pinned by tests/test_mesh_generation_live.py
-           and verified live in v18 wandb 7ngitswj):
-             component_uid="<<WING_UID>>",
+        3. Call generate_volume_mesh ONCE with these params:
+             (NO component_uid: the whole aircraft, fuselage, both wings
+              and both tails, is meshed)
              far_field_distance=<<FAR_FIELD_DISTANCE>>,
-             (do NOT pass mesh_size_min/max — the tool auto-scales the mesh to
-              the geometry's characteristic length, keeping ~0.65M cells for any
-              wing size; passing absolute sizes can blow up to millions of cells)
+             (do NOT pass mesh_size_min/max: the framework sets the
+              calibrated mesh)
              boundary_layer_enabled=False,
              output_format="su2"
            Setting far_field_distance >= 50 (the "physically natural"

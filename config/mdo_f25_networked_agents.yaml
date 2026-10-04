@@ -20,9 +20,10 @@ peer_template:
                 get_high_level_parameters(session_id, component_uid),
                 get_component_metadata(session_id, component_uid)
        Modify: set_high_level_parameters(session_id, component_uid, updates={...})
-               Wing: span (45m), root_chord, tip_chord, sweep (25deg), dihedral, twist_tip
-               Fuselage: length (37.79m), section_radius (~1.88m)
-       CFD mesh: generate_volume_mesh(session_id, component_uid="<<WING_UID>>") (REQUIRED for SU2 — produces volume mesh; export_component_mesh produces surface-only and SU2 cannot solve it)
+               Wings (main "<<WING_UID>>", tails "Wing2H", "Wing3V"): area (m², full), aspect_ratio, sweep (positioning angle, deg)
+               Fuselage ("<<FUSELAGE_UID>>"): length (m), diameter (m)
+               The morph really rebuilds the geometry; span, chords, dihedral, twist and taper are not inputs.
+       CFD mesh: generate_volume_mesh(session_id) with NO component_uid: the whole aircraft is meshed (REQUIRED for SU2; export_component_mesh is surface-only and SU2 cannot solve it)
        Surface/CAD: export_component_mesh(session_id, component_uid, format="stl"), export_configuration_cad(session_id, format="step")
        Geometry: sample_component_surface, intersect_with_plane, intersect_components
 

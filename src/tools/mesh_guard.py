@@ -50,8 +50,8 @@ def mesh_missing(tool_name: str, resolved: dict) -> dict | None:
                  f"Call set_mesh(session_id='{session_id}', mesh_base64='generate_volume_mesh__mesh_base64') "
                  "and then run_su2_solver again.")
     else:
-        where = ("No mesh exists for this design yet. Run generate_volume_mesh first (component_uid is a "
-                 "CPACS UID -- read_procedure(role='geometry') lists them), then set_mesh, then solve.")
+        where = ("No mesh exists for this design yet. Run generate_volume_mesh first (no component_uid: "
+                 "the whole aircraft is meshed), then set_mesh, then solve.")
     return {
         "success": False,
         "error_code": "NO_MESH",
