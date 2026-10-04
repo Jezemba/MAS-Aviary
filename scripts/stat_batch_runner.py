@@ -115,6 +115,33 @@ def generate_random_params(seed: int) -> dict[str, float]:
     return params
 
 
+# The design-space baseline (Jessica, 2026-10-03): the aircraft the CPACS geometry actually is,
+# measured through tigl, so the mission starts from the same aircraft as CFD and structures.
+# Before this, link 0 was a seed-42 uniform draw from Aviary's advisory ranges, applied to the
+# Aviary session only, which disagreed with the geometry on every value (fuselage 30.07 m against
+# 37.68 m, taper 0.359 against 0.246, ...). See Avion/.claude/planning/true_cycle_inputs_2026-10-03.md.
+# Aircraft.Wing.SWEEP is left to Aviary: tigl measures no quarter-chord sweep yet (B133).
+BASELINE_PARAMS: dict[str, float] = {
+    "Aircraft.Wing.AREA": 122.78,
+    "Aircraft.Wing.ASPECT_RATIO": 9.37,
+    "Aircraft.Wing.TAPER_RATIO": 0.246,
+    "Aircraft.Fuselage.LENGTH": 37.68,
+    "Aircraft.Fuselage.MAX_HEIGHT": 4.15,
+    "Aircraft.Fuselage.MAX_WIDTH": 3.96,
+    "Aircraft.Engine.SCALE_FACTOR": 1.0,
+}
+ANCHOR_MODES = ("baseline", "random")
+
+
+def anchor_params_for(mode: str, base_seed: int) -> dict[str, float]:
+    """Link 0's design: the measured baseline (default) or the legacy seeded random draw."""
+    if mode == "baseline":
+        return dict(BASELINE_PARAMS)
+    if mode == "random":
+        return {k: v for k, v in generate_random_params(base_seed).items() if not k.startswith("_")}
+    raise ValueError(f"unknown anchor mode {mode!r}; expected one of {ANCHOR_MODES}")
+
+
 def generate_all_param_sets(n_repeats: int, base_seed: int = 42) -> list[dict]:
     """Generate N deterministic random parameter sets."""
     return [generate_random_params(base_seed + i) for i in range(n_repeats)]
@@ -390,13 +417,18 @@ def build_task_with_session(
         lines = [f"  {k}: {v}" for k, v in settable.items()]
         params_text = (
             "\nThe following STARTING parameters have been applied as an "
-            "initial baseline — they are valid but NOT optimized:\n"
+            "initial baseline. They are valid but NOT optimized:\n"
             + "\n".join(lines)
-            + "\nYour job is to IMPROVE these parameters to minimize fuel burn. "
-            "Call set_aircraft_parameters to adjust values (its response now "
-            "includes a 'valid' boolean — validation runs inline). If valid "
-            "is false, adjust and call set_aircraft_parameters again until "
-            "valid:true, then run_simulation to measure fuel burn.\n"
+            + "\nYour job is to IMPROVE the design to minimize fuel burn. "
+            "The geometry is authoritative: change the wing (area, aspect_ratio, sweep), "
+            "the tails and the fuselage (length, diameter) by reshaping the CPACS geometry "
+            "with set_high_level_parameters, and the mission takes the wing area, aspect "
+            "ratio and fuselage from it automatically. Change the engine cycle with pycycle "
+            "set_inputs (splitter.BPR, fan.PR, lpc.PR, hpc.PR, T4_MAX). Use "
+            "set_aircraft_parameters for the remaining mission values (its response "
+            "includes a 'valid' boolean; validation runs inline). If valid is false, "
+            "adjust and call it again until valid:true, then run_simulation to measure "
+            "fuel burn.\n"
         )
 
     feedback_text = ""
@@ -1058,6 +1090,7 @@ def run_stat_batch(
     base_seed: int = 42,
     dry_run: bool = False,
     timeout_minutes: float = _DEFAULT_TIMEOUT_MINUTES,
+    anchor: str = "baseline",
 ) -> None:
     """Run statistical batch: all combos × N repeats with checkpointing."""
 
@@ -1101,8 +1134,7 @@ def run_stat_batch(
         return
 
     # The chain's fixed anchor: link 0 of every combo starts here (see run loop).
-    anchor_preview = {k: v for k, v in generate_random_params(base_seed).items()
-                      if not k.startswith("_")}
+    anchor_preview = anchor_params_for(anchor, base_seed)
 
     if output_dir is None:
         output_dir = f"logs/stat_results/{int(time.time())}"
@@ -1115,14 +1147,15 @@ def run_stat_batch(
     with open(params_file, "w") as f:
         json.dump(
             {"base_seed": base_seed, "n_links": n_repeats, "mode": "cumulative_chain",
-             "anchor_params": anchor_preview},
+             "anchor": anchor, "anchor_params": anchor_preview},
             f,
             indent=2,
         )
 
     if dry_run:
         print(f"CUMULATIVE CHAIN mode: each combo = {n_repeats} links.")
-        print(f"Link 0 anchor (identical for every combo, seed={base_seed}):")
+        print(f"Link 0 anchor (identical for every combo, {anchor}"
+              + (f", seed={base_seed}" if anchor == "random" else "") + "):")
         for k, v in anchor_preview.items():
             print(f"    {k}: {v}")
         print(f"Links 1..{n_repeats-1} start from the previous link's end-state design.")
@@ -1181,8 +1214,7 @@ def run_stat_batch(
     # Fixed anchor: repeat 0 of EVERY combo starts from this identical, pre-validated
     # design. Combined with the canonical SLSQP/mission (configure_mission) and the
     # per-call canonical discipline controls, Run 1 is byte-identical across all combos.
-    anchor_params = {k: v for k, v in generate_random_params(base_seed).items()
-                     if not k.startswith("_")}
+    anchor_params = anchor_params_for(anchor, base_seed)
 
     run_count = 0
     for combo in combos:
@@ -1870,6 +1902,13 @@ def main():
         help="Base random seed (default: 42)",
     )
     parser.add_argument(
+        "--anchor",
+        choices=ANCHOR_MODES,
+        default="baseline",
+        help="Link 0 design: the measured geometry baseline (default) or the legacy seeded "
+             "random draw from Aviary's ranges",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print parameter sets without running",
@@ -1901,6 +1940,7 @@ def main():
         base_seed=args.base_seed,
         dry_run=args.dry_run,
         timeout_minutes=args.timeout,
+        anchor=args.anchor,
     )
 
 

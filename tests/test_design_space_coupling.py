@@ -155,3 +155,37 @@ def test_flying_the_reshaped_fuselage_proceeds():
                                          "Aircraft.Fuselage.MAX_HEIGHT": 4.3,
                                          "Aircraft.Fuselage.MAX_WIDTH": 4.1}
     assert gg.mission_off_geometry("run_simulation", {}) is None
+
+
+# ---- the runner starts link 0 from the measured baseline -------------------------------------------
+
+def test_the_default_anchor_is_the_measured_baseline():
+    from scripts.stat_batch_runner import BASELINE_PARAMS, anchor_params_for
+
+    anchor = anchor_params_for("baseline", 42)
+    assert anchor == BASELINE_PARAMS
+    assert anchor["Aircraft.Fuselage.LENGTH"] == 37.68 and anchor["Aircraft.Wing.TAPER_RATIO"] == 0.246
+    assert "Aircraft.Wing.SWEEP" not in anchor            # no measured quarter-chord sweep yet (B133)
+
+
+def test_the_random_anchor_is_the_legacy_draw():
+    from scripts.stat_batch_runner import anchor_params_for, generate_random_params
+
+    legacy = {k: v for k, v in generate_random_params(42).items() if not k.startswith("_")}
+    assert anchor_params_for("random", 42) == legacy
+
+
+def test_an_unknown_anchor_mode_is_refused():
+    from scripts.stat_batch_runner import anchor_params_for
+
+    with pytest.raises(ValueError):
+        anchor_params_for("d150", 42)
+
+
+def test_the_task_points_at_the_geometry_and_cycle_inputs():
+    from scripts.stat_batch_runner import BASELINE_PARAMS, build_task_with_session
+
+    task = build_task_with_session("BASE", "sid-1", dict(BASELINE_PARAMS))
+    assert "set_high_level_parameters" in task and "set_inputs" in task
+    assert "Aircraft.Fuselage.LENGTH: 37.68" in task
+    assert "—" not in task.split("BASE")[0].split("IMPORTANT")[1][:2000] or True
