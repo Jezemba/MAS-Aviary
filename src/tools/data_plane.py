@@ -732,7 +732,8 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
 import threading as _threading
 
 _call_ctx = _threading.local()
-_GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP")
+_GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP",
+                       "Aircraft.Wing.TAPER_RATIO")
 # B133: the fuselage is geometry too. tigl measures it (OCC bounding box) in every fuselage morph.
 _GEOMETRY_FUSELAGE_KEYS = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                            "Aircraft.Fuselage.MAX_WIDTH")
@@ -828,6 +829,16 @@ def _inject_target_cl(resolved: dict) -> None:
                 target, float(mass_kg), float(area))
 
 
+def _add_measured_planform(record: dict, measured: dict) -> None:
+    """Quarter-chord sweep and taper, only when tigl MEASURED them (B133)."""
+    sweep = measured.get("sweep_quarter_chord_deg", measured.get("sweep_deg"))
+    if isinstance(sweep, (int, float)) and -10.0 <= sweep <= 60.0:
+        record["Aircraft.Wing.SWEEP"] = float(sweep)
+    taper = measured.get("taper_ratio")
+    if isinstance(taper, (int, float)) and 0.0 < taper <= 1.0:
+        record["Aircraft.Wing.TAPER_RATIO"] = float(taper)
+
+
 def _capture_geometry_wing(tool_name: str, data: dict) -> None:
     """Record the CURRENT geometry's full-wing values -- the design, under geometry authority."""
     if _design_state is None or not isinstance(data, dict):
@@ -850,8 +861,10 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
             return
         record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
         # B133: the REQUESTED sweep is a tigl positioning angle, not the quarter-chord sweep Aviary
-        # uses, and the morph does not achieve it exactly. Only a measured sweep may reach the
-        # mission (see the get_wing_summary branch below); tigl reports none yet.
+        # uses, and the morph does not achieve it exactly. Only MEASURED planform values reach the
+        # mission: tigl-mcp feat/planform-measurements reports the achieved quarter-chord sweep and
+        # taper in the after block (older tigl reports neither, so nothing is injected).
+        _add_measured_planform(record, after)
     elif tool_name == "get_wing_summary":
         if not _is_main_wing(getattr(_call_ctx, "wing_uid", None)):
             return
@@ -865,9 +878,11 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
         # (18.73, double the real 9.37). Convert to the full-wing values the mission uses.
         area = 2.0 * semi
         ar = span * span / area if area else None
+        if isinstance(data.get("full_reference_area"), (int, float)) and data["full_reference_area"] > 0:
+            area = float(data["full_reference_area"])      # tigl reports the full wing directly now
+            ar = span * span / area
         record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
-        if isinstance(data.get("sweep_deg"), (int, float)):
-            record["Aircraft.Wing.SWEEP"] = float(data["sweep_deg"])
+        _add_measured_planform(record, data)
     elif tool_name == "validate_cpacs_inputs":
         # B109: the FILE's wing, as a last resort. geoauth_all8 orchestrated staged L2 (attempt 2) opened
         # the baseline, never morphed and never called get_wing_summary, so there was no geometry wing and
@@ -890,8 +905,9 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
     if not record or not _plausible_wing(record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"]):
         return
     previous = dict(_design_state.data_store.get("geometry_wing") or {})
-    if "Aircraft.Wing.SWEEP" not in record and "Aircraft.Wing.SWEEP" in previous:
-        record["Aircraft.Wing.SWEEP"] = previous["Aircraft.Wing.SWEEP"]    # sweep persists until changed
+    for key in ("Aircraft.Wing.SWEEP", "Aircraft.Wing.TAPER_RATIO"):
+        if key not in record and key in previous:
+            record[key] = previous[key]                                  # persists until re-measured
     record["_source"] = tool_name
     _design_state.data_store["geometry_wing"] = record
     logger.info("[geometry-authority] wing is now AREA %.3f m^2, AR %.3f (from %s)",
@@ -954,8 +970,9 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
     last = _design_state.data_store.pop("_geometry_authority_last", None)
     if not last or not last.get("used"):
         return
-    note = ("The wing's AREA / ASPECT_RATIO (and the fuselage's LENGTH / MAX_HEIGHT / MAX_WIDTH once it "
-            "has been reshaped) are taken from the current CPACS geometry -- geometry is authoritative. "
+    note = ("The wing's AREA / ASPECT_RATIO / SWEEP / TAPER_RATIO (as measured) and the fuselage's LENGTH / "
+            "MAX_HEIGHT / MAX_WIDTH (once it has been reshaped) are taken from the current CPACS geometry -- "
+            "geometry is authoritative. "
             "To change them, reshape the geometry with set_high_level_parameters(component_uid=<main wing>, "
             "updates={'area': ..., 'aspect_ratio': ..., 'sweep': ...}) or (component_uid=<fuselage>, "
             "updates={'length': ..., 'diameter': ...}); these values then follow automatically.")

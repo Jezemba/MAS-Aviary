@@ -120,10 +120,12 @@ def generate_random_params(seed: int) -> dict[str, float]:
 # Before this, link 0 was a seed-42 uniform draw from Aviary's advisory ranges, applied to the
 # Aviary session only, which disagreed with the geometry on every value (fuselage 30.07 m against
 # 37.68 m, taper 0.359 against 0.246, ...). See Avion/.claude/planning/true_cycle_inputs_2026-10-03.md.
-# Aircraft.Wing.SWEEP is left to Aviary: tigl measures no quarter-chord sweep yet (B133).
+# Aircraft.Wing.SWEEP is the measured quarter-chord sweep (root c/4 -> tip c/4, tigl-mcp
+# feat/planform-measurements), the quantity FLOPS uses; the tigl positioning angle is 27.33.
 BASELINE_PARAMS: dict[str, float] = {
     "Aircraft.Wing.AREA": 122.78,
     "Aircraft.Wing.ASPECT_RATIO": 9.37,
+    "Aircraft.Wing.SWEEP": 21.65,
     "Aircraft.Wing.TAPER_RATIO": 0.246,
     "Aircraft.Fuselage.LENGTH": 37.68,
     "Aircraft.Fuselage.MAX_HEIGHT": 4.15,

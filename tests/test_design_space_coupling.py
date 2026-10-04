@@ -165,7 +165,7 @@ def test_the_default_anchor_is_the_measured_baseline():
     anchor = anchor_params_for("baseline", 42)
     assert anchor == BASELINE_PARAMS
     assert anchor["Aircraft.Fuselage.LENGTH"] == 37.68 and anchor["Aircraft.Wing.TAPER_RATIO"] == 0.246
-    assert "Aircraft.Wing.SWEEP" not in anchor            # no measured quarter-chord sweep yet (B133)
+    assert anchor["Aircraft.Wing.SWEEP"] == 21.65         # measured quarter-chord sweep (B133)
 
 
 def test_the_random_anchor_is_the_legacy_draw():
@@ -189,3 +189,61 @@ def test_the_task_points_at_the_geometry_and_cycle_inputs():
     assert "set_high_level_parameters" in task and "set_inputs" in task
     assert "Aircraft.Fuselage.LENGTH: 37.68" in task
     assert "—" not in task.split("BASE")[0].split("IMPORTANT")[1][:2000] or True
+
+
+# ---- B133: measured sweep and taper from tigl reach the mission ------------------------------------
+
+MEASURED_MORPH = {"component_uid": "Wing1", "new_parameters": {}, "warnings": [],
+                  "geometry_morph": {"rebuilt": True,
+                                     "before": {"span": 33.91, "reference_area": 122.78, "aspect_ratio": 9.37},
+                                     "after": {"span": 36.0, "reference_area": 140.0, "aspect_ratio": 9.257,
+                                               "sweep_deg": 21.65, "sweep_le_deg": 24.9,
+                                               "taper_ratio": 0.246, "mac_length": 4.4}}}
+
+
+def _wing_morph(result, updates=None):
+    dp.resolve_request("set_high_level_parameters",
+                       {"session_id": "t", "component_uid": "Wing1", "updates": updates or {"area": 140.0}})
+    dp.intercept_response("set_high_level_parameters", json.dumps(result))
+
+
+def test_a_morphs_measured_sweep_and_taper_are_captured():
+    _wing_morph(MEASURED_MORPH, updates={"area": 140.0, "sweep": 30.0})
+    wing = _store()["geometry_wing"]
+    assert wing["Aircraft.Wing.SWEEP"] == 21.65              # measured c/4, not the requested 30
+    assert wing["Aircraft.Wing.TAPER_RATIO"] == 0.246
+
+
+def test_the_mission_gets_the_measured_planform():
+    _wing_morph(MEASURED_MORPH)
+    p = dp.resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": {
+        "Aircraft.Wing.SWEEP": 36.46, "Aircraft.Wing.TAPER_RATIO": 0.359}})["parameters"]
+    assert p["Aircraft.Wing.SWEEP"] == 21.65 and p["Aircraft.Wing.TAPER_RATIO"] == 0.246
+
+
+def test_wing_summary_full_area_and_planform_are_used():
+    dp.resolve_request("get_wing_summary", {"session_id": "t", "wing_uid": "Wing1"})
+    dp.intercept_response("get_wing_summary", json.dumps({
+        "span": 33.9127, "reference_area": 61.3908, "full_reference_area": 122.7815,
+        "mac_length": 4.19, "sweep_deg": 21.65, "sweep_quarter_chord_deg": 21.65, "taper_ratio": 0.246}))
+    wing = _store()["geometry_wing"]
+    assert wing["Aircraft.Wing.AREA"] == pytest.approx(122.7815)
+    assert wing["Aircraft.Wing.ASPECT_RATIO"] == pytest.approx(9.3668, abs=1e-3)
+    assert wing["Aircraft.Wing.SWEEP"] == 21.65 and wing["Aircraft.Wing.TAPER_RATIO"] == 0.246
+
+
+def test_an_old_tigl_without_planform_injects_no_sweep_or_taper():
+    old = json.loads(json.dumps(MEASURED_MORPH))
+    for k in ("sweep_deg", "sweep_le_deg", "taper_ratio"):
+        old["geometry_morph"]["after"].pop(k)
+    _wing_morph(old)
+    wing = _store()["geometry_wing"]
+    assert "Aircraft.Wing.SWEEP" not in wing and "Aircraft.Wing.TAPER_RATIO" not in wing
+
+
+def test_a_mission_with_the_wrong_taper_is_refused():
+    _wing_morph(MEASURED_MORPH)
+    _store()["design_params_applied"] = {"Aircraft.Wing.AREA": 140.0, "Aircraft.Wing.ASPECT_RATIO": 9.257,
+                                         "Aircraft.Wing.SWEEP": 21.65, "Aircraft.Wing.TAPER_RATIO": 0.359}
+    refusal = gg.mission_off_geometry("run_simulation", {})
+    assert refusal is not None and "TAPER_RATIO" in refusal["error"]

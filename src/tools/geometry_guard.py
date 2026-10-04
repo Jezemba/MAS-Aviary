@@ -128,6 +128,8 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
 # -- Geometry authority: the mission may only fly the geometry's wing ------------------------------
 
 _WING_CHECK = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO",
+               # B133: measured planform (keys absent until tigl reports them)
+               "Aircraft.Wing.SWEEP", "Aircraft.Wing.TAPER_RATIO",
                # B133: a reshaped fuselage must reach the mission too (keys absent until a fuselage morph)
                "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT", "Aircraft.Fuselage.MAX_WIDTH")
 
