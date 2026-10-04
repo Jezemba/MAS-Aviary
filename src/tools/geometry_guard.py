@@ -127,7 +127,9 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
 
 # -- Geometry authority: the mission may only fly the geometry's wing ------------------------------
 
-_WING_CHECK = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO")
+_WING_CHECK = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO",
+               # B133: a reshaped fuselage must reach the mission too (keys absent until a fuselage morph)
+               "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT", "Aircraft.Fuselage.MAX_WIDTH")
 
 
 def mission_off_geometry(tool_name: str, resolved: dict) -> dict | None:
@@ -152,7 +154,8 @@ def mission_off_geometry(tool_name: str, resolved: dict) -> dict | None:
             return None
         state = get_design_state()
         store = (getattr(state, "data_store", None) or {}) if state else {}
-        wing = store.get("geometry_wing") or {}
+        wing = dict(store.get("geometry_wing") or {})
+        wing.update(store.get("geometry_fuselage") or {})         # B133: fuselage is geometry too
         applied = store.get("design_params_applied") or {}
         session = ((getattr(state, "sessions", None) or {}).get("aviary")) if state else None
     except Exception:      # pragma: no cover - a guard problem must never block work
@@ -181,7 +184,8 @@ def mission_off_geometry(tool_name: str, resolved: dict) -> dict | None:
             "The mission would fly a different wing from the geometry (" + detail + "). Geometry is "
             "authoritative for the wing, and CFD and structural mass were computed on the geometry's. "
             f"Call set_aircraft_parameters(session_id='{session or '<aviary session>'}', parameters={{...}}) "
-            "-- the wing's AREA, ASPECT_RATIO and SWEEP are filled in from the geometry automatically, "
+            "-- the wing's AREA and ASPECT_RATIO (and a reshaped fuselage) are filled in from the geometry "
+            "automatically, "
             "you only need to pass anything else you want to change -- then run_simulation again."
         ),
         "geometry_wing": {k: v for k, v in wing.items() if not k.startswith("_")},

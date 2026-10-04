@@ -151,8 +151,10 @@ def test_row6_a_changed_design_runs_normally(srv):
     call(m, "agent_1", session_id="g")
     call(geo, "agent_1", session_id="g", updates={"area": 140.0})
     assert call(m, "agent_2", session_id="g")["success"] is True
-    assert call(m, "agent_1", session_id="g", component_uid="Wing2")["success"] is True   # different args
-    assert srv.calls["generate_volume_mesh"] == 3
+    # B130: component_uid is dropped (the whole aircraft is always meshed), so asking for "Wing2" is
+    # the same mesh of the same design -- a duplicate, not different work.
+    assert call(m, "agent_1", session_id="g", component_uid="Wing2")["error_code"] == "ALREADY_DONE"
+    assert srv.calls["generate_volume_mesh"] == 2
 
 
 def test_row6b_a_morph_that_did_not_rebuild_is_not_a_changed_design(srv):

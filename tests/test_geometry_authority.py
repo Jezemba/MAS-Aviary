@@ -74,11 +74,12 @@ def test_the_morphed_summary_gives_the_morphs_own_full_area():
     assert _wing()["Aircraft.Wing.ASPECT_RATIO"] == pytest.approx(10.2811, abs=1e-3)
 
 
-def test_a_rebuilt_morph_is_captured_with_its_sweep():
+def test_a_rebuilt_morph_is_captured_without_the_requested_sweep():
+    """B133: the requested sweep is a tigl positioning angle, not Aviary's quarter-chord sweep."""
     _morph()
     assert _wing()["Aircraft.Wing.AREA"] == pytest.approx(200.012, abs=1e-2)
     assert _wing()["Aircraft.Wing.ASPECT_RATIO"] == pytest.approx(10.2811, abs=1e-3)
-    assert _wing()["Aircraft.Wing.SWEEP"] == 25.0
+    assert "Aircraft.Wing.SWEEP" not in _wing()
 
 
 def test_an_ignored_sweep_key_does_not_become_the_missions_sweep():
@@ -112,7 +113,7 @@ def test_the_mission_gets_the_geometrys_wing_whatever_it_asked_for():
     p = resolved["parameters"]
     assert p["Aircraft.Wing.AREA"] == pytest.approx(200.012, abs=1e-2)
     assert p["Aircraft.Wing.ASPECT_RATIO"] == pytest.approx(10.2811, abs=1e-3)
-    assert p["Aircraft.Wing.SWEEP"] == 25.0
+    assert "Aircraft.Wing.SWEEP" not in p                    # B133: no measured sweep to impose
     assert p["Aircraft.Engine.SCALE_FACTOR"] == 1.3          # non-geometric: the mission's own
 
 

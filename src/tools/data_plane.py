@@ -481,6 +481,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_cycle_outputs(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 _capture_geometry_wing(tool_name, data)
+                _capture_geometry_fuselage(tool_name, data)
                 _track_morph_export(tool_name, data)
                 _annotate_geometry_authority(tool_name, data)
                 _capture_applied_design(tool_name, data)
@@ -508,6 +509,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_cycle_outputs(tool_name, response)
         _capture_param_bounds(tool_name, response)
         _capture_geometry_wing(tool_name, response)
+        _capture_geometry_fuselage(tool_name, response)
         _track_morph_export(tool_name, response)
         _annotate_geometry_authority(tool_name, response)
         _capture_applied_design(tool_name, response)
@@ -731,6 +733,9 @@ import threading as _threading
 
 _call_ctx = _threading.local()
 _GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP")
+# B133: the fuselage is geometry too. tigl measures it (OCC bounding box) in every fuselage morph.
+_GEOMETRY_FUSELAGE_KEYS = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
+                           "Aircraft.Fuselage.MAX_WIDTH")
 _GEOMETRY_TOLERANCE = 0.02
 
 
@@ -844,11 +849,9 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
         except (KeyError, TypeError, ValueError, ZeroDivisionError):
             return
         record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
-        # Sweep only when the morph actually read it -- tigl-mcp's _wing_targets reads `sweep`,
-        # not `sweep_deg` (B105), so an ignored key must not become the mission's sweep.
-        sweep = (ctx.get("updates") or {}).get("sweep")
-        if isinstance(sweep, (int, float)):
-            record["Aircraft.Wing.SWEEP"] = float(sweep)
+        # B133: the REQUESTED sweep is a tigl positioning angle, not the quarter-chord sweep Aviary
+        # uses, and the morph does not achieve it exactly. Only a measured sweep may reach the
+        # mission (see the get_wing_summary branch below); tigl reports none yet.
     elif tool_name == "get_wing_summary":
         if not _is_main_wing(getattr(_call_ctx, "wing_uid", None)):
             return
@@ -895,11 +898,33 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
                 record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"], tool_name)
 
 
+def _capture_geometry_fuselage(tool_name: str, data: dict) -> None:
+    """Record the fuselage tigl measured after a morph (B133): length, max height, max width."""
+    if _design_state is None or tool_name != "set_high_level_parameters" or not isinstance(data, dict):
+        return
+    morph = data.get("geometry_morph")
+    after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
+    if not isinstance(after, dict) or after.get("length") is None:
+        return                                  # not a fuselage morph (a wing reports span/area)
+    try:
+        record = {"Aircraft.Fuselage.LENGTH": float(after["length"]),
+                  "Aircraft.Fuselage.MAX_HEIGHT": float(after["height"]),
+                  "Aircraft.Fuselage.MAX_WIDTH": float(after["width"])}
+    except (KeyError, TypeError, ValueError):
+        return
+    record["_source"] = tool_name
+    _design_state.data_store["geometry_fuselage"] = record
+    logger.info("[geometry-authority] fuselage is now LENGTH %.3f m, HEIGHT %.3f m, WIDTH %.3f m",
+                record["Aircraft.Fuselage.LENGTH"], record["Aircraft.Fuselage.MAX_HEIGHT"],
+                record["Aircraft.Fuselage.MAX_WIDTH"])
+
+
 def _apply_geometry_authority(resolved: dict) -> None:
-    """set_aircraft_parameters: the wing keys come from the geometry, whatever the caller passed."""
+    """set_aircraft_parameters: the wing and fuselage keys come from the geometry, whatever the caller passed."""
     if _design_state is None or design_authority() != "geometry":
         return
-    wing = _design_state.data_store.get("geometry_wing") or {}
+    wing = dict(_design_state.data_store.get("geometry_wing") or {})
+    wing.update(_design_state.data_store.get("geometry_fuselage") or {})
     if not wing:
         return
     params = resolved.get("parameters")
@@ -907,7 +932,7 @@ def _apply_geometry_authority(resolved: dict) -> None:
         params = {}
         resolved["parameters"] = params
     used, overrode = {}, {}
-    for key in _GEOMETRY_WING_KEYS:
+    for key in _GEOMETRY_WING_KEYS + _GEOMETRY_FUSELAGE_KEYS:
         if wing.get(key) is None:
             continue
         value = round(float(wing[key]), 4)
@@ -929,10 +954,11 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
     last = _design_state.data_store.pop("_geometry_authority_last", None)
     if not last or not last.get("used"):
         return
-    note = ("The wing's AREA / ASPECT_RATIO / SWEEP are taken from the current CPACS geometry -- "
-            "geometry is authoritative for the wing. To change the wing, reshape it with "
-            "set_high_level_parameters(component_uid=<main wing>, updates={'area': ..., "
-            "'aspect_ratio': ..., 'sweep': ...}); these values then follow automatically.")
+    note = ("The wing's AREA / ASPECT_RATIO (and the fuselage's LENGTH / MAX_HEIGHT / MAX_WIDTH once it "
+            "has been reshaped) are taken from the current CPACS geometry -- geometry is authoritative. "
+            "To change them, reshape the geometry with set_high_level_parameters(component_uid=<main wing>, "
+            "updates={'area': ..., 'aspect_ratio': ..., 'sweep': ...}) or (component_uid=<fuselage>, "
+            "updates={'length': ..., 'diameter': ...}); these values then follow automatically.")
     if last.get("overrode"):
         note += " Values you passed that differed were replaced: " + ", ".join(
             f"{k.split('.')[-1]} {v['asked']} -> {v['used']}" for k, v in last["overrode"].items()) + "."
@@ -1064,9 +1090,12 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     deck and no parameter carries SFC into fuel burn (B3) -- but the run is now recorded,
     which is what the mission call requires for this design.
     """
-    if _design_state is None or tool_name != "run_cycle":
+    if _design_state is None or tool_name not in ("run_cycle", "get_outputs"):
         return
-    outputs = data.get("outputs")
+    # B129: get_outputs reads the same converged values (under "values"). Capturing only run_cycle
+    # cost two of three attempts of a link when the agent asked run_cycle for wrong names and then
+    # read perf.TSFC correctly with get_outputs.
+    outputs = data.get("outputs") if tool_name == "run_cycle" else data.get("values")
     if not isinstance(outputs, dict):
         return
     from src.tools import coupling as _coupling
@@ -1080,7 +1109,7 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
             number = float(value[0] if isinstance(value, list) and value else value)
         except (TypeError, ValueError):
             continue
-        _coupling.put_var(_design_state, var, number, source_tool="run_cycle")
+        _coupling.put_var(_design_state, var, number, source_tool=tool_name)
         captured[var] = number
     if not captured:
         return          # a cycle that resolved nothing is not a cycle result (pycycle-mcp
@@ -1088,7 +1117,7 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     _design_state.data_store["prop_cycle_outputs"] = captured
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
-    logger.info("Captured engine cycle from run_cycle: %s", captured)
+    logger.info("Captured engine cycle from %s: %s", tool_name, captured)
 
 
 def _capture_component_uids(tool_name: str, data: dict) -> None:
@@ -1786,6 +1815,18 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # reproduced the pre-fix fuel to within 0.4 kg. Inject them here, at the tool boundary, where
     # AVION_COARSE_MESH already overrides the same three arguments. A value the caller chose
     # explicitly always wins.
+    # B130: mesh the WHOLE aircraft. With a component_uid, tigl exports that one component without
+    # mirroring it, so every solve of the two-machine study (54 of 54) was an isolated starboard wing:
+    # no fuselage, no tails, root sealed. Without one, tigl exports the whole configuration with the
+    # symmetric halves mirrored (tigl-mcp B115). Measured on D150 with the server unchanged: whole
+    # aircraft, 2,319,096 cells, converged, CL 0.240 / CD +0.00069 at AOA 2.
+    if tool_name == "generate_volume_mesh" and resolved.get("component_uid") is not None:
+        dropped = resolved.pop("component_uid")
+        if _design_state is not None:
+            _design_state.data_store["_mesh_component_dropped"] = dropped
+        logger.info("[B130] generate_volume_mesh: ignored component_uid=%r, meshing the whole aircraft",
+                    dropped)
+
     if tool_name == "generate_volume_mesh" and os.environ.get("AVION_COARSE_MESH") != "1":
         try:
             from src.config.canonical import load_canonical
@@ -1859,8 +1900,14 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         if resolved.get("ref_area") is None:
             _area = _cpl.get_var(_design_state, "geom.reference_area")
             if _area:
-                resolved["ref_area"] = float(_area)
-                logger.info("Injected computed REF_AREA=%.3f into %s", _area, tool_name)
+                # B131: the registry holds the SEMI-span area (get_wing_summary's convention, kept
+                # because the wetted-area ratio below pairs it with the semi-span wetted area). The
+                # mesh is the whole aircraft (B130), so SU2 must normalise by the FULL wing area;
+                # the semi value would double CL and CD. su2-mcp's own CPACS default is the full
+                # 122.4 m^2 for the D150 baseline.
+                resolved["ref_area"] = 2.0 * float(_area)
+                logger.info("Injected computed REF_AREA=%.3f (full wing) into %s",
+                            resolved["ref_area"], tool_name)
         if resolved.get("ref_length") is None:
             _mac = _cpl.get_var(_design_state, "geom.mac_length")
             if _mac:
@@ -1936,6 +1983,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _inject_phase_k_wing_mass(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
         _inject_phase_k_b_fn_des(resolved)
+        _inject_cycle_flight_condition(resolved)
 
     return resolved
 
@@ -1955,6 +2003,37 @@ _AVIARY_BENCH_WING_MASS_KG = 5998.0
 # 1.25× climb thrust margin). For MTOM=73 t → 5,920 lbf, matching
 # pycycle HBTF's default Fn_DES of 5,900 lbf within 0.3%.
 _FN_DES_PER_KG_LBF = 0.0811
+
+
+def _inject_cycle_flight_condition(resolved: dict) -> None:
+    """Size the engine at the mission cruise point (B132).
+
+    pycycle's HBTF defaults to fc.alt 35,000 ft / fc.MN 0.8, while SU2 and the mission fly the
+    canonical cruise (M0.78, FL330). Fill fc.alt / fc.MN from the canonical mission when the caller
+    did not set them; a value the caller chose explicitly always wins.
+    """
+    values = resolved.get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(values, dict):
+        return
+    try:
+        from src.config.canonical import load_canonical
+
+        mission = load_canonical().get("mission", {}) or {}
+    except Exception:      # pragma: no cover - never block a cycle on config
+        return
+    added = {}
+    for name, key in (("fc.alt", "cruise_altitude_ft"), ("fc.MN", "cruise_mach")):
+        if name not in values and mission.get(key) is not None:
+            values[name] = float(mission[key])
+            added[name] = values[name]
+    if added:
+        resolved["values"] = values
+        logger.info("[B132] pycycle design point from the mission: %s", added)
 
 
 def _inject_phase_k_b_fn_des(resolved: dict) -> None:

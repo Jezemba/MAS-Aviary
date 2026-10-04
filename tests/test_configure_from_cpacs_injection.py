@@ -48,7 +48,8 @@ class TestComputedReferencesInjected:
     def test_ref_area_and_length_come_from_captured_geometry(self):
         _capture_geometry()
         out = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/f25.xml"})
-        assert out["ref_area"] == pytest.approx(65.985)
+        # B131: the registry holds the semi-span area; the whole-aircraft solve gets the full wing.
+        assert out["ref_area"] == pytest.approx(2 * 65.985)
         assert out["ref_length"] == pytest.approx(4.193)
 
     def test_references_track_a_morphed_design(self):
@@ -57,8 +58,8 @@ class TestComputedReferencesInjected:
         first = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/a.xml"})
         _capture_geometry(reference_area=65.985, mac_length=4.193)
         second = resolve_request("configure_from_cpacs", {"cpacs_file_path": "/tmp/a.xml"})
-        assert first["ref_area"] == pytest.approx(122.4)
-        assert second["ref_area"] == pytest.approx(65.985)
+        assert first["ref_area"] == pytest.approx(2 * 122.4)       # B131: full wing
+        assert second["ref_area"] == pytest.approx(2 * 65.985)
 
     def test_agent_supplied_reference_is_respected(self):
         _capture_geometry()
@@ -162,7 +163,7 @@ class TestSessionCreationGetsTheSameInjections:
     def test_computed_references_are_injected(self):
         _capture_geometry(reference_area=58.505, mac_length=3.282)
         out = resolve_request("create_su2_session", {"base_name": "f25"})
-        assert out["ref_area"] == pytest.approx(58.505)
+        assert out["ref_area"] == pytest.approx(2 * 58.505)        # B131: full wing
         assert out["ref_length"] == pytest.approx(3.282)
 
     def test_caller_supplied_values_still_win(self):
