@@ -32,11 +32,14 @@ def fresh(monkeypatch, tmp_path):
 
 def _tool(name, response=None, raises=None):
     class T(Tool):
-        inputs = {"session_id": {"type": "string", "description": "s", "nullable": True}}
+        # max_runtime_seconds mirrors su2-mcp's run_su2_solver schema: the middleware now always sets
+        # it (B135 floor), so a stub without it would reject the call.
+        inputs = {"session_id": {"type": "string", "description": "s", "nullable": True},
+                  "max_runtime_seconds": {"type": "number", "description": "s", "nullable": True}}
         output_type = "string"
         description = "fake"
 
-        def forward(self, session_id=None):
+        def forward(self, session_id=None, max_runtime_seconds=None):
             if raises:
                 raise raises
             return json.dumps(response)

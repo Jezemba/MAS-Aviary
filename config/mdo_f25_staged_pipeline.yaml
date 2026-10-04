@@ -130,8 +130,8 @@ mdo_f25_pipeline:
              different mesh, the call will still work, but it's much
              cheaper to copy verbatim.
           4. run_su2_solver(session_id=<su2 sid>, solver="SU2_CFD",
-             max_runtime_seconds=300, capture_log_lines=100). Expect
-             ~210 s wall-clock. If success=false, READ THE log_tail
+             max_runtime_seconds=1800, capture_log_lines=100). Expect
+             ~10 minutes wall-clock (whole aircraft). If success=false, READ THE log_tail
              field for the SU2 error message — do NOT just retry.
           5. read_history_csv(session_id=<su2 sid>, relative_path="history.csv",
              max_rows=1000, skip_rows=0). The LAST row's CL and CD

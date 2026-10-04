@@ -93,7 +93,7 @@ agents:
          # EULER + JST + 3-level multigrid at CFL=20 (SU2 ONERA M6 recipe), RMS_DENSITY to -6.
          Mesh: set_mesh(session_id, mesh_base64), generate_mesh_from_step(session_id, step_base64),
                analyze_mesh(session_id)
-         Solve: run_su2_solver(session_id, solver="SU2_CFD", max_runtime_seconds=600)
+         Solve: run_su2_solver(session_id, solver="SU2_CFD", max_runtime_seconds=1800)
          Results: list_result_files, read_history_csv (CL, CD, residuals),
                   sample_surface_solution (Cf for separation check), get_result_file_base64
          F25 cruise: Mach 0.78, Re ~30M, CL target 0.593, L/D target 19.5

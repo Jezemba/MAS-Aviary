@@ -247,3 +247,19 @@ def test_a_mission_with_the_wrong_taper_is_refused():
                                          "Aircraft.Wing.SWEEP": 21.65, "Aircraft.Wing.TAPER_RATIO": 0.359}
     refusal = gg.mission_off_geometry("run_simulation", {})
     assert refusal is not None and "TAPER_RATIO" in refusal["error"]
+
+
+# ---- B135: the whole-aircraft solve gets the time it needs -----------------------------------------
+
+@pytest.mark.parametrize("asked", [None, 300, 600])
+def test_a_short_su2_budget_is_raised_to_the_floor(asked):
+    kwargs = {"session_id": "s"}
+    if asked is not None:
+        kwargs["max_runtime_seconds"] = asked
+    out = dp.resolve_request("run_su2_solver", kwargs)
+    assert out["max_runtime_seconds"] == dp.SU2_MIN_RUNTIME_SECONDS == 1800
+
+
+def test_a_longer_su2_budget_is_kept():
+    assert dp.resolve_request("run_su2_solver", {"session_id": "s", "max_runtime_seconds": 3000})[
+        "max_runtime_seconds"] == 3000

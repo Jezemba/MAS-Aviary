@@ -738,6 +738,7 @@ _GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Airc
 _GEOMETRY_FUSELAGE_KEYS = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                            "Aircraft.Fuselage.MAX_WIDTH")
 _GEOMETRY_TOLERANCE = 0.02
+SU2_MIN_RUNTIME_SECONDS = 1800
 
 
 def design_authority() -> str:
@@ -1843,6 +1844,19 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _design_state.data_store["_mesh_component_dropped"] = dropped
         logger.info("[B130] generate_volume_mesh: ignored component_uid=%r, meshing the whole aircraft",
                     dropped)
+
+    # The whole-aircraft mesh (B130 + B117, ~2.3M cells) converges in ~580 s on the 5090 boxes; the
+    # half-wing solve took ~160 s and the prompts told agents to pass 300. The first live link on the
+    # new mesh timed out at exactly 300 s. Hold a floor; the call watchdog allows 3600 s.
+    if tool_name == "run_su2_solver":
+        try:
+            asked = float(resolved.get("max_runtime_seconds") or 0)
+        except (TypeError, ValueError):
+            asked = 0.0
+        if asked < SU2_MIN_RUNTIME_SECONDS:
+            resolved["max_runtime_seconds"] = SU2_MIN_RUNTIME_SECONDS
+            logger.info("[B135] run_su2_solver max_runtime_seconds %s -> %s", asked or "unset",
+                        SU2_MIN_RUNTIME_SECONDS)
 
     if tool_name == "generate_volume_mesh" and os.environ.get("AVION_COARSE_MESH") != "1":
         try:

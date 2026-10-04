@@ -147,8 +147,8 @@ mdo_f25_graph:
            mesh; the data-plane middleware also auto-corrects common
            guesses (`wall`, `wing`, etc.).
         4. Call run_su2_solver(session_id=<SU2_SESSION_ID>,
-           solver="SU2_CFD", max_runtime_seconds=300,
-           capture_log_lines=100). Expect ~210 s. If success=false,
+           solver="SU2_CFD", max_runtime_seconds=1800,
+           capture_log_lines=100). Expect ~10 minutes (whole aircraft). If success=false,
            READ the log_tail — do NOT just retry blindly.
         5. Call read_history_csv(session_id=<SU2_SESSION_ID>,
            relative_path="history.csv", max_rows=1000, skip_rows=0).

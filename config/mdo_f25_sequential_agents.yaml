@@ -63,9 +63,12 @@ templates:
           Only these keys move the geometry. span, root_chord, tip_chord,
           dihedral, twist_tip and taper are NOT inputs: span follows from area
           and aspect_ratio, and taper is a fixed property of this wing.
-          Change one or two wing keys per call: area, aspect_ratio and sweep
-          together miss their targets. Read the achieved values from the
-          response's geometry_morph.after block.
+          Pass ONLY the keys you want to change. Passing a key always
+          reshapes, even at its current value: sweep sets EVERY section's
+          positioning angle (this wing's inboard sections are at 0 deg), so
+          sweep 27.33 is not a no-op. Change one or two wing keys per call:
+          area, aspect_ratio and sweep together miss their targets. Read the
+          achieved values from the response's geometry_morph.after block.
 
           ── COUPLING EFFECTS ──────────────────────────────────────────────
 
@@ -274,10 +277,9 @@ templates:
                AERO_NOTES: "SU2 binaries not available — using F25 reference"
 
           5. Call run_su2_solver(session_id, solver="SU2_CFD",
-             max_runtime_seconds=300). The 300 s budget is the hard ceiling
-             for the coarse-mesh Euler solve; do NOT use 600 or higher,
-             that risks busting the per-repeat pipeline timeout. If the
-             solver errors out, fall back to F25 reference values.
+             max_runtime_seconds=1800). The whole-aircraft Euler solve
+             takes about 10 minutes. If the solver errors out, fall back to
+             F25 reference values.
 
           6. Call list_result_files(session_id) to find the history file
              produced by SU2 (typically history.csv or similar).
