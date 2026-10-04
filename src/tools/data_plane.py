@@ -1777,6 +1777,30 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # Force a COARSER mesh at the tool boundary so SU2 solves fast. Values chosen so
     # the Euler solve still converges enough to inject a real CD (verified via a
     # timed run_link): small domain + large max cell size = far fewer cells.
+    # B117: the canonical mesh must actually reach the mesher. `far_field_distance` is the only
+    # one with a prompt placeholder (<<FAR_FIELD_DISTANCE>>); `mesh_size_min` and `mesh_size_max`
+    # have none, so an agent cannot pass what it is never told, and tigl falls back to its own
+    # calibrated defaults (~0.663 / 17.7 -> ~670k cells). That is the resolution the B116 study
+    # REJECTED: at it the baseline's CD comes back -0.0124 where induced drag is +0.0007. The
+    # settings existed in config and changed nothing, which is why fullphys_seqstaged link 1
+    # reproduced the pre-fix fuel to within 0.4 kg. Inject them here, at the tool boundary, where
+    # AVION_COARSE_MESH already overrides the same three arguments. A value the caller chose
+    # explicitly always wins.
+    if tool_name == "generate_volume_mesh" and os.environ.get("AVION_COARSE_MESH") != "1":
+        try:
+            from src.config.canonical import load_canonical
+
+            geometry = load_canonical().get("geometry", {}) or {}
+        except Exception:      # pragma: no cover - never block meshing on config
+            geometry = {}
+        for arg, key in (("far_field_distance", "far_field_distance"),
+                         ("mesh_size_min", "mesh_size_min"),
+                         ("mesh_size_max", "mesh_size_max")):
+            value = geometry.get(key)
+            if value is not None and resolved.get(arg) is None:
+                resolved[arg] = value
+                logger.info("[B117] mesh %s = %s (canonical)", arg, value)
+
     if tool_name == "generate_volume_mesh" and os.environ.get("AVION_COARSE_MESH") == "1":
         resolved["far_field_distance"] = 5.0
         resolved["mesh_size_max"] = 25.0
