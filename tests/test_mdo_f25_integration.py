@@ -105,7 +105,7 @@ class TestMultiMCPDiscovery:
             assert len(connector.get_tools_for_server("su2")) >= 10, "su2 should have 10+ tools"
             assert len(connector.get_tools_for_server("mass")) >= 3, "mass should have 3+ tools"
             assert len(connector.get_tools_for_server("pycycle")) >= 8, "pycycle should have 8+ tools"
-            assert len(connector.get_tools_for_server("aviary")) >= 9, "aviary should have 9+ tools"
+            assert len(connector.get_tools_for_server("aviary")) >= 8, "aviary should have 8+ tools"  # 8 since aviary-mcp 535906f
 
             # Total: 54 tools.
             assert len(tools) >= 40, f"Expected 40+ total tools, got {len(tools)}"
@@ -160,7 +160,7 @@ class TestMultiMCPDiscovery:
 
         try:
             tools = connector.connect()
-            assert len(tools) >= 9, "Should still get aviary tools"
+            assert len(tools) >= 8, "Should still get aviary tools"  # 8 since aviary-mcp 535906f
             assert "bogus" in connector.failed_servers
             assert "aviary" in connector.connected_servers
         finally:

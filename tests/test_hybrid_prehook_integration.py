@@ -180,7 +180,8 @@ class TestHybridTaskText:
         """Should clearly state session is already created and configured."""
         task = build_task_with_session("base", "s1")
         assert "already been created" in task.lower()
-        assert "setup is done" in task.lower()
+        # "Session setup is done." was dropped in 1174b56 (2026-08-17); the refusal states it now.
+        assert "refuses create_session" in task
 
 
 # ---------------------------------------------------------------------------
