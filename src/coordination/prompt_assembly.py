@@ -100,10 +100,17 @@ def parse_recommendation(integrator_text: str | None) -> dict:
         except ValueError:
             pass
     for key in _RECOMMENDATION_KEYS:
-        if key not in found:
-            m = re.search(rf"^\s*{key}\s*:\s*(.+)$", text, flags=re.M)
-            if m:
-                found[key] = m.group(1).strip().strip("'\"")
+        if key in found:
+            continue
+        # Almost-JSON is common (v2b143 link 0 wrote "CONSTRAINTS_PASSED": 0/2, which no JSON
+        # parser accepts), so match the quoted form directly before the KEY: value line form.
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            found[key] = m.group(1).replace('\\"', '"').strip()
+            continue
+        m = re.search(rf"^\s*{key}\s*:\s*(.+)$", text, flags=re.M)
+        if m:
+            found[key] = m.group(1).strip().strip("'\"")
     return found
 
 
@@ -125,8 +132,6 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
     if cpacs and cpacs != baseline:
         # The prompts name the baseline by its absolute path on the run machine; match the file,
         # not the machine (aipexws3 and aipexws5 differ only in the home directory).
-        import re
-
         text = re.sub(r"\S*/mass-mcp/tests/fixtures/D150_simple\.xml", lambda _m: cpacs, text)
     if previous_outputs:
         prev_name, prev_content, _ = previous_outputs[-1]
@@ -138,7 +143,9 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
             lines = "\n".join(f"  {k}: {rec[k]}" for k in _RECOMMENDATION_KEYS if k in rec)
             text += f"\n\nRECOMMENDATION from the previous iteration (mdo_integrator):\n{lines}"
     elif carry_over:
-        integrator = (carry_over.get("previous_integrator_design_state") or "").strip()
+        # The framework appends its termination keyword to the last message; it is not the integrator's.
+        integrator = re.sub(r"\s*TASK_COMPLETE\s*$", "",
+                            (carry_over.get("previous_integrator_design_state") or "").strip())
         if integrator:
             text += f"\n\nDESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}"
         if start:

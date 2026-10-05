@@ -1,0 +1,16 @@
+{
+  "link": 1,
+  "previous_integrator_design_state": "{\"ITERATION\": 1, \"MTOM_KG\": 91660.59, \"FUEL_BURNED_KG\": 18197.03, \"OEM_KG\": 72103, \"OPTIMALITY_GAP_PCT\": 6.96, \"CONSTRAINTS_PASSED\": 0/2, \"CONSTRAINTS_FAILED\": [\"fuel_burned_kg <= 15000 (-3197 kg)\", \"gtow_kg <= 90000 (-1661 kg)\"], \"UNCHECKED_CONSTRAINTS\": \"C4 (wing fuel volume ratio >= 1.1), C10 (buffet/flutter)\", \"MOST_VIOLATED\": \"fuel_burned_kg (-3197 kg)\", \"RECOMMENDATION_TO\": \"aerodynamics_analyst\", \"RECOMMENDED_CHANGE\": \"Decrease wing sweep angle from 27.33\u00b0 to 25\u00b0 to reduce drag and improve lift-to-drag ratio\", \"VERDICT\": \"RETRY\"}\nTASK_COMPLETE",
+  "starting_design": {
+    "CPACS_FILE": "/home/aipexws5/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml",
+    "Aircraft.Wing.AREA": 122.78,
+    "Aircraft.Wing.ASPECT_RATIO": 9.37,
+    "Aircraft.Wing.SWEEP": 21.65,
+    "Aircraft.Wing.TAPER_RATIO": 0.246,
+    "Aircraft.Fuselage.LENGTH": 37.68,
+    "Aircraft.Fuselage.MAX_HEIGHT": 4.15,
+    "Aircraft.Fuselage.MAX_WIDTH": 3.96,
+    "Aircraft.Engine.SCALE_FACTOR": 1.0
+  },
+  "baseline_cpacs": "/home/aipexws5/Jessica/Avion/mass-mcp/tests/fixtures/D150_simple.xml"
+}

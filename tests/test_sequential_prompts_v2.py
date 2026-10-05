@@ -352,3 +352,22 @@ def test_the_named_stage_gets_the_recommendation_and_the_others_do_not():
     # No carry-over (first link): nothing added.
     assert "RECOMMENDATION from" not in prompt_assembly.verbatim_stage_input(
         p["propulsion_analyst"], prev, None, "propulsion_analyst")
+
+
+def test_the_real_almost_json_from_v2b143_routes_to_aero():
+    """v2b143 link 0's integrator wrote "CONSTRAINTS_PASSED": 0/2 (not valid JSON); the first parser
+    returned {} and the aero stage of link 1 never received its recommendation."""
+    import json as _json
+
+    from src.coordination import prompt_assembly
+
+    carry = _json.loads((ROOT / "tests/fixtures_carry_over_v2b143.json").read_text())
+    rec = prompt_assembly.parse_recommendation(carry["previous_integrator_design_state"])
+    assert rec["RECOMMENDATION_TO"] == "aerodynamics_analyst"
+    assert rec["RECOMMENDED_CHANGE"].startswith("Decrease wing sweep angle from 27.33")
+    p = _her_prompts()
+    aero = prompt_assembly.verbatim_stage_input(p["aerodynamics_analyst"], [("geometry_engineer", "X", None)],
+                                                carry, "aerodynamics_analyst")
+    assert "RECOMMENDATION from the previous iteration (mdo_integrator):\n  RECOMMENDATION_TO: aerodynamics_analyst" in aero
+    first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry, "geometry_engineer")
+    assert "TASK_COMPLETE" not in first
