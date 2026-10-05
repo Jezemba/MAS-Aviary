@@ -33,7 +33,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
 | Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 40.40 | not set | deg |
 | Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
-| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass, aviary | 4.15 | 3 to 5.5 | m |
+| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | °R |
 | Fan pressure ratio | Set | pycycle: `fan.PR` | pycycle | 1.685 | 1.4 to 1.7 | none |
@@ -228,8 +228,8 @@ You are one stage in a multi-MCP MDO pipeline for the DLR-F25 aircraft design st
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp to create the simulation session and configure it with results from all upstream disciplines
-- Key Task: Take geometry, aero, structures, propulsion parameters to run the mission analysis
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2) and the wing mass (from mass-mcp).
+- Key Task: Check the applied values with read_design_json, set only the mission values you choose (for example Aircraft.Engine.SCALE_FACTOR), and validate
 
 DELIVERABLE
 Your output should be: Aviary session ID, mission configured, parameters set and validated

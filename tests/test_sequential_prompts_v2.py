@@ -313,3 +313,42 @@ def test_without_a_morph_the_prompt_keeps_the_baseline_path(tmp_path):
     p = _her_prompts()
     out = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry)
     assert out.startswith(p["geometry_engineer"])
+
+
+# ---- the previous iteration's recommendation reaches the stage it names (2026-10-05) ----------------
+
+LINES_FORMAT = ("DESIGN_STATE:\nITERATION: N/A\nRECOMMENDATION_TO: mission_architect\n"
+                "RECOMMENDED_CHANGE: Use set_aircraft_parameters with AREA=120.26 to align mission with geometry\n"
+                "MDO_REASONING: The simulation failed because mission parameters were not synchronized.\nVERDICT: RETRY")
+JSON_FORMAT = ('{"DESIGN_STATE": {"ITERATION": 1, "RECOMMENDATION_TO": "propulsion_analyst", '
+               '"RECOMMENDED_CHANGE": "Raise splitter.BPR to 7", "MDO_REASONING": "Fuel burn is 3726 kg over.", '
+               '"VERDICT": "CONTINUE"}}\nTASK_COMPLETE')
+
+
+def test_both_integrator_formats_parse():
+    from src.coordination.prompt_assembly import parse_recommendation
+
+    a = parse_recommendation(LINES_FORMAT)
+    assert a["RECOMMENDATION_TO"] == "mission_architect" and a["RECOMMENDED_CHANGE"].startswith("Use set_aircraft")
+    b = parse_recommendation(JSON_FORMAT)
+    assert b == {"RECOMMENDATION_TO": "propulsion_analyst", "RECOMMENDED_CHANGE": "Raise splitter.BPR to 7",
+                 "MDO_REASONING": "Fuel burn is 3726 kg over."}
+    assert parse_recommendation("no recommendation here") == {}
+
+
+def test_the_named_stage_gets_the_recommendation_and_the_others_do_not():
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
+    prev = [("structures_analyst", "DESIGN_STATE:\n  OEM_KG: 47164", None)]
+    prop = prompt_assembly.verbatim_stage_input(p["propulsion_analyst"], prev, carry, "propulsion_analyst")
+    assert prop.endswith("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
+                         "  RECOMMENDATION_TO: propulsion_analyst\n  RECOMMENDED_CHANGE: Raise splitter.BPR to 7\n"
+                         "  MDO_REASONING: Fuel burn is 3726 kg over.")
+    assert prop.startswith(p["propulsion_analyst"])
+    mission = prompt_assembly.verbatim_stage_input(p["mission_architect"], prev, carry, "mission_architect")
+    assert "RECOMMENDATION" not in mission.split(p["mission_architect"], 1)[1]
+    # No carry-over (first link): nothing added.
+    assert "RECOMMENDATION from" not in prompt_assembly.verbatim_stage_input(
+        p["propulsion_analyst"], prev, None, "propulsion_analyst")

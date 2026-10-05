@@ -17,6 +17,7 @@ block), which is how tool calling works; they are not repeated as prose.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 FRAMEWORK = "framework"
@@ -67,7 +68,51 @@ def read_carry_over() -> dict | None:
         return None
 
 
-def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None) -> str:
+_RECOMMENDATION_KEYS = ("RECOMMENDATION_TO", "RECOMMENDED_CHANGE", "MDO_REASONING")
+
+
+def parse_recommendation(integrator_text: str | None) -> dict:
+    """RECOMMENDATION_TO / RECOMMENDED_CHANGE / MDO_REASONING from an mdo_integrator DESIGN_STATE.
+
+    The integrator writes it either as `KEY: value` lines or as JSON (both seen in the
+    v2verbatim run); missing keys are left out.
+    """
+    import json
+    import re
+
+    text = integrator_text or ""
+    found: dict = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in _RECOMMENDATION_KEYS and not isinstance(v, (dict, list)) and k not in found:
+                    found[k] = str(v).strip()
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    start = text.find("{")
+    if start >= 0:
+        try:
+            walk(json.JSONDecoder().raw_decode(text[start:])[0])
+        except ValueError:
+            pass
+    for key in _RECOMMENDATION_KEYS:
+        if key not in found:
+            m = re.search(rf"^\s*{key}\s*:\s*(.+)$", text, flags=re.M)
+            if m:
+                found[key] = m.group(1).strip().strip("'\"")
+    return found
+
+
+def _stage_key(name: str | None) -> str:
+    return re.sub(r"[^a-z]+", "_", str(name or "").lower()).strip("_")
+
+
+def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None,
+                         stage_name: str | None = None) -> str:
     """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one).
 
     On a later iteration (carry_over given) every stage's prompt names the carried-forward
@@ -86,6 +131,12 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
     if previous_outputs:
         prev_name, prev_content, _ = previous_outputs[-1]
         text += f"\n\nDESIGN_STATE from the previous stage ({prev_name}):\n{prev_content}"
+        # The stage the previous iteration's integrator addressed also gets its recommendation
+        # (Jessica, 2026-10-05). The first stage already receives the whole DESIGN_STATE below.
+        rec = parse_recommendation((carry_over or {}).get("previous_integrator_design_state"))
+        if rec.get("RECOMMENDATION_TO") and stage_name and _stage_key(rec["RECOMMENDATION_TO"]) == _stage_key(stage_name):
+            lines = "\n".join(f"  {k}: {rec[k]}" for k in _RECOMMENDATION_KEYS if k in rec)
+            text += f"\n\nRECOMMENDATION from the previous iteration (mdo_integrator):\n{lines}"
     elif carry_over:
         integrator = (carry_over.get("previous_integrator_design_state") or "").strip()
         if integrator:
