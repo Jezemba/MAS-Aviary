@@ -17,26 +17,26 @@ stage_defaults:
 
     TOP-LEVEL AIRCRAFT REQUIREMENTS & CONSTRAINTS
     - Aircraft Type: Single aisle commercial aircraft
-    - Mission:       160 passengers | 1,500 nmi range | Mach 0.785 at FL350
-    - Objective:     Minimize fuel burn <= 8,500 kg
-    - Constraint:    Gross Takeoff Weight (GTOW) <= 72,000 kg
+    - Mission:       239 passengers | 2,500 nmi range | Mach 0.78 at FL330
+    - Objective:     Minimize fuel burn <= 15,000 kg
+    - Constraint:    Gross Takeoff Weight (GTOW) <= 90,000 kg
 
 
     GLOBAL DESIGN SPACE  
     The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized:
     | Variable | Type | Set in (tool: input) | Used by | Default | Range | Units |
     |---|---|---|---|---|---|---|
-    | Wing area | Set | tigl: `morph_wing(Wing1).target_area_m2` | su2, mass, aviary | 122.78 | 100 to 160 | m² |
-    | Wing aspect ratio | Set | tigl: `morph_wing(Wing1).target_aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
-    | Wing sweep angle | Set | tigl: `morph_wing(Wing1).target_sweep_deg` | su2, mass | 27.33 | 15 to 40 | deg |
-    | Horizontal tail area | Set | tigl: `morph_wing(Wing2H).target_area_m2` | su2 | 31.1 | not set | m² |
-    | Horizontal tail aspect ratio | Set | tigl: `morph_wing(Wing2H).target_aspect_ratio` | su2 | 4.98 | not set | none |
-    | Horizontal tail sweep angle | Set | tigl: `morph_wing(Wing2H).target_sweep_deg` | su2 | 32.21 | not set | deg |
-    | Vertical tail area | Set | tigl: `morph_wing(Wing3V).target_area_m2` | su2 | 21.5 | not set | m² |
-    | Vertical tail aspect ratio | Set | tigl: `morph_wing(Wing3V).target_aspect_ratio` | su2 | 1.61 | not set | none |
-    | Vertical tail sweep angle | Set | tigl: `morph_wing(Wing3V).target_sweep_deg` | su2 | 40.40 | not set | deg |
-    | Fuselage length | Set | tigl: `morph_fuselage.target_length_m` | su2, mass, aviary | 37.68 | 28 to 50 | m |
-    | Fuselage max diameter | Set | tigl: `morph_fuselage.target_diameter_m` | su2, mass, aviary | 4.15 | 3 to 5.5 | m |
+    | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.78 | 100 to 160 | m² |
+    | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
+    | Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 27.33 | 15 to 40 | deg |
+    | Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1 | not set | m² |
+    | Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.98 | not set | none |
+    | Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 32.21 | not set | deg |
+    | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2 | 21.5 | not set | m² |
+    | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
+    | Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 40.40 | not set | deg |
+    | Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
+    | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass, aviary | 4.15 | 3 to 5.5 | m |
     | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
     | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | °R |
     | Fan pressure ratio | Set | pycycle: `fan.PR` | pycycle | 1.685 | 1.4 to 1.7 | none |
@@ -51,7 +51,7 @@ stage_defaults:
     | Engine scale factor | Derived | framework: aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | 1.0 | 0.8 to 1.5 | none |
     | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
     | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
-    | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | not measured yet | follows geometry | deg |
+    | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
     | Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
     | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
     | Lift coefficient | Derived | framework: su2 result to aviary `Mission.Design.LIFT_COEFFICIENT` | aviary | from su2 | set by framework | none |
@@ -136,7 +136,7 @@ templates:
           fluid dynamics — computing lift, drag, and pressure distributions. You receive DESIGN_STATE from the previous stage and produce updated DESIGN_STATE for the next stage.
 
           DISCIPLINE FOCUS
-          - Domain: SU2 RANS solver on the mesh exported by the geometry stage
+          - Domain: SU2 Euler solver on the mesh exported by the geometry stage
           - Software/Tools: Use SU2 to compute lift, drag, and pressure distributions
           - Key Task: Take the volumetric mesh and compute deliverables below.
 
@@ -163,7 +163,7 @@ templates:
           IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value: get_valid_config_options (SU2 options)
 
           SESSION STATE FILE
-          Use Mesh File file at INSERT MESH FILE PATH
+          Use the mesh reference MESH_BASE64 from the geometry stage's DESIGN_STATE
         allowed_tools:
           - create_su2_session
           - close_su2_session
@@ -211,7 +211,7 @@ templates:
             FUSELAGE_MASS_KG: <value>
             EMPENNAGE_MASS_KG: <value>
             MTOM_KG_INPUT: <mTOM the tool used; it echoes the CPACS value>
-            SIZING_CONDITIONS: <pax / Mach / range the tool used; defaults 150 / 0.785 / 3500 until B132>
+            SIZING_CONDITIONS: <pax / Mach / range the tool used, from sizing_conditions>
             OEM_VS_BASELINE: <delta from the reference OEM, percent>
             STRUCTURAL_WARNINGS: <out-of-range or high-mass notes>
 
@@ -241,7 +241,7 @@ templates:
           - Key Task: Take geometry parameters to understand size of aircraft and design an engine
 
           DELIVERABLE
-          Your output should be: SFC, thrust, engine mass at design point, cycle convergence status
+          Your output should be: SFC, thrust at design point, cycle convergence status
 
           DESIGN_STATE:
             PYCYCLE_SESSION_ID: <uuid>
@@ -263,7 +263,7 @@ templates:
           IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
           SESSION STATE FILE
-          Use geometry sizing parameters file at Design.json (Need to create)
+          Use geometry sizing parameters file at design.json (read it with read_design_json)
         allowed_tools:
           - create_cycle_model
           - close_cycle_model
@@ -306,7 +306,7 @@ templates:
           IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
           SESSION STATE FILE
-          Use exsisting aviary session and use applicable parameters from design.json (Need to create)
+          Use exsisting aviary session and use applicable parameters from design.json (read it with read_design_json)
         allowed_tools:
           - get_design_space
           - create_session
@@ -351,7 +351,7 @@ templates:
           IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
           SESSION STATE FILE
-          Use exsisting aviary session and use applicable parameters from design.json (Need to create)
+          Use exsisting aviary session and use applicable parameters from design.json (read it with read_design_json)
         allowed_tools:
           - run_simulation
           - get_results
@@ -411,7 +411,7 @@ templates:
             OPTIMALITY_GAP_PCT: <value>%
             CONSTRAINTS_PASSED: <N>/<total>
             CONSTRAINTS_FAILED: <list of failed constraints with margins>
-            UNCHECKED_CONSTRAINTS: C4 (fuel volume), C10 (flutter)
+            UNCHECKED_CONSTRAINTS: C4 (wing fuel volume ratio >= 1.1), C10 (buffet and flutter); no tool checks them
             DISCIPLINARY_CONFLICTS: <identified tensions>
             MOST_VIOLATED: <constraint name and margin, or "all satisfied">
             RECOMMENDATION_TO: <geometry_engineer | aerodynamics_analyst | structures_analyst | propulsion_analyst | mission_architect>
@@ -422,7 +422,7 @@ templates:
           IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
           SESSION STATE FILE
-          Use exsisting aviary session and use applicable parameters from design.json (Need to create)
+          Use exsisting aviary session and use applicable parameters from design.json (read it with read_design_json)
         allowed_tools:
           - check_constraints
           - get_results

@@ -177,3 +177,27 @@ def test_a_second_runner_cannot_take_the_output_folder(tmp_path):
             "sys.exit(0 if acquire_output_lock(Path(%r)) else 3)") % (str(ROOT), str(tmp_path))
     other = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT))
     assert other.returncode == 3                                   # refused while this one holds it
+
+
+# ---- the run's files reach W&B ----------------------------------------------------------------------
+
+def test_run_files_and_the_log_are_uploaded(monkeypatch, tmp_path):
+    import scripts.stat_batch_runner as sbr
+
+    link = tmp_path / "repeat_000" / "mdo_f25_sequential_staged_pipeline"
+    link.mkdir(parents=True)
+    for name in ("knowledge_base.jsonl", "design.json", "result.json", "trace.json"):
+        (link / name).write_text("{}\n")
+    (link / "step_log_attempt1.jsonl").write_text(json.dumps(
+        {"seq": 1, "kind": "step", "agent": "geometry_engineer", "agent_step": 1, "generations": [],
+         "tool_calls": [], "observations": ""}) + "\n")
+    (tmp_path / "chain_anchor.json").write_text("{}")
+    log = tmp_path / "run.log"
+    log.write_text("console\n")
+    monkeypatch.setenv("SWEEP_LOG_PATH", str(log))
+    saved = []
+    monkeypatch.setattr(sbr.wandb, "save", lambda path, base_path=None, policy=None: saved.append(path))
+    sbr.upload_run_files(object(), tmp_path)
+    names = {Path(p).name for p in saved}
+    assert {"knowledge_base.jsonl", "design.json", "result.json", "trace.json", "chain_anchor.json",
+            "step_log_attempt1.jsonl", "step_log_attempt1.md", "run.log"} <= names

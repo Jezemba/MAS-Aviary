@@ -1805,7 +1805,54 @@ def run_stat_batch(
                 data=rows,
             )
             wandb.log({"results_table": table})
+        upload_run_files(wb_run, out_path)
         wandb.finish()
+
+
+# The files a reviewer needs from each link, uploaded to the W&B run when the batch ends.
+_RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "step_log_attempt*.jsonl", "step_log_attempt*.md",
+                      "design.json", "result.json", "trace.json", "chain_anchor.json")
+
+
+def upload_run_files(wb_run, out_path) -> list[str]:
+    """Upload the console log and every link's files to the W&B run (best effort, never raises).
+
+    The console log reached W&B only through the live mirror, which needs SWEEP_LOG_PATH and keeps a
+    400 KB tail. This uploads the whole log at the end, plus each link's step logs (rendered to
+    markdown here), knowledge base, design.json, result.json and trace.
+    """
+    uploaded: list[str] = []
+    if wb_run is None:
+        return uploaded
+    out_path = Path(out_path)
+    try:
+        renderer = None
+        try:
+            from scripts.render_step_log import render as renderer
+        except Exception:  # pragma: no cover
+            renderer = None
+        for jsonl in sorted(out_path.glob("repeat_*/*/step_log_attempt*.jsonl")):
+            if renderer is not None:
+                try:
+                    renderer(jsonl, jsonl.parent / "knowledge_base.jsonl")
+                except Exception:  # pragma: no cover - a render problem must not stop the upload
+                    pass
+        files = [out_path / "chain_anchor.json"]
+        for pattern in _RUN_FILE_PATTERNS:
+            files += sorted(out_path.glob(f"repeat_*/*/{pattern}"))
+        log_path = os.environ.get("SWEEP_LOG_PATH", "")
+        if log_path and os.path.isfile(log_path):
+            files.append(Path(log_path))
+        for f in files:
+            if not f.is_file():
+                continue
+            base = str(Path(log_path).parent) if str(f) == log_path else str(out_path)
+            wandb.save(str(f), base_path=base, policy="now")
+            uploaded.append(str(f))
+        print(f"Uploaded {len(uploaded)} run files to W&B.")
+    except Exception as exc:  # pragma: no cover - telemetry must never fail a batch
+        print(f"W&B file upload failed: {exc}")
+    return uploaded
 
 
 def _safe_result_dict(result) -> dict:
