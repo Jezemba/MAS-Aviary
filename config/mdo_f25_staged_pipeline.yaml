@@ -281,7 +281,7 @@ mdo_f25_pipeline:
         check: "verdict_present"
         description: "mdo_integrator produced a VERDICT keyword"
       stage_prompt: |
-        You are at the MDO INTEGRATOR stage — the final stage.
+        You are at the MDO INTEGRATOR stage.
 
         Required:
           1. check_constraints with F25 limits:

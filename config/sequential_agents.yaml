@@ -10,9 +10,6 @@ stage_defaults:
     Focus only on your specific role. Do not attempt to do work that
     belongs to other stages.
 
-    If you are the final stage and everything is correct, output
-    TASK_COMPLETE.
-
 # Template definitions (can also be loaded from separate files)
 templates:
   linear:

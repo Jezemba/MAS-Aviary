@@ -135,9 +135,11 @@ def test_the_mission_gets_the_reshaped_fuselage_whatever_it_asked_for():
 
 
 def test_without_a_fuselage_morph_the_mission_keeps_its_fuselage():
+    """B143 (2026-10-05): the session keeps the fuselage it started with; a caller's value
+    (v2verbatim: MAX_WIDTH 4.15 over the geometry's 3.96) is dropped, not applied."""
     out = dp.resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": {
         "Aircraft.Fuselage.LENGTH": 37.68}})
-    assert out["parameters"]["Aircraft.Fuselage.LENGTH"] == 37.68
+    assert "Aircraft.Fuselage.LENGTH" not in out["parameters"]
 
 
 def test_flying_a_different_fuselage_is_refused():

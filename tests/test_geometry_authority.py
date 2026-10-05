@@ -127,9 +127,11 @@ def test_the_mission_is_told_what_was_replaced():
     assert "set_high_level_parameters" in ga["note"]
 
 
-def test_nothing_is_overridden_before_the_geometry_has_been_read():
+def test_before_the_geometry_has_been_read_the_session_keeps_its_wing():
+    """B143 (2026-10-05): this used to apply the caller's 130.1. The session already holds the link's
+    starting geometry (create_session initial_parameters), so a guessed wing value is dropped."""
     resolved = _set_params({"Aircraft.Wing.AREA": 130.1})
-    assert resolved["parameters"]["Aircraft.Wing.AREA"] == 130.1
+    assert "Aircraft.Wing.AREA" not in resolved["parameters"]
 
 
 def test_mission_authority_mode_leaves_the_mission_alone(monkeypatch):

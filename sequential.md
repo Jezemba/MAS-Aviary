@@ -215,6 +215,7 @@ DESIGN_STATE:
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
 SESSION STATE FILE
+Create a new pycycle session with create_cycle_model (cycle_type "turbofan", mode "design")
 Use geometry sizing parameters file at design.json (read it with read_design_json)
 ```
 

@@ -425,6 +425,34 @@ def setup_session_with_params(
     return results
 
 
+CARRY_OVER_FILE = "carry_over.json"
+
+
+def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
+                     params: dict | None) -> Path | None:
+    """What a new link (iteration) inherits, for verbatim prompt assembly (Jessica, 2026-10-05).
+
+    Verbatim mode drops the runner's task text, which is where the previous link's
+    mdo_integrator assessment and the carried-forward CPACS travelled. The first stage of
+    the new link reads this file instead. Link 0 has nothing to inherit: no file.
+    """
+    link_dir = Path(link_dir)
+    path = link_dir / CARRY_OVER_FILE
+    if link == 0 and not integrator_text:
+        if path.exists():
+            path.unlink()
+        return None
+    link_dir.mkdir(parents=True, exist_ok=True)
+    start = {k: v for k, v in (params or {}).items() if not str(k).startswith("_")}
+    path.write_text(json.dumps({
+        "link": link,
+        "previous_integrator_design_state": integrator_text or "",
+        "starting_design": {"CPACS_FILE": str(cpacs) if cpacs else str(_D150_FIXTURE), **start},
+        "baseline_cpacs": str(_D150_FIXTURE),
+    }, indent=2))
+    return path
+
+
 def build_task_with_session(
     base_task: str,
     session_id: str,
@@ -1272,6 +1300,8 @@ def run_stat_batch(
         chain_kb_seed: dict | None = None
         # Geometry authority: the CPACS the next link opens (None = the D150 baseline).
         chain_cpacs: str | None = None
+        # The previous link's mdo_integrator DESIGN_STATE as it wrote it (verbatim carry-over).
+        chain_integrator: str | None = None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
@@ -1279,6 +1309,7 @@ def run_stat_batch(
                 if done.get("chain_cpacs_out"):
                     chain_cpacs = done["chain_cpacs_out"]
                 chain_feedback = done.get("chain_feedback") or chain_feedback
+                chain_integrator = done.get("chain_integrator_text") or chain_integrator
                 if done.get("kb_link_summary"):
                     chain_kb_seed = {"summary": done["kb_link_summary"],
                                      "end_state": done["chain_end_params"]}
@@ -1354,6 +1385,8 @@ def run_stat_batch(
 
             base_task = base_task_for(combo.name, chain_cpacs)
             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
+            write_carry_over(out_path / f"repeat_{repeat_idx:03d}" / combo.name, repeat_idx,
+                             chain_integrator, chain_cpacs, params)
 
             # Retry loop
             timeout_sec = timeout_minutes * 60
@@ -1623,6 +1656,8 @@ def run_stat_batch(
                         _integrator = ""
                     if len(_integrator) > 7000:  # cap to keep the task prompt bounded
                         _integrator = _integrator[:7000] + "\n...[assessment truncated]"
+                    result_dict["chain_integrator_text"] = _integrator
+                    chain_integrator = _integrator or chain_integrator
 
                     if _integrator or _num:
                         chain_feedback = (
@@ -1810,7 +1845,7 @@ def run_stat_batch(
 
 
 # The files a reviewer needs from each link, uploaded to the W&B run when the batch ends.
-_RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "step_log_attempt*.jsonl", "step_log_attempt*.md",
+_RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "carry_over.json", "step_log_attempt*.jsonl", "step_log_attempt*.md",
                       "design.json", "result.json", "trace.json", "chain_anchor.json")
 
 

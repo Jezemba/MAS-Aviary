@@ -259,3 +259,57 @@ def test_framework_mode_is_unchanged_by_default():
 
     prompt_assembly.set_mode(None)
     assert not prompt_assembly.is_verbatim()
+
+
+# ---- a new iteration inherits the previous one (verbatim carry-over, 2026-10-05) ---------------------
+
+def _runner():
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import stat_batch_runner
+
+    return stat_batch_runner
+
+
+START = {"Aircraft.Wing.AREA": 122.3256, "Aircraft.Wing.SWEEP": 21.65, "_seed": 42}
+
+
+def test_the_first_link_has_nothing_to_inherit(tmp_path):
+    r = _runner()
+    assert r.write_carry_over(tmp_path, 0, None, None, START) is None
+    assert not (tmp_path / "carry_over.json").exists()
+
+
+def test_a_later_link_inherits_the_integrator_and_the_design(tmp_path, monkeypatch):
+    from src.coordination import prompt_assembly
+    from src.tools import knowledge_base
+
+    r = _runner()
+    morph = str(tmp_path / "link0_morph.xml")
+    r.write_carry_over(tmp_path, 1, "DESIGN_STATE:\n  VERDICT: CONTINUE\n  RECOMMENDATION_TO: geometry_engineer",
+                       morph, START)
+    monkeypatch.setattr(knowledge_base, "_run_config", {"path": str(tmp_path / "knowledge_base.jsonl")})
+    carry = prompt_assembly.read_carry_over()
+    p = _her_prompts()
+    first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry)
+    assert "DESIGN_STATE from the previous iteration (mdo_integrator):\nDESIGN_STATE:\n  VERDICT: CONTINUE" in first
+    assert "STARTING DESIGN for this iteration" in first and "  Aircraft.Wing.SWEEP: 21.65" in first
+    assert "_seed" not in first
+    assert f"Use CPACS file at {morph}" in first and "D150_simple.xml" not in first
+    # Later stages: the carried CPACS too, but not the previous iteration's assessment.
+    later = prompt_assembly.verbatim_stage_input(p["structures_analyst"], [("aerodynamics_analyst", "X", None)], carry)
+    assert morph in later and "previous iteration" not in later
+
+
+def test_without_a_morph_the_prompt_keeps_the_baseline_path(tmp_path):
+    from src.coordination import prompt_assembly
+
+    r = _runner()
+    r.write_carry_over(tmp_path, 1, "VERDICT: RETRY", None, START)
+    import json as _json
+
+    carry = _json.loads((tmp_path / "carry_over.json").read_text())
+    p = _her_prompts()
+    out = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry)
+    assert out.startswith(p["geometry_engineer"])

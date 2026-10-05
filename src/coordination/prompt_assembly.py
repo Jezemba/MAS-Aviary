@@ -8,7 +8,10 @@ Verbatim mode (``stage_defaults.prompt_assembly: verbatim`` in the agents YAML):
   * the system message is the base instructions exactly as written -- no library template around it;
   * each stage's message is that stage's prompt (its role) exactly as written, followed by the
     previous stage's DESIGN_STATE, which the prompts say each stage receives;
-  * no runner task text, no knowledge-base block, no "New task:" prefix.
+  * no runner task text, no knowledge-base block, no "New task:" prefix;
+  * on a later iteration (chain link 1+), carry_over.json supplies what the runner's task text
+    used to: the first stage also receives the previous iteration's mdo_integrator DESIGN_STATE
+    and the STARTING DESIGN, and the baseline CPACS path in the prompts becomes the carried one.
 The tool definitions still reach the model through its chat template (Qwen renders them as a tools
 block), which is how tool calling works; they are not repeated as prose.
 """
@@ -42,12 +45,55 @@ def verbatim_prompt_templates() -> dict:
     return templates
 
 
-def verbatim_stage_input(stage_prompt: str, previous_outputs: list) -> str:
-    """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one)."""
+def read_carry_over() -> dict | None:
+    """carry_over.json beside this link's knowledge base: what a new iteration inherits.
+
+    Written by the runner for link 1 onward (scripts/stat_batch_runner.py write_carry_over);
+    absent on the first link.
+    """
+    import json
+    import os
+
+    from src.tools.knowledge_base import _run_config
+
+    kb_path = (_run_config or {}).get("path")
+    if not kb_path:
+        return None
+    path = os.path.join(os.path.dirname(os.path.abspath(kb_path)), "carry_over.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None) -> str:
+    """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one).
+
+    On a later iteration (carry_over given) every stage's prompt names the carried-forward
+    CPACS instead of the baseline file, and the first stage also receives the previous
+    iteration's mdo_integrator DESIGN_STATE and the design this iteration starts from.
+    """
     text = (stage_prompt or "").strip("\n")
+    start = dict((carry_over or {}).get("starting_design") or {})
+    baseline, cpacs = (carry_over or {}).get("baseline_cpacs"), start.get("CPACS_FILE")
+    if cpacs and cpacs != baseline:
+        # The prompts name the baseline by its absolute path on the run machine; match the file,
+        # not the machine (aipexws3 and aipexws5 differ only in the home directory).
+        import re
+
+        text = re.sub(r"\S*/mass-mcp/tests/fixtures/D150_simple\.xml", lambda _m: cpacs, text)
     if previous_outputs:
         prev_name, prev_content, _ = previous_outputs[-1]
         text += f"\n\nDESIGN_STATE from the previous stage ({prev_name}):\n{prev_content}"
+    elif carry_over:
+        integrator = (carry_over.get("previous_integrator_design_state") or "").strip()
+        if integrator:
+            text += f"\n\nDESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}"
+        if start:
+            lines = "\n".join(f"  {k}: {v}" for k, v in start.items())
+            text += ("\n\nSTARTING DESIGN for this iteration (the previous iteration's end state, "
+                     f"already applied by the framework):\n{lines}")
     return text
 
 

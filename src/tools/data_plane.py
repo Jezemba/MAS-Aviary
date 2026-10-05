@@ -484,6 +484,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_geometry_fuselage(tool_name, data)
                 _track_morph_export(tool_name, data)
                 _annotate_geometry_authority(tool_name, data)
+                _annotate_coupled_overrides(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 _annotate_pinned(tool_name, data)
@@ -514,6 +515,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_geometry_fuselage(tool_name, response)
         _track_morph_export(tool_name, response)
         _annotate_geometry_authority(tool_name, response)
+        _annotate_coupled_overrides(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         _annotate_pinned(tool_name, response)
@@ -950,8 +952,6 @@ def _apply_geometry_authority(resolved: dict) -> None:
         return
     wing = dict(_design_state.data_store.get("geometry_wing") or {})
     wing.update(_design_state.data_store.get("geometry_fuselage") or {})
-    if not wing:
-        return
     params = resolved.get("parameters")
     if not isinstance(params, dict):
         params = {}
@@ -959,6 +959,11 @@ def _apply_geometry_authority(resolved: dict) -> None:
     used, overrode = {}, {}
     for key in _GEOMETRY_WING_KEYS + _GEOMETRY_FUSELAGE_KEYS:
         if wing.get(key) is None:
+            # B143: not measured this link -- the session already holds the link's starting
+            # geometry, so a caller's value (e.g. the leading-edge 27.33 deg as the quarter-chord
+            # SWEEP, or a guessed MAX_WIDTH) is dropped, not applied.
+            if key in params:
+                overrode[key] = {"asked": params.pop(key), "used": "unchanged (session value)"}
             continue
         value = round(float(wing[key]), 4)
         asked = params.get(key)
@@ -969,7 +974,33 @@ def _apply_geometry_authority(resolved: dict) -> None:
             overrode[key] = {"asked": asked, "used": value}
         params[key] = value
         used[key] = value
-    _design_state.data_store["_geometry_authority_last"] = {"used": used, "overrode": overrode}
+    if used or overrode:
+        _design_state.data_store["_geometry_authority_last"] = {"used": used, "overrode": overrode}
+
+
+def _note_coupled_override(key: str, asked, used: float) -> None:
+    """Remember a caller's value for a coupled key that the framework replaced (B143)."""
+    try:
+        if asked is not None and abs(float(asked) - used) <= max(1e-6, 0.005 * abs(used)):
+            return
+    except (TypeError, ValueError):
+        pass
+    _design_state.data_store.setdefault("_coupled_override_last", {})[key] = {"asked": asked, "used": round(used, 6)}
+
+
+def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
+    """Tell the caller which coupled values it passed were replaced, and where they come from."""
+    if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
+        return
+    last = _design_state.data_store.pop("_coupled_override_last", None)
+    if not last:
+        return
+    data["framework_applied"] = {
+        "overridden": last,
+        "note": ("Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR come from the "
+                 "SU2 result and Aircraft.Wing.MASS_SCALER from the mass estimate; the framework sets them. "
+                 "Values you passed for them were replaced. read_design_json shows the values applied."),
+    }
 
 
 def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
@@ -977,7 +1008,7 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
     if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
         return
     last = _design_state.data_store.pop("_geometry_authority_last", None)
-    if not last or not last.get("used"):
+    if not last or not (last.get("used") or last.get("overrode")):
         return
     note = ("The wing's AREA / ASPECT_RATIO / SWEEP / TAPER_RATIO (as measured) and the fuselage's LENGTH / "
             "MAX_HEIGHT / MAX_WIDTH (once it has been reshaped) are taken from the current CPACS geometry -- "
@@ -2286,11 +2317,10 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     if not isinstance(parameters, dict):
         return
 
-    if "Aircraft.Wing.MASS_SCALER" in parameters:
-        return  # respect explicit agent override
-
     from src.tools import coupling as _cpl
     scaler = _cpl.wing_mass_to_aviary_scaler(wing_kg)
+    if "Aircraft.Wing.MASS_SCALER" in parameters:  # B143: the framework's value wins
+        _note_coupled_override("Aircraft.Wing.MASS_SCALER", parameters["Aircraft.Wing.MASS_SCALER"], scaler)
 
     parameters["Aircraft.Wing.MASS_SCALER"] = scaler
     resolved["parameters"] = parameters
@@ -2641,13 +2671,15 @@ def _inject_phase_h_aero(resolved: dict) -> None:
         )
         return
 
+    # B143: the coupled values are the framework's. A caller's own number (0.5, 1.02, or the
+    # literal "from su2") used to win here and fly the mission on invented aero.
     injected: list[str] = []
-    if "Mission.Design.LIFT_COEFFICIENT" not in parameters:
-        parameters["Mission.Design.LIFT_COEFFICIENT"] = float(cl)
-        injected.append("LIFT_COEFFICIENT")
-    if "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in parameters:
-        parameters["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] = float(scale_factor)
-        injected.append("SUBSONIC_DRAG_COEFF_FACTOR")
+    for _key, _val in (("Mission.Design.LIFT_COEFFICIENT", float(cl)),
+                       ("Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR", float(scale_factor))):
+        if _key in parameters:
+            _note_coupled_override(_key, parameters[_key], _val)
+        parameters[_key] = _val
+        injected.append(_key.split(".")[-1])
 
     # Record that this aviary run IS coupled to SU2 aero, with the exact CL/CD used —
     # lets the runner confirm a fully-coupled run and (future) detect stale aero if the

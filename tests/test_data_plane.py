@@ -454,12 +454,12 @@ class TestPhaseHAeroInjection:
         assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == \
             pytest.approx(1.39, abs=0.05)
 
-    def test_inject_does_not_overwrite_explicit_agent_values(
+    def test_inject_overwrites_explicit_agent_values(
         self, fresh_state,
     ):
-        """If the agent did set the Phase H keys (e.g. in a future run
-        where the prompt finally landed), preserve their values rather
-        than overwriting with the middleware's calculation.
+        """B143 (2026-10-05): SU2's values win. This used to preserve the agent's
+        own numbers, and the v2verbatim run flew CL 0.5 / drag factor 1.02 against
+        SU2's 0.2403 / 0.902.
         """
         fresh_state.data_store["aero_cl_cruise"] = 0.187
         fresh_state.data_store["aero_cd_cruise"] = 0.0128
@@ -474,8 +474,8 @@ class TestPhaseHAeroInjection:
             {"session_id": "s", "parameters": agent_params},
         )
         params = out["parameters"]
-        assert params["Mission.Design.LIFT_COEFFICIENT"] == 0.40
-        assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == 1.0
+        assert params["Mission.Design.LIFT_COEFFICIENT"] == pytest.approx(0.187)
+        assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] != 1.0
 
     def test_inject_noop_when_no_aero_captured(self, fresh_state):
         """If aero never produced CL/CD (e.g. UPSTREAM_ERROR cascaded),
@@ -545,9 +545,10 @@ class TestPhaseHAeroInjection:
             1.280, abs=0.005
         )
 
-    def test_inject_phase_k_does_not_overwrite_explicit_value(
+    def test_inject_phase_k_overwrites_explicit_value(
         self, fresh_state,
     ):
+        """B143: mass-mcp's scaler wins over the agent's."""
         fresh_state.data_store["mass_wing_kg"] = 7677.4
         out = resolve_request(
             "set_aircraft_parameters",
@@ -557,7 +558,7 @@ class TestPhaseHAeroInjection:
                  "Aircraft.Wing.MASS_SCALER": 1.5,
              }},
         )
-        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 1.5
+        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] != 1.5
 
     def test_inject_phase_k_noop_when_no_wing_mass(self, fresh_state):
         out = resolve_request(
