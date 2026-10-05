@@ -263,3 +263,44 @@ def test_a_short_su2_budget_is_raised_to_the_floor(asked):
 def test_a_longer_su2_budget_is_kept():
     assert dp.resolve_request("run_su2_solver", {"session_id": "s", "max_runtime_seconds": 3000})[
         "max_runtime_seconds"] == 3000
+
+
+# ---- B138: the reported drag from su2-mcp is the one that is used -----------------------------------
+
+def test_the_solvers_reported_drag_is_captured_not_the_raw_one():
+    dp.intercept_response("run_su2_solver", json.dumps({
+        "success": True, "final_coefficients": {"CL": 0.2396, "CD": -0.0059},
+        "drag_assessment": {"cd_su2": -0.0059, "cl": 0.2396, "aspect_ratio": 9.37,
+                            "oswald_efficiency": 0.773, "cd_induced_floor": 0.00252,
+                            "cd_reported": 0.00252, "source": "induced_floor"}}))
+    assert coupling.get_var(dp._design_state, "aero.cd_cruise") == pytest.approx(0.00252)
+    assert coupling.get_var(dp._design_state, "aero.cl_cruise") == pytest.approx(0.2396)
+
+
+def test_a_history_read_does_not_undo_the_floor():
+    dp.intercept_response("run_su2_solver", json.dumps({
+        "success": True, "final_coefficients": {"CL": 0.2396, "CD": -0.0059},
+        "drag_assessment": {"aspect_ratio": 9.37, "oswald_efficiency": 0.773,
+                            "cd_reported": 0.00252, "source": "induced_floor"}}))
+    dp.intercept_response("read_history_csv", json.dumps({"rows": [{"CL": 0.2396, "CD": -0.0059}]}))
+    assert coupling.get_var(dp._design_state, "aero.cd_cruise") > 0
+
+
+def test_an_old_su2_without_assessment_is_captured_raw():
+    dp.intercept_response("run_su2_solver", json.dumps({
+        "success": True, "final_coefficients": {"CL": 0.2, "CD": 0.004}}))
+    assert coupling.get_var(dp._design_state, "aero.cd_cruise") == pytest.approx(0.004)
+
+
+@pytest.mark.parametrize("tool", ["configure_from_cpacs", "create_su2_session"])
+def test_su2_gets_the_aspect_ratio_and_the_mission_flight_state(tool):
+    _store()["geometry_wing"] = {"Aircraft.Wing.AREA": 122.78, "Aircraft.Wing.ASPECT_RATIO": 9.37}
+    out = dp.resolve_request(tool, {"session_id": "s", "cpacs_file_path": "/x"})
+    assert out["aspect_ratio"] == 9.37
+    assert out["cruise_mach"] == 0.78 and out["cruise_altitude_ft"] == 33000.0
+
+
+def test_a_caller_flight_state_is_kept():
+    out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
+                                                      "cruise_altitude_ft": 36000.0})
+    assert out["cruise_altitude_ft"] == 36000.0

@@ -1028,6 +1028,15 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
             cd_f = float(coeffs["CD"])
         except (KeyError, TypeError, ValueError):
             return
+        # B138: su2-mcp reports the drag to use. On the affordable mesh the raw inviscid CD can sit
+        # below the induced drag of its lift (or below zero); cd_reported is then that induced drag.
+        assessment = data.get("drag_assessment")
+        if isinstance(assessment, dict) and isinstance(assessment.get("cd_reported"), (int, float)):
+            _design_state.data_store["aero_drag_assessment"] = dict(assessment)
+            if assessment.get("source") == "induced_floor":
+                logger.info("[B138] SU2 CD %.5f is below the induced drag of CL %.4f; using %.5f",
+                            cd_f, cl_f, float(assessment["cd_reported"]))
+            cd_f = float(assessment["cd_reported"])
         _store_aero(cl_f, cd_f, source="run_su2_solver")
         return
 
@@ -1065,7 +1074,22 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         )
         return
 
+    # B138: a history read must not undo the solver's induced-drag floor.
+    floored = _induced_floor(cl_f)
+    if floored is not None and cd_f < floored:
+        cd_f = floored
     _store_aero(cl_f, cd_f, source="read_history_csv")
+
+
+def _induced_floor(cl: float) -> float | None:
+    """CL^2/(pi AR e) with the AR and e su2-mcp used for the last solve, or None if none was used."""
+    a = (_design_state.data_store.get("aero_drag_assessment") or {}) if _design_state else {}
+    ar, e = a.get("aspect_ratio"), a.get("oswald_efficiency")
+    if not isinstance(ar, (int, float)) or not isinstance(e, (int, float)) or ar <= 0 or e <= 0:
+        return None
+    import math
+
+    return cl * cl / (math.pi * ar * e)
 
 
 def _store_aero(cl_f: float, cd_f: float, source: str) -> None:
@@ -1927,6 +1951,23 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 
     if tool_name in ("configure_from_cpacs", "create_su2_session") and _design_state:
         from src.tools import coupling as _cpl
+
+        # B138: the aspect ratio su2-mcp needs for the induced-drag floor, from the geometry.
+        if resolved.get("aspect_ratio") is None:
+            _ar = (_design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.ASPECT_RATIO")
+            if isinstance(_ar, (int, float)) and _ar > 0:
+                resolved["aspect_ratio"] = float(_ar)
+        # B132: the solve's flight state is the mission's (Mach + ISA freestream at altitude).
+        try:
+            from src.config.canonical import load_canonical
+
+            _mission = load_canonical().get("mission", {}) or {}
+        except Exception:      # pragma: no cover - never block a solve on config
+            _mission = {}
+        if resolved.get("cruise_mach") is None and _mission.get("cruise_mach") is not None:
+            resolved["cruise_mach"] = float(_mission["cruise_mach"])
+        if resolved.get("cruise_altitude_ft") is None and _mission.get("cruise_altitude_ft") is not None:
+            resolved["cruise_altitude_ft"] = float(_mission["cruise_altitude_ft"])
 
         if resolved.get("ref_area") is None:
             _area = _cpl.get_var(_design_state, "geom.reference_area")
