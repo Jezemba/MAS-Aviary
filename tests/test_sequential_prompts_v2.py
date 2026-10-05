@@ -201,3 +201,61 @@ def test_run_files_and_the_log_are_uploaded(monkeypatch, tmp_path):
     names = {Path(p).name for p in saved}
     assert {"knowledge_base.jsonl", "design.json", "result.json", "trace.json", "chain_anchor.json",
             "step_log_attempt1.jsonl", "step_log_attempt1.md", "run.log"} <= names
+
+
+# ---- verbatim prompt assembly: the model sees exactly her prompts -----------------------------------
+
+def test_the_agents_yaml_switches_on_verbatim():
+    d = yaml.safe_load((ROOT / "config/mdo_f25_sequential_agents.yaml").read_text())
+    assert d["stage_defaults"]["prompt_assembly"] == "verbatim"
+
+
+def test_the_model_sees_exactly_the_system_prompt_and_the_stage_prompt():
+    from smolagents.models import ChatMessage, MessageRole, Model
+
+    from src.coordination import prompt_assembly
+
+    seen = {}
+
+    class Capture(Model):
+        def __init__(self):
+            super().__init__(model_id="capture")
+
+        def generate(self, messages, stop_sequences=None, response_format=None, tools_to_call_from=None, **kw):
+            seen["messages"] = messages
+            seen["tools"] = [t.name for t in (tools_to_call_from or [])]
+            from smolagents.models import ChatMessageToolCall, ChatMessageToolCallFunction
+            return ChatMessage(role=MessageRole.ASSISTANT, content="", tool_calls=[ChatMessageToolCall(
+                id="c1", type="function", function=ChatMessageToolCallFunction(
+                    name="final_answer", arguments={"answer": "done"}))])
+
+    p = _her_prompts()
+    agent = prompt_assembly.make_agent_class()(
+        tools=[], model=Capture(), name="geometry_engineer", description=p["geometry_engineer"],
+        instructions=p["BASE"], prompt_templates=prompt_assembly.verbatim_prompt_templates(),
+        max_steps=2, add_base_tools=False)
+    task = prompt_assembly.verbatim_stage_input(agent.description, [])
+    agent.run(task)
+    msgs = seen["messages"]
+    text = lambda m: m.content if isinstance(m.content, str) else "".join(c.get("text", "") for c in m.content)
+    assert [str(getattr(m.role, "value", m.role)) for m in msgs] == ["system", "user"]
+    assert text(msgs[0]).strip() == p["BASE"].strip()                   # the system prompt, nothing else
+    assert text(msgs[1]) == p["geometry_engineer"]                       # the stage prompt, nothing else
+    assert "final_answer" in seen["tools"]                               # tools still reach the model
+
+
+def test_a_later_stage_gets_its_prompt_then_the_previous_design_state():
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    out = prompt_assembly.verbatim_stage_input(p["aerodynamics_analyst"],
+                                               [("geometry_engineer", "DESIGN_STATE:\n  GEOMETRY_SET: true", None)])
+    assert out.startswith(p["aerodynamics_analyst"])
+    assert out.endswith("DESIGN_STATE from the previous stage (geometry_engineer):\nDESIGN_STATE:\n  GEOMETRY_SET: true")
+
+
+def test_framework_mode_is_unchanged_by_default():
+    from src.coordination import prompt_assembly
+
+    prompt_assembly.set_mode(None)
+    assert not prompt_assembly.is_verbatim()

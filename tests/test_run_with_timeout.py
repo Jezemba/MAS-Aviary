@@ -116,12 +116,12 @@ class TestFailuresAreNotMistakenForBadDesigns:
 
 
 # --- child entry points (module level: `spawn` re-imports this module) -------
-def _direct_target_ok(pipe, combo, task, config, session_id):
+def _direct_target_ok(pipe, combo, task, config, session_id, kb_context=None):
     pipe.send(("ok", _ok(combo, task, config)))
     pipe.close()
 
 
-def _direct_target_boom(pipe, combo, task, config, session_id):
+def _direct_target_boom(pipe, combo, task, config, session_id, kb_context=None):
     try:
         _boom(combo, task, config)
     except Exception as exc:
@@ -129,16 +129,16 @@ def _direct_target_boom(pipe, combo, task, config, session_id):
     pipe.close()
 
 
-def _direct_target_hang(pipe, combo, task, config, session_id):
+def _direct_target_hang(pipe, combo, task, config, session_id, kb_context=None):
     time.sleep(600)
 
 
-def _direct_target_unsendable(pipe, combo, task, config, session_id):
+def _direct_target_unsendable(pipe, combo, task, config, session_id, kb_context=None):
     pipe.send(("unsendable", "TypeError: cannot pickle '_thread.lock' object"))
     pipe.close()
 
 
-def _direct_target_dies(pipe, combo, task, config, session_id):
+def _direct_target_dies(pipe, combo, task, config, session_id, kb_context=None):
     pipe.close()
     import os
 
@@ -146,7 +146,7 @@ def _direct_target_dies(pipe, combo, task, config, session_id):
 
 
 # --- state must cross the boundary too -------------------------------------
-def _target_with_state(pipe, combo, task, config, session_id):
+def _target_with_state(pipe, combo, task, config, session_id, kb_context=None):
     """Mimics a real run: sets data-plane state, then returns."""
     from src.coordination.design_state import DesignState
     from src.tools.data_plane import export_state_summary, init_data_plane

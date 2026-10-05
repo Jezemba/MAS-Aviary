@@ -688,7 +688,11 @@ def _install_trace_capture(coordinator) -> None:
                 # B81 (decided 2026-09-15, 7.4): every handoff and task assignment
                 # starts with the knowledge-base summary of work really done. Skipped
                 # when an outer wrapper (a graph role alias) already added it.
-                if args and isinstance(args[0], str) and HANDOFF_MARKER not in args[0]:
+                from src.coordination import prompt_assembly
+
+                if prompt_assembly.is_verbatim():
+                    pass        # verbatim: the stage's message is its prompt + previous DESIGN_STATE only
+                elif args and isinstance(args[0], str) and HANDOFF_MARKER not in args[0]:
                     args = (handoff_text(args[0]),) + tuple(args[1:])
                 elif isinstance(kwargs.get("task"), str) and HANDOFF_MARKER not in kwargs["task"]:
                     kwargs = {**kwargs, "task": handoff_text(kwargs["task"])}

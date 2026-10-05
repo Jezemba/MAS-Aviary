@@ -4,6 +4,10 @@
 # Reference aircraft: DLR-F25 (MTOM 85.7 t, AR 15.6, Mach 0.78, 2500 nmi, 239 pax)
 
 stage_defaults:
+  # verbatim (Jessica, 2026-10-04): the system message is base_instructions exactly as written, and each
+  # stage receives its role exactly as written plus the previous stage's DESIGN_STATE -- nothing else.
+  # See src/coordination/prompt_assembly.py. Remove this line for the framework's layered prompts.
+  prompt_assembly: verbatim
   base_instructions: |
     SYSTEM PROMPT: MULTI-STAGE MDO PIPELINE AGENT
 

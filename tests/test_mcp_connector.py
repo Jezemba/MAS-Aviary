@@ -176,7 +176,13 @@ class TestToolLoaderRealMode:
         config = AppConfig(mcp=_make_config(("http://server1/mcp", "streamable-http")))
 
         tools = load_tools_for_agent([], config)
-        assert len(tools) == 2
+        # The server's two tools, plus the discovery tools every worker gets once (B53, B81, B85,
+        # sequential-prompts-v2): the count grew with them, so check the contract, not a number.
+        names = [t.name for t in tools]
+        discovery = {"get_design_state", "read_design_knowledge", "read_procedure",
+                     "read_best_practices", "read_design_json"}
+        assert len(names) == len(set(names))
+        assert set(names) - discovery == {"tool_a", "tool_b"}
 
     @patch("src.tools.mcp_connector.ToolCollection.from_mcp")
     def test_load_filtered_mcp_tools(self, mock_from_mcp):

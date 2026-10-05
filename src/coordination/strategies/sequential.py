@@ -84,6 +84,9 @@ class SequentialStrategy(CoordinationStrategy):
         # Load base instructions from agent template config.
         stage_defaults = config.get("stage_defaults", {})
         self._base_instructions = stage_defaults.get("base_instructions", "")
+        from src.coordination import prompt_assembly
+
+        prompt_assembly.set_mode(stage_defaults.get("prompt_assembly"))
 
         # Get templates from config (from agents YAML).
         templates_config = config.get("templates", {})
@@ -341,6 +344,26 @@ class SequentialStrategy(CoordinationStrategy):
 
     def _create_stage_agent(self, stage: PipelineStage, tools: list, model) -> None:
         """Create a ToolCallingAgent for a pipeline stage."""
+        from src.coordination import prompt_assembly
+
+        if prompt_assembly.is_verbatim():
+            # The system message is the base instructions exactly as written; the stage's own prompt
+            # (its role) is sent as the stage's task by the staged handler.
+            agent = prompt_assembly.make_agent_class()(
+                tools=tools,
+                model=model,
+                name=stage.name,
+                description=stage.role,
+                instructions=self._base_instructions.strip("\n"),
+                prompt_templates=prompt_assembly.verbatim_prompt_templates(),
+                max_steps=self._stage_max_steps,
+                add_base_tools=False,
+                final_answer_checks=with_artifact_checks(),  # B31
+            )
+            self._agents[stage.name] = agent
+            self._stage_order.append(stage.name)
+            return
+
         # Build system prompt: base instructions + stage role.
         prompt_parts = []
         if self._base_instructions:

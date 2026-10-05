@@ -400,6 +400,14 @@ class StagedPipelineHandler(ExecutionHandler):
                 )
                 continue
 
+            # Verbatim prompt assembly: the stage receives its own prompt as written, then the
+            # previous stage's DESIGN_STATE -- nothing else (Jessica, 2026-10-04).
+            from src.coordination import prompt_assembly
+
+            if prompt_assembly.is_verbatim():
+                context = prompt_assembly.verbatim_stage_input(
+                    getattr(agent, "description", "") or "", previous_outputs)
+
             # Run the agent.
             start = time.monotonic()
             try:
