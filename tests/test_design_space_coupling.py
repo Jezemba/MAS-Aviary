@@ -304,3 +304,21 @@ def test_a_caller_flight_state_is_kept():
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "cruise_altitude_ft": 36000.0})
     assert out["cruise_altitude_ft"] == 36000.0
+
+
+# ---- an unconverged engine cycle is not a result ----------------------------------------------------
+
+def test_an_unconverged_cycle_is_not_captured():
+    dp.intercept_response("run_cycle", json.dumps({
+        "success": True, "converged": False, "outputs": {"perf.TSFC": 0.49, "perf.Fn": 5952.0}}))
+    assert coupling.get_var(dp._design_state, "prop.sfc_cruise") is None
+    dp.intercept_response("get_outputs", json.dumps({"values": {"perf.TSFC": 0.49, "perf.Fn": 5952.0}}))
+    assert coupling.get_var(dp._design_state, "prop.sfc_cruise") is None
+
+
+def test_a_converged_rerun_is_captured():
+    dp.intercept_response("run_cycle", json.dumps({"success": True, "converged": False,
+                                                   "outputs": {"perf.TSFC": 0.49}}))
+    dp.intercept_response("run_cycle", json.dumps({"success": True, "converged": True,
+                                                   "outputs": {"perf.TSFC": 0.5442, "perf.Fn": 6336.0}}))
+    assert coupling.get_var(dp._design_state, "prop.sfc_cruise") == pytest.approx(0.5442)

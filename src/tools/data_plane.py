@@ -1137,6 +1137,15 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     # B129: get_outputs reads the same converged values (under "values"). Capturing only run_cycle
     # cost two of three attempts of a link when the agent asked run_cycle for wrong names and then
     # read perf.TSFC correctly with get_outputs.
+    store = _design_state.data_store
+    # pycycle-mcp feat/convergence-report says whether the design point is solved. An unsolved
+    # cycle's numbers are not a result; a get_outputs read after it reads the same unsolved state.
+    if tool_name == "run_cycle" and data.get("converged") is not None:
+        store["prop_cycle_converged"] = bool(data["converged"])
+    if store.get("prop_cycle_converged") is False:
+        logger.warning("[pycycle] %s: the last run_cycle did not converge; not capturing its outputs",
+                       tool_name)
+        return
     outputs = data.get("outputs") if tool_name == "run_cycle" else data.get("values")
     if not isinstance(outputs, dict):
         return
