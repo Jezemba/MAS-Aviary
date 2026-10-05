@@ -239,6 +239,16 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         coerced = coerce_tool_arguments(tool, kwargs)
         # 2. Resolve data store references (also injects typed coupling vars)
         resolved = resolve_request(tool.name, coerced)
+        # 2. Version safety: an argument the MIDDLEWARE added (aspect_ratio, cruise_mach,
+        #    num_passengers, ...) must not reach a server whose tool does not declare it -- an older
+        #    su2/mass/pycycle server rejects unknown arguments and every call would fail. Arguments
+        #    the caller passed are left alone, so a caller's mistake still surfaces.
+        _declared = set((getattr(tool, "inputs", None) or {}).keys())
+        if _declared:
+            for _key in [k for k in resolved if k not in coerced and k not in _declared]:
+                resolved.pop(_key)
+                logging.getLogger(__name__).info(
+                    "[compat] %s does not declare %r; dropped the injected value", tool.name, _key)
         # 2a. Fail fast on a ref-shaped argument that does not resolve. Otherwise
         #     the literal key string is sent to the server and interpreted as
         #     DATA, producing an error that names the wrong problem (observed:

@@ -577,8 +577,12 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         wing_f, components.get("mWing_source"),
     )
 
-    # Phase K-B: also stash MTOM for pycycle Fn_DES injection
+    # Phase K-B: also stash MTOM for pycycle Fn_DES injection. mass-mcp's mTOM_kg is the gross
+    # mass the sizing STARTED from (the CPACS value); mass-mcp feat/mission-and-sized-mtom also
+    # reports mTOM_sized_kg, which is a result only when sizing_converged is True.
     mtom_kg = breakdown.get("mTOM_kg")
+    if breakdown.get("sizing_converged") is True and breakdown.get("mTOM_sized_kg") is not None:
+        mtom_kg = breakdown["mTOM_sized_kg"]
     if mtom_kg is not None:
         try:
             mtom_f = float(mtom_kg)
@@ -1830,6 +1834,20 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # they still see what the run wrote. The copy is refreshed if its source file
     # changes (a re-exported morphed geometry), so mass always reflects the current
     # geometry.
+    # B132: size the structure at the mission, not at mass-mcp's defaults (150 pax / M0.785 /
+    # 3500 nmi / 35,000 ft, which D150 silently got because it carries no mission nodes).
+    if tool_name == "estimate_mass":
+        try:
+            from src.config.canonical import load_canonical
+
+            _mission = load_canonical().get("mission", {}) or {}
+        except Exception:      # pragma: no cover - never block a mass estimate on config
+            _mission = {}
+        for arg, key in (("num_passengers", "num_passengers"), ("cruise_mach", "cruise_mach"),
+                         ("range_nmi", "range_nmi"), ("cruise_altitude_ft", "cruise_altitude_ft")):
+            if resolved.get(arg) is None and _mission.get(key) is not None:
+                resolved[arg] = _mission[key]
+
     if tool_name in _MASS_WORKING_COPY_TOOLS and _design_state:
         target = resolved.get("cpacs_file_path")
         if isinstance(target, str) and os.path.isfile(target):

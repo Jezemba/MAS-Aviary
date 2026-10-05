@@ -322,3 +322,49 @@ def test_a_converged_rerun_is_captured():
     dp.intercept_response("run_cycle", json.dumps({"success": True, "converged": True,
                                                    "outputs": {"perf.TSFC": 0.5442, "perf.Fn": 6336.0}}))
     assert coupling.get_var(dp._design_state, "prop.sfc_cruise") == pytest.approx(0.5442)
+
+
+# ---- B132 (mass part): the structure is sized at the mission ----------------------------------------
+
+def test_estimate_mass_gets_the_mission():
+    out = dp.resolve_request("estimate_mass", {"cpacs_file_path": "/nonexistent.xml"})
+    assert out["num_passengers"] == 239 and out["cruise_mach"] == 0.78
+    assert out["range_nmi"] == 2500 and out["cruise_altitude_ft"] == 33000
+
+
+def test_a_converged_sized_mtom_is_preferred():
+    dp.intercept_response("estimate_mass", json.dumps({"status": "success", "mass_breakdown": {
+        "mTOM_kg": 78126.0, "mTOM_sized_kg": 91172.0, "sizing_converged": True,
+        "components": {"mWing_kg": 8736.0, "mWing_source": "flops"}}}))
+    assert _store()["mass_mtom_kg"] == 91172.0
+
+
+def test_an_unconverged_sized_mtom_is_not_used():
+    dp.intercept_response("estimate_mass", json.dumps({"status": "success", "mass_breakdown": {
+        "mTOM_kg": 78126.0, "mTOM_sized_kg": 91172.0, "sizing_converged": False,
+        "components": {"mWing_kg": 8736.0, "mWing_source": "flops"}}}))
+    assert _store()["mass_mtom_kg"] == 78126.0
+
+
+# ---- version safety: injected arguments only reach servers that declare them ------------------------
+
+def test_injected_arguments_are_dropped_for_an_older_server(monkeypatch):
+    from smolagents import Tool
+
+    from src.tools.type_coercion import wrap_tool_with_middleware
+
+    seen = {}
+
+    class OldEstimateMass(Tool):
+        name = "estimate_mass"
+        description = "an older mass-mcp: no mission arguments"
+        inputs = {"cpacs_file_path": {"type": "string", "description": "p", "nullable": True}}
+        output_type = "string"
+
+        def forward(self, cpacs_file_path=None):
+            seen["called_with"] = cpacs_file_path
+            return json.dumps({"status": "success", "mass_breakdown": {}})
+
+    out = wrap_tool_with_middleware(OldEstimateMass()).forward(cpacs_file_path="/nonexistent.xml")
+    assert "called_with" in seen                          # no TypeError from num_passengers etc.
+    assert "error" not in json.loads(out) or "unexpected keyword" not in json.loads(out).get("error", "")
