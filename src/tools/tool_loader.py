@@ -36,6 +36,15 @@ def _with_design_state(tools: list) -> list:
     # in validate8 because the sequence was written nowhere an agent could reach.
     if ReadProcedure.name not in names:
         extra.append(ReadProcedure())
+    # sequential-prompts-v2: the lessons removed from the short stage prompts, on request, and the
+    # framework-written design.json the prompts point at.
+    from src.tools.best_practices_tool import ReadBestPractices
+    from src.tools.design_json import ReadDesignJson
+
+    if ReadBestPractices.name not in names:
+        extra.append(ReadBestPractices())
+    if ReadDesignJson.name not in names:
+        extra.append(ReadDesignJson())
     return list(tools) + extra
 
 

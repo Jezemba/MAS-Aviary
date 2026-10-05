@@ -347,6 +347,39 @@ _MILESTONES = [
 ]
 
 
+RECENT_RECORDS_LINES = 30
+RECENT_RECORDS_CHARS = 6000
+
+
+def handoff_mode() -> str:
+    """'recent' (the latest KB records, verbatim) or 'summary' (the summary model, the default)."""
+    return os.environ.get("MAS_KB_HANDOFF", "summary").strip().lower() or "summary"
+
+
+def recent_records(entries: list[dict], limit_lines: int = RECENT_RECORDS_LINES,
+                   limit_chars: int = RECENT_RECORDS_CHARS) -> str:
+    """The most recent knowledge-base records, timestamped, oldest first so the NEWEST is at the
+    bottom (the file is appended bottom-up, and this reads its tail). Model-free: values are the
+    tool results the framework recorded, never an interpretation."""
+    if not entries:
+        return "No design work recorded yet."
+    tail = entries[-limit_lines:]
+    lines = [f"MOST RECENT {len(tail)} OF {len(entries)} RECORDS (oldest first, newest last):"]
+    for e in tail:
+        outs = {k: v for k, v in (e.get("outputs") or {}).items()
+                if k not in ("success", "status") and v not in (None, "", {}, [])}
+        out_s = json.dumps(outs, default=str)[:240]
+        note = f" note: {str(e.get('note'))[:120]}" if e.get("status") != "success" and e.get("note") else ""
+        lines.append(f"[{e.get('time_utc')}] #{e.get('seq')} {e.get('agent')} {e.get('tool')} "
+                     f"{e.get('status')}: {out_s}{note}")
+    text = "\n".join(lines)
+    while len(text) > limit_chars and len(lines) > 2:
+        lines.pop(1)                                   # drop the OLDEST shown first, keep the newest
+        lines[0] = f"MOST RECENT {len(lines) - 1} OF {len(entries)} RECORDS (oldest first, newest last):"
+        text = "\n".join(lines)
+    return text
+
+
 def digest(entries: list[dict], limit_chars: int = 2500) -> str:
     """Deterministic, model-free summary: DONE / FAILED / STILL MISSING."""
     if not entries:
@@ -464,6 +497,11 @@ def summarize(kb: "KnowledgeBase", question: str | None = None, *, count_read: b
     entries = kb.select(**filters)
     if not entries:
         return "No design work recorded yet."
+    # sequential-prompts-v2 (Jessica, 2026-10-04): draw from the knowledge base itself, not from a
+    # small model's reading of it. The summary model never saw the records (B128: its prompt held
+    # RECORDS: []) and reported e.g. "no record of SU2 solve" after SU2 had run.
+    if handoff_mode() == "recent":
+        return recent_records(entries)
     # B94: keyed on the state the answer depends on, not on how many records exist.
     key = (tuple(sorted((k, v) for k, v in filters.items() if v is not None)), question or "",
            state_signature(kb, entries))

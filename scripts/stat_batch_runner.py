@@ -144,6 +144,32 @@ def anchor_params_for(mode: str, base_seed: int) -> dict[str, float]:
     raise ValueError(f"unknown anchor mode {mode!r}; expected one of {ANCHOR_MODES}")
 
 
+OUTPUT_LOCK_NAME = ".runner.lock"
+_output_lock_handles: list = []
+
+
+def acquire_output_lock(out_path: Path) -> bool:
+    """Exclusive, non-blocking lock on the output folder, held until this process exits (B142).
+
+    flock is released by the kernel when the process dies, so a crashed runner never leaves a stale
+    lock behind; the file records the holder's pid for whoever looks.
+    """
+    import fcntl
+
+    handle = open(Path(out_path) / OUTPUT_LOCK_NAME, "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    _output_lock_handles.append(handle)
+    return True
+
+
 def generate_all_param_sets(n_repeats: int, base_seed: int = 42) -> list[dict]:
     """Generate N deterministic random parameter sets."""
     return [generate_random_params(base_seed + i) for i in range(n_repeats)]
@@ -1163,6 +1189,14 @@ def run_stat_batch(
         print(f"Links 1..{n_repeats-1} start from the previous link's end-state design.")
         print(f"\nWould run {len(combos)} combos × {n_repeats} links = {len(combos) * n_repeats} runs")
         print(f"Combinations: {[c.name for c in combos]}")
+        return
+
+    # B142: one runner per output folder. A second runner on the same folder (a replayed launch,
+    # 2026-10-04) appends to the same knowledge base and step logs and truncates the console log,
+    # which invalidates the run. Hold an exclusive lock for this process's lifetime.
+    if not acquire_output_lock(out_path):
+        print(f"REFUSING: another live runner holds {out_path / OUTPUT_LOCK_NAME}. "
+              "One runner per output folder (B142).")
         return
 
     # Load or create checkpoint

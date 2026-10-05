@@ -486,6 +486,8 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _annotate_geometry_authority(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
+                _annotate_pinned(tool_name, data)
+                _write_design_json()
                 data = _intercept_binaries(tool_name, data)
                 return json.dumps(data)
         except (json.JSONDecodeError, TypeError):
@@ -514,6 +516,8 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _annotate_geometry_authority(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
+        _annotate_pinned(tool_name, response)
+        _write_design_json()
         response = _intercept_binaries(tool_name, response)
         return response
 
@@ -986,6 +990,67 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
             f"{k.split('.')[-1]} {v['asked']} -> {v['used']}" for k, v in last["overrode"].items()) + "."
     data["geometry_authority"] = {"wing_from_geometry": last["used"],
                                   "overridden": last.get("overrode") or {}, "note": note}
+
+
+_PINNED_MISSION_ARGS = ("range_nmi", "num_passengers", "cruise_mach", "cruise_altitude_ft")
+_PINNED_MASS_ARGS = {"wing_mass_method": "wing_mass_method", "material": "material",
+                     "design_load_factor": "design_load_factor"}
+
+
+def _pin_study_controls(tool_name: str, resolved: dict) -> None:
+    """Hold the study's fixed controls (mission; mass method/material/load factor) at canonical."""
+    try:
+        from src.config.canonical import load_canonical
+
+        canonical = load_canonical()
+    except Exception:      # pragma: no cover - never block a call on config
+        return
+    if tool_name == "configure_mission":
+        source = canonical.get("mission", {}) or {}
+        pairs = {a: a for a in _PINNED_MISSION_ARGS}
+    else:
+        source = canonical.get("mass", {}) or {}
+        pairs = _PINNED_MASS_ARGS
+    overridden = {}
+    for arg, key in pairs.items():
+        want = source.get(key)
+        if want is None:
+            continue
+        asked = resolved.get(arg)
+        if asked is not None and str(asked).strip().lower() != str(want).strip().lower():
+            try:
+                same = abs(float(asked) - float(want)) <= 1e-9 * max(1.0, abs(float(want)))
+            except (TypeError, ValueError):
+                same = False
+            if not same:
+                overridden[arg] = {"asked": asked, "used": want}
+        resolved[arg] = want
+    if overridden and _design_state is not None:
+        _design_state.data_store.setdefault("_pinned_overrides", {})[tool_name] = overridden
+        logger.warning("[study controls] %s: overrode %s", tool_name, overridden)
+
+
+def _annotate_pinned(tool_name: str, data: dict) -> None:
+    """Tell the caller which requested values were replaced by the study's fixed controls."""
+    if _design_state is None or not isinstance(data, dict):
+        return
+    over = (_design_state.data_store.get("_pinned_overrides") or {}).pop(tool_name, None)
+    if over:
+        data["study_controls"] = {
+            "overridden": over,
+            "note": "These are fixed for the study (the DLR-F25 mission and the mass method/material); "
+                    "the framework used the study values instead of the ones requested.",
+        }
+
+
+def _write_design_json() -> None:
+    """Refresh design.json next to the knowledge base (sequential-prompts-v2). Never raises."""
+    try:
+        from src.tools.design_json import write_design
+
+        write_design(_design_state)
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
@@ -1834,6 +1899,14 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # they still see what the run wrote. The copy is refreshed if its source file
     # changes (a re-exported morphed geometry), so mass always reflects the current
     # geometry.
+    # sequential-prompts-v2: the study's controls are held by the framework, not by prompt text. The
+    # v2 prompts no longer spell out the mission or the mass method, and since aviary-mcp
+    # feat/mission-conditions-reach-solve the mission's Mach/altitude/passengers DO change the solve,
+    # so a configure_mission with other values would fly another aircraft's mission. Pin them to the
+    # canonical study values; a different request is overridden and the response says so.
+    if tool_name in ("configure_mission", "estimate_mass"):
+        _pin_study_controls(tool_name, resolved)
+
     # B132: size the structure at the mission, not at mass-mcp's defaults (150 pax / M0.785 /
     # 3500 nmi / 35,000 ft, which D150 silently got because it carries no mission nodes).
     if tool_name == "estimate_mass":

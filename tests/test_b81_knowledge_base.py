@@ -137,7 +137,9 @@ def test_every_agent_toolset_gets_read_design_knowledge():
 
     names = [t.name for t in _with_design_state([])]
     # B85 added read_procedure alongside it: what has been done, and what should be done.
-    assert names == ["get_design_state", "read_design_knowledge", "read_procedure"]
+    # sequential-prompts-v2 added read_best_practices and read_design_json.
+    assert names == ["get_design_state", "read_design_knowledge", "read_procedure",
+                     "read_best_practices", "read_design_json"]
     assert [t.name for t in _with_design_state(_with_design_state([]))] == names
 
 

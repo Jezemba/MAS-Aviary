@@ -123,10 +123,13 @@ def test_mission_call_pins_canonical_dlr_f25(cfg):
     rng = set(re.findall(r"range_nmi=([0-9]+)", rendered))
     mach = set(re.findall(r"cruise_mach=([0-9.]+)", rendered))
     alt = set(re.findall(r"cruise_altitude_ft=([0-9]+)", rendered))
-    assert pax == {"239"}, f"{cfg} passes non-canonical num_passengers: {pax}"
-    assert rng == {"2500"}, f"{cfg} passes non-canonical range_nmi: {rng}"
-    assert mach == {"0.78"}, f"{cfg} passes non-canonical cruise_mach: {mach}"
-    assert alt == {"33000"}, f"{cfg} passes non-canonical cruise_altitude_ft: {alt}"
+    # sequential-prompts-v2: a prompt may pass no mission values at all -- the framework pins
+    # configure_mission to the canonical mission (data_plane._pin_study_controls). Whatever a prompt
+    # does pass must still be canonical.
+    assert pax <= {"239"}, f"{cfg} passes non-canonical num_passengers: {pax}"
+    assert rng <= {"2500"}, f"{cfg} passes non-canonical range_nmi: {rng}"
+    assert mach <= {"0.78"}, f"{cfg} passes non-canonical cruise_mach: {mach}"
+    assert alt <= {"33000"}, f"{cfg} passes non-canonical cruise_altitude_ft: {alt}"
     # No A320-class leftovers passed as call arguments.
     for leftover in ("num_passengers=200", "num_passengers=162", "range_nmi=1500",
                      "cruise_mach=0.785", "cruise_altitude_ft=35000"):
@@ -153,8 +156,10 @@ def test_mass_call_pins_flops_aluminum(cfg):
     # Every value actually PASSED as a call arg must be the canonical one.
     methods = set(re.findall(r'wing_mass_method="([a-zA-Z]+)"', rendered))
     materials = set(re.findall(r'material="([a-zA-Z]+)"', rendered))
-    assert methods == {"flops"}, f"{cfg} passes non-canonical wing_mass_method values: {methods}"
-    assert materials == {"aluminum"}, f"{cfg} passes non-canonical material values: {materials}"
+    # sequential-prompts-v2: none passed is fine -- the framework pins estimate_mass's method,
+    # material and load factor. Whatever a prompt does pass must still be canonical.
+    assert methods <= {"flops"}, f"{cfg} passes non-canonical wing_mass_method values: {methods}"
+    assert materials <= {"aluminum"}, f"{cfg} passes non-canonical material values: {materials}"
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)

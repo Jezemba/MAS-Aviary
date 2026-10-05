@@ -273,10 +273,12 @@ def test_estimate_mass_once_per_geometry_and_mass_config_even_after_g1_write_bac
     assert "massBreakdown" not in f.read_text()                                     # G1 held
     r = call(mass, "agent_2", cpacs_file_path=str(f), wing_mass_method="flops")    # same geometry + config
     assert r["error_code"] == "ALREADY_DONE"
-    assert call(mass, "agent_3", cpacs_file_path=str(f), wing_mass_method="gasp")["status"] == "success"
+    # sequential-prompts-v2: the study pins the mass method to "flops", so asking for "gasp" is the same
+    # estimate of the same geometry -- a duplicate, not a different configuration.
+    assert call(mass, "agent_3", cpacs_file_path=str(f), wing_mass_method="gasp")["error_code"] == "ALREADY_DONE"
     f.write_text("<cpacs><vehicles><wing span='41'/></vehicles></cpacs>")           # geometry changed
     assert call(mass, "agent_4", cpacs_file_path=str(f), wing_mass_method="flops")["status"] == "success"
-    assert srv.calls["estimate_mass"] == 3
+    assert srv.calls["estimate_mass"] == 2
 
 
 def test_cycle_model_once_per_definition(srv):

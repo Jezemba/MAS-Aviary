@@ -687,7 +687,8 @@ class TestPipelineTemplateLoading:
         for stage in template.stages:
             assert len(stage.allowed_tools) > 0, f"{stage.name} has no tools"
             assert stage.role.strip(), f"{stage.name} has empty role"
-            assert stage.interface_output.strip(), f"{stage.name} has empty interface_output"
+            # sequential-prompts-v2: the role carries the DELIVERABLE, so interface_output may be
+            # empty (it would otherwise be appended a second time).
 
     def test_mdo_f25_tool_resolution_with_real_mcp(self):
         """Resolve allowed_tools against real MCP tool sets."""
