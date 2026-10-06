@@ -1062,6 +1062,17 @@ def _run_with_timeout(combo, task, config, domain, timeout_seconds, session_id=N
 ZERO_FUEL_FLOOR_KG = 100.0
 
 
+def _take_flown_infeasible() -> dict | None:
+    """The child's 'mission flown, design did not fly' flag (data_plane _flag_zero_fuel), consumed once."""
+    try:
+        from src.tools.data_plane import get_design_state
+
+        state = get_design_state()
+        return (state.data_store.pop("_simulation_flown_infeasible", None) or None) if state else None
+    except Exception:  # pragma: no cover - never fail a run on bookkeeping
+        return None
+
+
 def _is_zero_fuel(result) -> bool:
     """Check if a result has (effectively) zero fuel -- the simulation did not produce output.
 
@@ -1395,6 +1406,8 @@ def run_stat_batch(
             _LIVE_STATE.update({"combo": combo.name, "link": repeat_idx, "t0": time.time()})
             for attempt in range(1, max_retries + 1):
                 _LIVE_STATE["attempt"] = attempt
+                infeasible = None
+                _take_flown_infeasible()        # drop any flag a previous attempt left behind
                 try:
                     # B113: keep the runner's aviary session alive while the agents work.
                     with AviaryHeartbeat(tool_map, session_id):
@@ -1413,8 +1426,17 @@ def run_stat_batch(
                             },
                         )
 
-                    # Retry on zero fuel (simulation didn't produce output)
+                    # Zero fuel. If the mission WAS flown, the design did not fly: that is this
+                    # link's result, and the integrator's assessment of it must reach the next
+                    # link (Jessica, 2026-10-05). Retrying the same start blind threw it away.
                     if _is_zero_fuel(result):
+                        infeasible = _take_flown_infeasible()
+                    if infeasible:
+                        print(f"  attempt {attempt}/{max_retries}: the mission was flown and the design did "
+                              "not fly (ZERO_FUEL) -- recorded as infeasible; the integrator's assessment "
+                              "goes to the next link")
+                    # Retry on zero fuel only when no mission was flown (no simulation output)
+                    elif _is_zero_fuel(result):
                         last_error = "zero fuel_burned_kg — simulation produced no output"
                         print(f"  attempt {attempt}/{max_retries}: zero fuel, retrying...")
                         if attempt < max_retries:
@@ -1448,6 +1470,8 @@ def run_stat_batch(
                         result, result_dict,
                         out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl")
                     result_dict["repeat_index"] = repeat_idx
+                    if infeasible:
+                        result_dict["infeasible_design"] = infeasible
                     # Anchor seed is the chain's Run-1 seed (identical for every combo).
                     result_dict["seed"] = base_seed
                     _start = {k: v for k, v in params.items() if not k.startswith("_")}
@@ -1618,7 +1642,7 @@ def run_stat_batch(
                     print(f"  [geometry] next link opens {chain_cpacs or 'the D150 baseline'}; "
                           f"wing {result_dict['geometry_wing'] or 'not read this link'}")
                     _fuel_now = (result_dict.get("eval_classification") or {}).get("fuel_burned_kg")
-                    if _fuel_now is not None:
+                    if _fuel_now is not None and not infeasible:   # an infeasible link has no fuel figure
                         chain_start_fuel = _fuel_now
                     if end_state:
                         chain_params = dict(end_state)

@@ -376,6 +376,9 @@ def export_state_summary() -> dict:
     # large to export, so its presence is exported as a flag.
     _mesh = (getattr(_design_state, "data_store", {}) or {}).get("generate_volume_mesh__mesh_base64")
     out["_volume_mesh_generated"] = isinstance(_mesh, str) and len(_mesh) > 100
+    _infeasible = (getattr(_design_state, "data_store", {}) or {}).get("_simulation_flown_infeasible")
+    if _infeasible:
+        out["_simulation_flown_infeasible"] = dict(_infeasible)
     # B80/B81: knowledge-base and duplicate-guard metrics for result.json.
     try:
         from src.tools.knowledge_base import kb_metrics
@@ -693,6 +696,15 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
         "design, then run it again."
     )
     logger.warning("[B92] %s reported fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
+    # Step 4 (Jessica, 2026-10-05): the mission WAS flown and the design did not fly. The runner
+    # records that link as infeasible and carries the integrator's assessment forward, instead of
+    # retrying the same start blind. Only a flown mission sets this; no output at all still retries.
+    if _design_state is not None and tool_name == "run_simulation":
+        _design_state.data_store["_simulation_flown_infeasible"] = {
+            "fuel_burned_kg": fuel, "converged": data.get("converged"),
+            "exit_code": data.get("exit_code"), "iterations": data.get("iterations"),
+            "session_id": data.get("session_id"),
+        }
 
 
 
