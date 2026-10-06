@@ -106,3 +106,39 @@ def test_other_tools_are_not_given_a_target(fresh):
 def test_a_nonsense_wing_area_does_not_trim(fresh):
     _ready(fresh, area=1.0)
     assert "target_cl" not in dp.resolve_request("configure_from_cpacs", {"session_id": "s"})
+
+
+# ---- B146: aero runs before structures in the sequential pipeline ---------------------------------
+# v2b145: no mass-mcp result existed when SU2 was configured, so nothing was injected and SU2 flew
+# a fixed 2 deg (CL 0.24) while aviary needed ~0.57; that 0.24 became aviary's design CL.
+
+def _cpacs(tmp_path, mtom="78126.0"):
+    p = tmp_path / "plane.xml"
+    p.write_text("<cpacs><vehicles><aircraft><model><analyses><massBreakdown><designMasses>"
+                 f"<mTOM uID='m'><mass>{mtom}</mass></mTOM>"
+                 "</designMasses></massBreakdown></analyses></model></aircraft></vehicles></cpacs>")
+    return str(p)
+
+
+def test_without_mass_the_cpacs_design_mtom_trims_it(fresh, tmp_path):
+    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.33, "Aircraft.Wing.ASPECT_RATIO": 9.4}
+    resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": _cpacs(tmp_path)})
+    assert resolved["target_cl"] == pytest.approx(
+        coupling.cruise_lift_coefficient(78126.0, 0.78, 33000, 122.33), rel=1e-9)
+    assert 0.5 < resolved["target_cl"] < 0.6
+    assert fresh.data_store["aero_target_cl_basis"]["mass_source"] == "cpacs designMasses/mTOM"
+
+
+def test_a_mass_mcp_result_still_wins_over_the_cpacs(fresh, tmp_path):
+    _ready(fresh, mass=90000.0, area=122.33)
+    resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": _cpacs(tmp_path)})
+    assert resolved["target_cl"] == pytest.approx(coupling.cruise_lift_coefficient(90000.0, 0.78, 33000, 122.33))
+    assert fresh.data_store["aero_target_cl_basis"]["mass_source"] == "mass-mcp"
+
+
+@pytest.mark.parametrize("mtom", ["", "abc", "12"])
+def test_an_unusable_cpacs_mass_does_not_trim(fresh, tmp_path, mtom):
+    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.33, "Aircraft.Wing.ASPECT_RATIO": 9.4}
+    resolved = dp.resolve_request("configure_from_cpacs",
+                                  {"session_id": "s", "cpacs_file_path": _cpacs(tmp_path, mtom)})
+    assert "target_cl" not in resolved

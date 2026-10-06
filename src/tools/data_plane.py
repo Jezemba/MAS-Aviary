@@ -814,6 +814,13 @@ def _inject_target_cl(resolved: dict) -> None:
     from src.tools import coupling
 
     mass_kg = coupling.get_var(_design_state, "mass.mtom_kg") or store.get("mass_mtom_kg")
+    mass_source = "mass-mcp"
+    if mass_kg is None:
+        # B146: in the sequential pipeline aero runs BEFORE structures, so no mass-mcp result exists
+        # yet and the solve fell back to a fixed 2 deg (CL 0.24 against ~0.57). Use the design mTOM
+        # the CPACS file itself declares -- the mass that geometry was sized for.
+        mass_kg = _cpacs_design_mtom(resolved.get("cpacs_file_path"))
+        mass_source = "cpacs designMasses/mTOM"
     area = (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")
     if area is None:
         area = (store.get("design_params_applied") or {}).get("Aircraft.Wing.AREA")
@@ -836,8 +843,24 @@ def _inject_target_cl(resolved: dict) -> None:
     resolved["target_cl"] = target
     coupling.put_var(_design_state, "aero.target_cl", target, source_tool="data_plane")
     store["aero_target_cl"] = target
-    logger.info("[B111] trimming the solve to CL %.4f (mass %.0f kg, wing %.2f m^2)",
-                target, float(mass_kg), float(area))
+    store["aero_target_cl_basis"] = {"mass_kg": float(mass_kg), "mass_source": mass_source,
+                                     "wing_area_m2": float(area)}
+    logger.info("[B111] trimming the solve to CL %.4f (mass %.0f kg from %s, wing %.2f m^2)",
+                target, float(mass_kg), mass_source, float(area))
+
+
+def _cpacs_design_mtom(path) -> float | None:
+    """The design mTOM a CPACS file declares (analyses/massBreakdown/designMasses/mTOM/mass), or None."""
+    if not path:
+        return None
+    try:
+        import xml.etree.ElementTree as ET
+
+        node = ET.parse(str(path)).getroot().find(".//analyses/massBreakdown/designMasses/mTOM/mass")
+        value = float(node.text) if node is not None and node.text else None
+    except (OSError, ValueError, ET.ParseError):
+        return None
+    return value if value and 10_000.0 <= value <= 1_000_000.0 else None
 
 
 def _add_measured_planform(record: dict, measured: dict) -> None:
@@ -1882,10 +1905,6 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # read a FILE. Write the morph out now so the injection below hands them the design's geometry.
     if tool_name in _MORPH_FILE_READERS and _design_state:
         _auto_export_morph()
-    # B111: the aero solve must be trimmed to the lift this aircraft has to make.
-    if tool_name == "configure_from_cpacs" and _design_state is not None:
-        _inject_target_cl(resolved)
-
     # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
     # current design's geometry) so structural mass is geometry-coupled; else fall back
     # to the captured input path. A morphed export ALWAYS wins over a stale/baseline
@@ -1920,6 +1939,11 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                         cpacs_arg, real_path, tool_name,
                     )
                 resolved["cpacs_file_path"] = real_path
+
+    # B111: the aero solve must be trimmed to the lift this aircraft has to make. After the path
+    # injection above (B146), so a weight read from the CPACS comes from the file SU2 will mesh.
+    if tool_name == "configure_from_cpacs" and _design_state is not None:
+        _inject_target_cl(resolved)
 
     # G1: estimate_mass writes its breakdown INTO the CPACS file it is given
     # (write_back_to_cpacs defaults to True in mass-mcp). Given the input CPACS,
