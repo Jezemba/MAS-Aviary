@@ -58,7 +58,7 @@ stage_defaults:
     | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
     | Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
     | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
-    | Lift coefficient | Derived | framework: su2 result to aviary `Mission.Design.LIFT_COEFFICIENT` | aviary | from su2 | set by framework | none |
+    | Lift coefficient | Derived | framework: cruise lift W/(q·S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
     | Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
     | Wing mass scaler | Derived | framework: mass result to aviary `Aircraft.Wing.MASS_SCALER` | aviary | from mass | set by framework | none |
     | Max take-off mass | Derived | mass / aviary | pycycle, su2 | 78,126 | set by framework | kg |
@@ -66,7 +66,7 @@ stage_defaults:
     | Passengers | Condition | mission definition | mass | 239 | fixed | none |
     | Cruise Mach | Condition | su2 `MACH_NUMBER`, pycycle `fc.MN` | su2, pycycle, mass | 0.78 | fixed | none |
     | Cruise altitude | Condition | su2 freestream, pycycle `fc.alt` | su2, pycycle | 33,000 | fixed | ft |
-    | Angle of attack | Condition | su2: `AOA` | su2 | 2.0 | fixed | deg |
+    | Angle of attack | Derived | framework: su2 solves it to the cruise lift (target CL = weight / (q × wing area)) | su2 | 2.0 (starting value) | set by framework | deg |
     | ISA temperature offset | Condition | pycycle: `fc.dTs` | pycycle | 0 | fixed | °R |
     | Engine count | Condition | mission definition | mass | 2 | fixed | none |
 templates:

@@ -68,3 +68,16 @@ def test_no_flown_mission_means_no_flag_so_the_runner_still_retries(fresh):
     import stat_batch_runner as sbr
 
     assert sbr._take_flown_infeasible() is None
+
+
+def test_the_note_carries_aviarys_reason_not_a_guess(fresh):
+    failed = dict(V2B145_RUN_SIMULATION, failure={
+        "optimizer_message": "Positive directional derivative for linesearch", "optimizer_status": 8,
+        "violated_constraints": [
+            {"constraint": "traj.cruise.collocation_constraint.defects:distance", "violation": 112999.17},
+            {"constraint": "mission:constraints:range_residual", "violation": 2499.99}]})
+    out = json.loads(dp.intercept_response("run_simulation", json.dumps(failed)))
+    note = out["summary_note"]
+    assert "Positive directional derivative for linesearch" in note
+    assert "range_residual" in note and "coupled inputs" not in note
+    assert fresh.data_store["_simulation_flown_infeasible"]["failure"]["optimizer_status"] == 8

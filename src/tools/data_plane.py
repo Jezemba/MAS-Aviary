@@ -688,12 +688,22 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
         return
     data["valid"] = False
     data["error_code"] = "ZERO_FUEL"
+    # B147: say what aviary reported, not a guess. The old note told every caller to "check the
+    # coupled inputs", and the mdo_integrator repeated it back as a geometry/aero "mismatch" in
+    # v2b145 although the framework had applied them; the real cause was in the optimiser.
+    failure = data.get("failure") if isinstance(data.get("failure"), dict) else {}
+    reason = ""
+    if failure.get("optimizer_message"):
+        reason += f" Aviary's optimiser stopped with: \"{failure['optimizer_message']}\"."
+    worst = [v for v in (failure.get("violated_constraints") or []) if isinstance(v, dict)][:3]
+    if worst:
+        reason += " Constraints it could not satisfy, worst first: " + "; ".join(
+            f"{v.get('constraint')} (off by {v.get('violation'):.4g})" for v in worst) + "."
     data["summary_note"] = (
-        f"NOT VALID -- {tool_name} completed but reported {fuel} kg of fuel burned, which no "
-        "aircraft can do over this mission. The mission did not actually fly: do NOT treat this "
-        "as an optimum or compare it against other designs. Check that the mission is configured "
-        "and that the coupled inputs (aero CL/CD, wing mass, engine cycle) were produced for THIS "
-        "design, then run it again."
+        f"NOT VALID -- {tool_name} completed but reported {fuel} kg of fuel burned: the mission did "
+        "not fly, so this is not a result to compare against other designs." + reason +
+        " The geometry, SU2 aero and wing mass applied to this design are in read_design_json. "
+        "Report this design as infeasible."
     )
     logger.warning("[B92] %s reported fuel_burned_kg=%s; marked NOT VALID", tool_name, fuel)
     # Step 4 (Jessica, 2026-10-05): the mission WAS flown and the design did not fly. The runner
@@ -704,6 +714,7 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
             "fuel_burned_kg": fuel, "converged": data.get("converged"),
             "exit_code": data.get("exit_code"), "iterations": data.get("iterations"),
             "session_id": data.get("session_id"),
+            "failure": failure or None,
         }
 
 
