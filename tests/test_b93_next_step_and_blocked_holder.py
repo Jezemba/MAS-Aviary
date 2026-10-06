@@ -206,7 +206,7 @@ def test_a_flown_mission_reporting_no_fuel_is_not_valid():
     dp._flag_zero_fuel("run_simulation", payload)
     assert payload["valid"] is False
     assert payload["error_code"] == "ZERO_FUEL"
-    assert "did not actually fly" in payload["summary_note"]
+    assert "did not fly" in payload["summary_note"]   # wording changed with B147
 
 
 def test_a_real_flight_is_left_alone():
