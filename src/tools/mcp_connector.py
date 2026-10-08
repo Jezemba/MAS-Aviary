@@ -18,6 +18,35 @@ from smolagents import Tool, ToolCollection
 
 from src.config.loader import MCPConfig, MCPServerConfig
 
+
+def _quiet_mcp_generator_teardown() -> None:
+    """Drop one known-harmless teardown report, and only that one (Jessica, 2026-10-08).
+
+    When a ToolCollection.from_mcp generator is garbage-collected while its event loop is still
+    running, mcpadapt's close() raises "RuntimeError: Cannot close a running event loop" and Python
+    prints it as "Exception ignored in: <generator object ToolCollection.from_mcp ...>" -- 15 full
+    tracebacks per two-link run, after the tools have already been used. Nothing is lost: the
+    loop is closed when its own thread ends. Every other unraisable error is still reported.
+    """
+    import sys
+
+    previous = sys.unraisablehook
+    if getattr(previous, "_mas_quiet_mcp", False):
+        return
+
+    def hook(unraisable):
+        if (isinstance(unraisable.exc_value, RuntimeError)
+                and "Cannot close a running event loop" in str(unraisable.exc_value)
+                and "from_mcp" in repr(unraisable.object)):
+            return
+        previous(unraisable)
+
+    hook._mas_quiet_mcp = True
+    sys.unraisablehook = hook
+
+
+_quiet_mcp_generator_teardown()
+
 logger = logging.getLogger(__name__)
 
 

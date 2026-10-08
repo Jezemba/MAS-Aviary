@@ -201,12 +201,17 @@ def _build_model(config: LLMConfig) -> Model:
     kwargs: dict = {
         "model_id": config.model_id,
         "device_map": config.device_map,
-        "torch_dtype": config.torch_dtype,
+        # transformers 4.57 deprecates `torch_dtype` (it warned on every link) in favour of `dtype`;
+        # smolagents still forwards `torch_dtype`, so pass None there and the value as `dtype`.
+        "torch_dtype": None,
         "max_new_tokens": config.max_new_tokens,
         "reliability": reliability,
     }
     # Forwarded to from_pretrained. Chiefly `max_memory`, which is how a big
     # local model gets an EVEN multi-GPU split — see LLMConfig.model_kwargs.
-    if config.model_kwargs:
-        kwargs["model_kwargs"] = dict(config.model_kwargs)
+    model_kwargs = dict(config.model_kwargs or {})
+    if config.torch_dtype is not None:
+        model_kwargs.setdefault("dtype", config.torch_dtype)
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
     return ThinkingModel(**kwargs)
