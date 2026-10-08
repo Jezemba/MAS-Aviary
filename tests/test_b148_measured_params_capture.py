@@ -112,3 +112,31 @@ def test_design_space_holds_measured_and_set_geometry_and_the_engine(fresh):
     assert space["geometry"]["Wing2H"]["area_m2"] == pytest.approx(31.118)
     assert space["geometry"]["Fuselage1"] == {"length_m": pytest.approx(37.684), "diameter_m": pytest.approx(4.149)}
     assert space["engine"] == {"splitter.BPR": 6.5, "T4_MAX": 2857.0, "fan.PR": 1.6}   # fc.alt is not a design input
+
+
+# ---- B149: the session-creation path is trimmed too ---------------------------------------------
+# v2b148's aero agent configured SU2 with create_su2_session(cpacs_file_path=...) both rounds, the
+# second time passing "target_cl": null; only configure_from_cpacs was being given a target.
+
+def _cpacs(tmp_path):
+    p = tmp_path / "plane.xml"
+    p.write_text("<cpacs><analyses><massBreakdown><designMasses><mTOM><mass>78126.0</mass></mTOM>"
+                 "</designMasses></massBreakdown></analyses></cpacs>")
+    return str(p)
+
+
+@pytest.mark.parametrize("extra", [{}, {"target_cl": None}])
+def test_create_su2_session_with_a_cpacs_is_trimmed(fresh, tmp_path, extra):
+    _get(WING1)
+    resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": _cpacs(tmp_path), "cruise_mach": 0.78,
+                                                         "cruise_altitude_ft": 33000, **extra})
+    assert 0.5 < resolved["target_cl"] < 0.6
+    assert resolved["aspect_ratio"] == pytest.approx(9.367)
+
+
+def test_a_session_without_a_cpacs_is_not_given_a_target(fresh):
+    """No CPACS, no configuration inside create_su2_session: nothing to trim."""
+    _get(WING1)
+    fresh.cpacs_file_path = None
+    resolved = dp.resolve_request("create_su2_session", {"cruise_mach": 0.78})
+    assert resolved.get("cpacs_file_path") or "target_cl" not in resolved

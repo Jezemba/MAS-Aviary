@@ -2079,7 +2079,12 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 
     # B111: the aero solve must be trimmed to the lift this aircraft has to make. After the path
     # injection above (B146), so a weight read from the CPACS comes from the file SU2 will mesh.
-    if tool_name == "configure_from_cpacs" and _design_state is not None:
+    # B149: agents configure SU2 through create_su2_session(cpacs_file_path=...) as often as through
+    # configure_from_cpacs (su2-mcp runs the same CPACS configuration inside it and takes target_cl);
+    # v2b148 used only create_su2_session, so no target was ever injected and SU2 flew 2 deg again.
+    if _design_state is not None and (
+            tool_name == "configure_from_cpacs"
+            or (tool_name == "create_su2_session" and resolved.get("cpacs_file_path"))):
         _inject_target_cl(resolved)
 
     # G1: estimate_mass writes its breakdown INTO the CPACS file it is given
