@@ -32,10 +32,20 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
     except Exception:  # pragma: no cover - never fail a write on config
         mission = {}
     cycle = store.get("prop_cycle_outputs") or {}
+    applied = store.get("design_params_applied") or {}
     return {
         "updated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "mission": {k: mission.get(k) for k in ("range_nmi", "num_passengers", "cruise_mach",
                                                 "cruise_altitude_ft")},
+        # The design-space variables of the prompt table, as tools reported them (2026-10-08):
+        # per tigl component the measured geometry and any value set (<key>_set; a set 'sweep' is
+        # a positioning angle, the measured one is sweep_quarter_chord_deg), the engine inputs
+        # pycycle confirmed, and the mission's own engine scale factor.
+        "design_space": {
+            "geometry": {uid: dict(v) for uid, v in (store.get("design_space_components") or {}).items()},
+            "engine": dict(store.get("design_space_engine") or {}),
+            "mission": {k: applied[k] for k in ("Aircraft.Engine.SCALE_FACTOR",) if k in applied},
+        },
         "geometry": {
             "cpacs_file": store.get("morphed_cpacs_path"),
             "wing": _public(store.get("geometry_wing")),

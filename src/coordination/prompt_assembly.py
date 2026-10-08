@@ -118,6 +118,30 @@ def _stage_key(name: str | None) -> str:
     return re.sub(r"[^a-z]+", "_", str(name or "").lower()).strip("_")
 
 
+def _fmt(values: dict) -> str:
+    return ", ".join(f"{k} {v:.6g}" if isinstance(v, float) else f"{k} {v}" for k, v in values.items())
+
+
+def _starting_design_block(start: dict) -> str:
+    """The previous iteration's design_space (design.json), in the prompt table's terms (2026-10-08)."""
+    lines = ["STARTING DESIGN for this iteration (the previous iteration's design, from its design.json):"]
+    if start.get("CPACS_FILE"):
+        lines.append(f"  CPACS_FILE: {start['CPACS_FILE']}")
+    for uid, values in (start.get("geometry") or {}).items():
+        if values:
+            lines.append(f"  {uid}: {_fmt(values)}")
+    if start.get("engine"):
+        lines.append("  Engine inputs last set (a new pycycle session starts at its defaults; set them again "
+                     f"to keep them): {_fmt(start['engine'])}")
+    if start.get("mission"):
+        lines.append(f"  Mission: {_fmt(start['mission'])}")
+    # carry_over files written before 2026-10-08 hold flat aviary values; show them as they are.
+    for k, v in start.items():
+        if k not in ("CPACS_FILE", "geometry", "engine", "mission"):
+            lines.append(f"  {k}: {v}")
+    return "\n".join(lines)
+
+
 def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None,
                          stage_name: str | None = None) -> str:
     """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one).
@@ -149,9 +173,7 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
         if integrator:
             text += f"\n\nDESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}"
         if start:
-            lines = "\n".join(f"  {k}: {v}" for k, v in start.items())
-            text += ("\n\nSTARTING DESIGN for this iteration (the previous iteration's end state, "
-                     f"already applied by the framework):\n{lines}")
+            text += "\n\n" + _starting_design_block(start)
     return text
 
 

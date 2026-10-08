@@ -485,6 +485,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_param_bounds(tool_name, data)
                 _capture_geometry_wing(tool_name, data)
                 _capture_geometry_fuselage(tool_name, data)
+                _capture_design_space(tool_name, data)
                 _track_morph_export(tool_name, data)
                 _annotate_geometry_authority(tool_name, data)
                 _annotate_coupled_overrides(tool_name, data)
@@ -516,6 +517,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_param_bounds(tool_name, response)
         _capture_geometry_wing(tool_name, response)
         _capture_geometry_fuselage(tool_name, response)
+        _capture_design_space(tool_name, response)
         _track_morph_export(tool_name, response)
         _annotate_geometry_authority(tool_name, response)
         _annotate_coupled_overrides(tool_name, response)
@@ -940,6 +942,34 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
             ar = span * span / area
         record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
         _add_measured_planform(record, data)
+    elif tool_name == "get_high_level_parameters":
+        # B148: tigl-mcp B145 made this tool MEASURE the geometry, so agents now use it instead of
+        # get_wing_summary -- and nothing captured the wing (v2b147: no wing, so no target CL and SU2
+        # flew 2 deg again). Only a measured main-wing response counts; the response names its own
+        # component, and without a component list only "Wing1" is taken to be the main wing.
+        uid = data.get("component_uid")
+        params = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+        if not data.get("measured") or not uid or not str(uid).lower().startswith("wing"):
+            return
+        try:
+            from src.tools.procedures import component_uids
+
+            known = bool(component_uids())
+        except Exception:      # pragma: no cover
+            known = False
+        if not (_is_main_wing(uid) if known else str(uid).lower() == "wing1"):
+            return
+        try:
+            area = float(params["area"])
+            span = float(params["span"]) if params.get("span") is not None else None
+            ar = float(params["aspect_ratio"]) if params.get("aspect_ratio") is not None else (
+                span * span / area if span else None)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            return
+        record = {"Aircraft.Wing.AREA": area, "Aircraft.Wing.ASPECT_RATIO": ar, "_span": span}
+        # 'sweep' here is the measured quarter-chord sweep (the tool's note says so), as in a morph's after.
+        _add_measured_planform(record, {"sweep_quarter_chord_deg": params.get("sweep"),
+                                        "taper_ratio": params.get("taper_ratio")})
     elif tool_name == "validate_cpacs_inputs":
         # B109: the FILE's wing, as a last resort. geoauth_all8 orchestrated staged L2 (attempt 2) opened
         # the baseline, never morphed and never called get_wing_summary, so there was no geometry wing and
@@ -971,9 +1001,93 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
                 record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"], tool_name)
 
 
+# The design-space inputs of the engine (Jessica's table): what design.json reports as set.
+_ENGINE_INPUTS = ("splitter.BPR", "T4_MAX", "fan.PR", "lpc.PR", "hpc.PR")
+
+
+def _capture_design_space(tool_name: str, data: dict) -> None:
+    """Record the design-space variables (Jessica's table) for design.json (2026-10-08).
+
+    Per component: the measured geometry (area, aspect ratio, span, quarter-chord sweep, taper;
+    fuselage length and diameter) and the values last passed to set_high_level_parameters (its
+    'sweep' is a positioning angle, kept apart from the measured sweep). Engine: the
+    splitter.BPR / T4_MAX / fan.PR / lpc.PR / hpc.PR pycycle confirmed. Only tool results, never
+    defaults.
+    """
+    if _design_state is None or not isinstance(data, dict):
+        return
+    store = _design_state.data_store
+    comps = store.setdefault("design_space_components", {})
+
+    def put(uid, values):
+        values = {k: float(v) for k, v in values.items() if isinstance(v, (int, float))}
+        if uid and values:
+            comps.setdefault(str(uid), {}).update(values)
+
+    if tool_name == "get_high_level_parameters" and data.get("measured"):
+        p = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+        put(data.get("component_uid"), {"area_m2": p.get("area"), "aspect_ratio": p.get("aspect_ratio"),
+                                        "span_m": p.get("span"), "sweep_quarter_chord_deg": p.get("sweep"),
+                                        "taper_ratio": p.get("taper_ratio"), "length_m": p.get("length"),
+                                        "diameter_m": p.get("diameter")})
+    elif tool_name == "get_wing_summary":
+        uid = getattr(_call_ctx, "wing_uid", None)
+        area = data.get("full_reference_area")
+        put(uid, {"area_m2": area, "aspect_ratio": data.get("full_aspect_ratio"), "span_m": data.get("span"),
+                  "sweep_quarter_chord_deg": data.get("sweep_quarter_chord_deg"),
+                  "taper_ratio": data.get("taper_ratio")})
+    elif tool_name == "get_fuselage_summary":
+        put(getattr(_call_ctx, "fuselage_uid", None) or "Fuselage1",
+            {"length_m": data.get("length"), "diameter_m": data.get("max_diameter")})
+    elif tool_name == "set_high_level_parameters":
+        ctx = getattr(_call_ctx, "morph", None) or {}
+        uid = ctx.get("uid") or data.get("component_uid")
+        set_values = {f"{k}_set": v for k, v in (ctx.get("updates") or {}).items()}
+        put(uid, set_values)
+        morph = data.get("geometry_morph")
+        after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
+        if isinstance(after, dict):
+            w, h = after.get("width"), after.get("height")
+            put(uid, {"area_m2": after.get("reference_area"), "aspect_ratio": after.get("aspect_ratio"),
+                      "span_m": after.get("span"), "sweep_quarter_chord_deg": after.get("sweep_deg"),
+                      "taper_ratio": after.get("taper_ratio"), "length_m": after.get("length"),
+                      "diameter_m": max(w, h) if isinstance(w, (int, float)) and isinstance(h, (int, float)) else None})
+    elif tool_name == "set_inputs":
+        sent = getattr(_call_ctx, "cycle_values", None) or {}
+        updated = data.get("updated") if isinstance(data.get("updated"), list) else []
+        engine = store.setdefault("design_space_engine", {})
+        for name in updated:
+            if name in _ENGINE_INPUTS:
+                try:
+                    engine[name] = float(sent[name])
+                except (KeyError, TypeError, ValueError):
+                    pass
+    elif tool_name == "get_design_inputs":
+        engine = store.setdefault("design_space_engine", {})
+        for item in data.get("design_inputs") or []:
+            if isinstance(item, dict) and item.get("name") in _ENGINE_INPUTS and item["name"] not in engine:
+                if isinstance(item.get("current_value"), (int, float)):
+                    engine[item["name"]] = float(item["current_value"])
+
+
 def _capture_geometry_fuselage(tool_name: str, data: dict) -> None:
     """Record the fuselage tigl measured after a morph (B133): length, max height, max width."""
-    if _design_state is None or tool_name != "set_high_level_parameters" or not isinstance(data, dict):
+    if _design_state is None or not isinstance(data, dict):
+        return
+    if tool_name == "get_high_level_parameters":
+        # B148: a measured fuselage read (tigl-mcp B145) is the geometry too.
+        params = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+        if not data.get("measured") or not str(data.get("component_uid", "")).lower().startswith("fuselage"):
+            return
+        try:
+            record = {"Aircraft.Fuselage.LENGTH": float(params["length"]),
+                      "Aircraft.Fuselage.MAX_HEIGHT": float(params["max_height"]),
+                      "Aircraft.Fuselage.MAX_WIDTH": float(params["max_width"]), "_source": tool_name}
+        except (KeyError, TypeError, ValueError):
+            return
+        _design_state.data_store["geometry_fuselage"] = record
+        return
+    if tool_name != "set_high_level_parameters":
         return
     morph = data.get("geometry_morph")
     after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
@@ -2158,6 +2272,13 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 resolved["ref_area"] = 2.0 * float(_area)
                 logger.info("Injected computed REF_AREA=%.3f (full wing) into %s",
                             resolved["ref_area"], tool_name)
+            else:
+                # B148: a wing measured by get_high_level_parameters (full wing) or a morph. Without
+                # this, SU2 fell back to the CPACS <reference><area>, which a reshape does not update.
+                _full = (_design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")
+                if isinstance(_full, (int, float)) and _full > 0:
+                    resolved["ref_area"] = float(_full)
+                    logger.info("Injected geometry REF_AREA=%.3f (full wing) into %s", _full, tool_name)
         if resolved.get("ref_length") is None:
             _mac = _cpl.get_var(_design_state, "geom.mac_length")
             if _mac:
@@ -2223,6 +2344,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # geometry's before anything downstream reads ASPECT_RATIO.
     if tool_name == "get_wing_summary":
         _call_ctx.wing_uid = resolved.get("wing_uid") or resolved.get("component_uid")
+    elif tool_name == "get_fuselage_summary":
+        _call_ctx.fuselage_uid = resolved.get("fuselage_uid") or resolved.get("component_uid")
     elif tool_name == "set_high_level_parameters":
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
                            "session_id": resolved.get("session_id"),
@@ -2234,6 +2357,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
         _inject_phase_k_b_fn_des(resolved)
         _inject_cycle_flight_condition(resolved)
+        # design.json design_space: the values actually sent, recorded once pycycle confirms them.
+        _call_ctx.cycle_values = dict(resolved.get("values") or {})
 
     return resolved
 

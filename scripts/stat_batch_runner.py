@@ -429,7 +429,7 @@ CARRY_OVER_FILE = "carry_over.json"
 
 
 def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
-                     params: dict | None) -> Path | None:
+                     params: dict | None, design_space: dict | None = None) -> Path | None:
     """What a new link (iteration) inherits, for verbatim prompt assembly (Jessica, 2026-10-05).
 
     Verbatim mode drops the runner's task text, which is where the previous link's
@@ -443,11 +443,17 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
             path.unlink()
         return None
     link_dir.mkdir(parents=True, exist_ok=True)
-    start = {k: v for k, v in (params or {}).items() if not str(k).startswith("_")}
+    # The STARTING DESIGN the prompt shows is the previous link's design.json design_space (the
+    # prompt table's variables, as tools reported them), not the aviary chain values -- those are
+    # applied to the session by the framework and kept here only for the record (2026-10-08).
+    space = design_space or {}
     path.write_text(json.dumps({
         "link": link,
         "previous_integrator_design_state": integrator_text or "",
-        "starting_design": {"CPACS_FILE": str(cpacs) if cpacs else str(_D150_FIXTURE), **start},
+        "starting_design": {"CPACS_FILE": str(cpacs) if cpacs else str(_D150_FIXTURE),
+                            "geometry": space.get("geometry") or {}, "engine": space.get("engine") or {},
+                            "mission": space.get("mission") or {}},
+        "aviary_session_start": {k: v for k, v in (params or {}).items() if not str(k).startswith("_")},
         "baseline_cpacs": str(_D150_FIXTURE),
     }, indent=2))
     return path
@@ -1313,6 +1319,7 @@ def run_stat_batch(
         chain_cpacs: str | None = None
         # The previous link's mdo_integrator DESIGN_STATE as it wrote it (verbatim carry-over).
         chain_integrator: str | None = None
+        chain_design_space: dict | None = None      # the previous link's design.json design_space
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
@@ -1321,6 +1328,7 @@ def run_stat_batch(
                     chain_cpacs = done["chain_cpacs_out"]
                 chain_feedback = done.get("chain_feedback") or chain_feedback
                 chain_integrator = done.get("chain_integrator_text") or chain_integrator
+                chain_design_space = done.get("chain_design_space") or chain_design_space
                 if done.get("kb_link_summary"):
                     chain_kb_seed = {"summary": done["kb_link_summary"],
                                      "end_state": done["chain_end_params"]}
@@ -1397,7 +1405,7 @@ def run_stat_batch(
             base_task = base_task_for(combo.name, chain_cpacs)
             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
             write_carry_over(out_path / f"repeat_{repeat_idx:03d}" / combo.name, repeat_idx,
-                             chain_integrator, chain_cpacs, params)
+                             chain_integrator, chain_cpacs, params, chain_design_space)
 
             # Retry loop
             timeout_sec = timeout_minutes * 60
@@ -1682,6 +1690,12 @@ def run_stat_batch(
                         _integrator = _integrator[:7000] + "\n...[assessment truncated]"
                     result_dict["chain_integrator_text"] = _integrator
                     chain_integrator = _integrator or chain_integrator
+                    try:
+                        _dj = json.loads((out_path / f"repeat_{repeat_idx:03d}" / combo.name / "design.json").read_text())
+                        chain_design_space = _dj.get("design_space") or chain_design_space
+                    except (OSError, ValueError):
+                        pass
+                    result_dict["chain_design_space"] = chain_design_space
 
                     if _integrator or _num:
                         chain_feedback = (

@@ -287,15 +287,24 @@ def test_a_later_link_inherits_the_integrator_and_the_design(tmp_path, monkeypat
 
     r = _runner()
     morph = str(tmp_path / "link0_morph.xml")
+    space = {"geometry": {"Wing1": {"area_m2": 122.69, "aspect_ratio": 9.519, "sweep_set": 25.0,
+                                    "sweep_quarter_chord_deg": 21.97},
+                          "Fuselage1": {"length_m": 37.684, "diameter_m": 4.149}},
+             "engine": {"splitter.BPR": 6.5, "fan.PR": 1.6}, "mission": {"Aircraft.Engine.SCALE_FACTOR": 1.1}}
     r.write_carry_over(tmp_path, 1, "DESIGN_STATE:\n  VERDICT: CONTINUE\n  RECOMMENDATION_TO: geometry_engineer",
-                       morph, START)
+                       morph, START, space)
     monkeypatch.setattr(knowledge_base, "_run_config", {"path": str(tmp_path / "knowledge_base.jsonl")})
     carry = prompt_assembly.read_carry_over()
     p = _her_prompts()
     first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry)
     assert "DESIGN_STATE from the previous iteration (mdo_integrator):\nDESIGN_STATE:\n  VERDICT: CONTINUE" in first
-    assert "STARTING DESIGN for this iteration" in first and "  Aircraft.Wing.SWEEP: 21.65" in first
-    assert "_seed" not in first
+    assert "STARTING DESIGN for this iteration (the previous iteration's design, from its design.json)" in first
+    assert "  Wing1: area_m2 122.69, aspect_ratio 9.519, sweep_set 25, sweep_quarter_chord_deg 21.97" in first
+    assert "  Fuselage1: length_m 37.684, diameter_m 4.149" in first
+    assert "set them again to keep them): splitter.BPR 6.5, fan.PR 1.6" in first
+    assert "  Mission: Aircraft.Engine.SCALE_FACTOR 1.1" in first
+    # The aviary chain values are the framework's business now, not the prompt's (2026-10-08).
+    assert "Aircraft.Wing.SWEEP" not in first and "_seed" not in first
     assert f"Use CPACS file at {morph}" in first and "D150_simple.xml" not in first
     # Later stages: the carried CPACS too, but not the previous iteration's assessment.
     later = prompt_assembly.verbatim_stage_input(p["structures_analyst"], [("aerodynamics_analyst", "X", None)], carry)
