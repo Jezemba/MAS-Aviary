@@ -201,7 +201,6 @@ def main() -> int:
     from src.tools.knowledge_base import configure_run
 
     kb_path = out / "knowledge_base.jsonl"
-    configure_run(path=str(kb_path), chain_link=0, attempt=1)
     step_log.configure_from_env(str(kb_path), 1)
 
     import stat_batch_runner as sbr
@@ -222,6 +221,8 @@ def main() -> int:
     session_id = setup["session_id"]
     reset_design_state()
     register_presession("aviary", session_id)          # exactly as run_combination does
+    # The knowledge base starts here, as in a run's child: the runner's session setup is not agent work.
+    configure_run(path=str(kb_path), chain_link=0, attempt=1)
 
     agents = build_agents(config) if not args.replay else None
     if args.replay:
