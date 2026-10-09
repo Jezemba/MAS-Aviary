@@ -167,6 +167,9 @@ def build_agents(config):
     if combo.strategy_config:
         br._deep_merge(coordinator.config, combo.strategy_config)
     coordinator.strategy.initialize(coordinator.agents, coordinator.config)
+    # The run's own wrapper: per-agent attribution of every tool call (knowledge base, duplicate
+    # guard) and the step-log hooks. Without it the sandbox is not the code a run executes.
+    br._install_trace_capture(coordinator)
     return coordinator.agents
 
 
@@ -269,7 +272,10 @@ def main() -> int:
                             continue
                         tool = replay_tools.get(name)
                         try:
-                            now = tool(**call_args) if tool else f"tool {name!r} is not loaded"
+                            from src.tools.agent_context import agent_scope
+
+                            with agent_scope(stage, ""):        # attributed to the stage, as in a run
+                                now = tool(**call_args) if tool else f"tool {name!r} is not loaded"
                         except Exception as exc:
                             now = f"{type(exc).__name__}: {exc}"
                         ev.emit(type="replay_call", stage=stage, tool=name, arguments=call_args,
