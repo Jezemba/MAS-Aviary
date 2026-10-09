@@ -304,4 +304,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # Exit hard: the MCP client generators can block interpreter shutdown with their event loops still
+    # running, and the 2026-10-08 sandbox sat for hours after "done" holding the GPU (Qwen loaded).
+    os._exit(code)
