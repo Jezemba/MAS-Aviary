@@ -102,10 +102,19 @@ class TestReadHistoryStillWorks:
         assert cl == pytest.approx(0.2059)
         assert cd == pytest.approx(0.0018)
 
-    def test_history_overrides_an_earlier_solver_capture(self):
-        """Both fire in a normal run; the explicit history read is the more
-        precise source and must win, not be blocked by the earlier capture."""
+    def test_a_history_read_does_not_override_the_solvers_converged_report(self):
+        """B153 (2026-10-09), reversing B23's order: the solver reports its CONVERGED coefficients
+        (with the B138 drag floor); a history read returns whatever slice the caller asked for.
+        Sandbox 20261009-085559 read iterations 0-9 and replaced CL 0.5573 with 0.265."""
         intercept_response("run_su2_solver", json.dumps(SOLVED))
+        before = _cl_cd()
+        intercept_response(
+            "read_history_csv",
+            json.dumps({"rows": [{"CL": "0.2059", "CD": "0.0018"}]}),
+        )
+        assert _cl_cd() == before
+
+    def test_a_history_read_still_captures_when_the_solver_reported_nothing(self):
         intercept_response(
             "read_history_csv",
             json.dumps({"rows": [{"CL": "0.2059", "CD": "0.0018"}]}),
@@ -140,3 +149,16 @@ class TestNoFalseCaptures:
     def test_unrelated_tool_ignored(self):
         intercept_response("estimate_mass", json.dumps({"final_coefficients": {"CL": 1, "CD": 1}}))
         assert _cl_cd() == (None, None)
+
+
+def test_b153_the_sandbox_case():
+    """run_su2_solver's trimmed result, then the agent's read of the FIRST 10 history rows."""
+    intercept_response("run_su2_solver", json.dumps({
+        "success": True, "final_coefficients": {"CL": 0.5573092584, "CD": 0.0771896168},
+        "drag_assessment": {"cd_su2": 0.0771896168, "cl": 0.5573092584, "aspect_ratio": 9.3668,
+                            "oswald_efficiency": 0.773, "cd_reported": 0.0771896168, "source": "su2"}}))
+    first_rows = [{"Inner_Iter": float(i), "CL": cl, "CD": cd} for i, (cl, cd) in enumerate(
+        [(0.3172, 0.2017), (0.2829, 0.1174), (0.2646, 0.0343)] + [(0.2652, 0.0036)] * 7)]
+    intercept_response("read_history_csv", json.dumps({"columns": ["Inner_Iter", "CL", "CD"], "rows": first_rows}))
+    cl, cd = _cl_cd()
+    assert cl == pytest.approx(0.5573092584) and cd == pytest.approx(0.0771896168)

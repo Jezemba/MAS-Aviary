@@ -1329,6 +1329,18 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
         _store_aero(cl_f, cd_f, source="run_su2_solver")
         return
 
+    # B153 (2026-10-09): the solver's converged report is authoritative. A history read returns
+    # whatever slice the caller asked for -- sandbox 20261009-085559's aero agent read
+    # max_rows=10, i.e. iterations 0-9 -- and its last row then overwrote the converged trimmed
+    # CL 0.5573 / CD 0.0772 with iteration 9's CL 0.265 / CD 0.0036; aviary flew design CL 0.265
+    # and the trajectory collapsed. The history read still captures when no solver report exists
+    # (older su2-mcp, B23).
+    if _design_state.data_store.get("_aero_source_last") == "run_su2_solver":
+        _design_state.data_store["aero_history_read_ignored"] = int(
+            _design_state.data_store.get("aero_history_read_ignored") or 0) + 1
+        logger.info("[B153] read_history_csv not captured: run_su2_solver's converged coefficients stand")
+        return
+
     rows = data.get("rows")
     if not isinstance(rows, list) or not rows:
         _note_aero_capture_failure("read_history_csv returned no rows", data)
@@ -1397,6 +1409,8 @@ def _store_aero(cl_f: float, cd_f: float, source: str) -> None:
     # Legacy keys (kept during transition / as fallback source).
     _design_state.data_store["aero_cl_cruise"] = cl_f
     _design_state.data_store["aero_cd_cruise"] = cd_f
+    _design_state.data_store["_aero_source_last"] = source        # B153: solver beats history
+    _design_state.data_store["aero_capture_source"] = source
     # Typed registry (the coupling contract): SU2 writes its named output variables.
     from src.tools import coupling
     coupling.put_var(_design_state, "aero.cl_cruise", cl_f, source_tool=source)
