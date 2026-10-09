@@ -16,7 +16,7 @@ if [ "${1:-}" = "--attach" ]; then        # mirror an already-running sandbox: -
 else
   NAME="$(date +%Y%m%d-%H%M%S)_sandbox"; ATTACH=0
 fi
-QARGS=$(printf ' %q' "$@")
+QARGS=""; [ $# -gt 0 ] && QARGS=$(printf ' %q' "$@")   # no arguments must not become one empty argument
 # -n -f: return once the remote job is started; without them ssh waited for the sandbox to finish, so
 # report.html only arrived at the end.
 [ "$ATTACH" = 1 ] || ssh -n -f -o BatchMode=yes -i "$KEY" "$HOST" "source ~/avion_env.sh >/dev/null 2>&1; cd ~/$RDIR && mkdir -p logs/sandbox && setsid nohup env PYTHONPATH=\$PWD \
