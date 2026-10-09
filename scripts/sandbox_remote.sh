@@ -11,9 +11,15 @@ KEY="${SANDBOX_KEY:-$HOME/.ssh/voir_shard}"
 RDIR="${SANDBOX_REMOTE_DIR:-Jessica/Avion/MAS-Aviary}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH=(ssh -o BatchMode=yes -i "$KEY" "$HOST")
-NAME="$(date +%Y%m%d-%H%M%S)_sandbox"
+if [ "${1:-}" = "--attach" ]; then        # mirror an already-running sandbox: --attach <name>
+  NAME="$2"; ATTACH=1
+else
+  NAME="$(date +%Y%m%d-%H%M%S)_sandbox"; ATTACH=0
+fi
 QARGS=$(printf ' %q' "$@")
-"${SSH[@]}" "source ~/avion_env.sh >/dev/null 2>&1; cd ~/$RDIR && mkdir -p logs/sandbox && setsid nohup env PYTHONPATH=\$PWD \
+# -n -f: return once the remote job is started; without them ssh waited for the sandbox to finish, so
+# report.html only arrived at the end.
+[ "$ATTACH" = 1 ] || ssh -n -f -o BatchMode=yes -i "$KEY" "$HOST" "source ~/avion_env.sh >/dev/null 2>&1; cd ~/$RDIR && mkdir -p logs/sandbox && setsid nohup env PYTHONPATH=\$PWD \
   ../.venv/bin/python scripts/stage_sandbox.py --out logs/sandbox/$NAME$QARGS > logs/sandbox/$NAME.log 2>&1 < /dev/null & disown"
 echo "started on $HOST: ~/$RDIR/logs/sandbox/$NAME   (console log: logs/sandbox/$NAME.log)"
 mkdir -p "$HERE/logs/sandbox/$NAME"
