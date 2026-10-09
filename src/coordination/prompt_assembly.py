@@ -46,6 +46,39 @@ def verbatim_prompt_templates() -> dict:
     return templates
 
 
+REFERENCE_TOOLS = ("read_design_json", "read_best_practices", "get_design_state")
+
+
+def with_reference_tools(tools: list) -> list:
+    """The stage's tools plus the reference tools its prompt names (B150, 2026-10-08).
+
+    A sequential stage gets only its allowed_tools, and no stage listed these, so "read it with
+    read_design_json" (and get_design_state, read_best_practices) named tools the model did not
+    have: read_design_json was called 0 times in 16 attempts. Added in verbatim mode only.
+    """
+    from src.tools.best_practices_tool import ReadBestPractices
+    from src.tools.design_json import ReadDesignJson
+    from src.tools.design_state_tool import GetDesignState
+
+    have = {getattr(t, "name", None) for t in tools}
+    extra = [cls() for cls in (ReadDesignJson, ReadBestPractices, GetDesignState) if cls.name not in have]
+    return list(tools) + extra
+
+
+def read_design_json_text() -> str | None:
+    """The current design.json, as the framework last wrote it, or None if it does not exist yet."""
+    try:
+        from src.tools.design_json import design_path
+
+        path = design_path()
+        if not path:
+            return None
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
 def read_carry_over() -> dict | None:
     """carry_over.json beside this link's knowledge base: what a new iteration inherits.
 
@@ -143,7 +176,7 @@ def _starting_design_block(start: dict) -> str:
 
 
 def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None,
-                         stage_name: str | None = None) -> str:
+                         stage_name: str | None = None, design_json: str | None = None) -> str:
     """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one).
 
     On a later iteration (carry_over given) every stage's prompt names the carried-forward
@@ -174,6 +207,11 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
             text += f"\n\nDESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}"
         if start:
             text += "\n\n" + _starting_design_block(start)
+    # Jessica (2026-10-08): the design record goes into the context, not behind a tool the model may
+    # never call (read_design_json was called 0 times in 16 attempts).
+    if design_json:
+        text += ("\n\ndesign.json (the framework's current record of this design, from tool results; "
+                 f"read_design_json returns the same):\n{design_json}")
     return text
 
 

@@ -380,3 +380,62 @@ def test_the_real_almost_json_from_v2b143_routes_to_aero():
     assert "RECOMMENDATION from the previous iteration (mdo_integrator):\n  RECOMMENDATION_TO: aerodynamics_analyst" in aero
     first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry, "geometry_engineer")
     assert "TASK_COMPLETE" not in first
+
+
+# ---- design.json in every stage's context; the tools the prompts name exist (2026-10-08) ---------
+
+def test_every_stage_gets_design_json_after_its_input(tmp_path, monkeypatch):
+    from src.coordination import prompt_assembly
+    from src.tools import knowledge_base
+
+    (tmp_path / "design.json").write_text('{"design_space": {"engine": {"splitter.BPR": 6.5}}}')
+    monkeypatch.setattr(knowledge_base, "_run_config", {"path": str(tmp_path / "knowledge_base.jsonl")})
+    dj = prompt_assembly.read_design_json_text()
+    p = _her_prompts()
+    out = prompt_assembly.verbatim_stage_input(p["propulsion_analyst"], [("structures_analyst", "X", None)],
+                                               None, "propulsion_analyst", dj)
+    assert out.startswith(p["propulsion_analyst"])
+    head, _, tail = out.partition("\n\ndesign.json (the framework's current record of this design")
+    assert "DESIGN_STATE from the previous stage (structures_analyst):\nX" in head
+    assert tail.endswith('{"design_space": {"engine": {"splitter.BPR": 6.5}}}')
+
+
+def test_no_design_json_yet_adds_nothing(tmp_path, monkeypatch):
+    from src.coordination import prompt_assembly
+    from src.tools import knowledge_base
+
+    monkeypatch.setattr(knowledge_base, "_run_config", {"path": str(tmp_path / "knowledge_base.jsonl")})
+    assert prompt_assembly.read_design_json_text() is None
+    p = _her_prompts()
+    assert prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], None, "geometry_engineer",
+                                                None) == p["geometry_engineer"]
+
+
+def test_the_reference_tools_the_prompts_name_are_given_once():
+    from src.coordination import prompt_assembly
+    from src.tools.design_json import ReadDesignJson
+
+    names = [t.name for t in prompt_assembly.with_reference_tools([ReadDesignJson()])]
+    assert sorted(names) == ["get_design_state", "read_best_practices", "read_design_json"]
+
+
+def test_the_runner_sets_aside_a_failed_attempts_design_json(tmp_path):
+    r = _runner()
+    (tmp_path / "design.json").write_text('{"design_space": {"geometry": {"Wing1": {"area_m2": 130.0}}}}')
+    assert r.design_space_of(tmp_path) == {"geometry": {"Wing1": {"area_m2": 130.0}}}
+    r.set_aside_design_json(tmp_path, 1)                    # first attempt: nothing to set aside
+    assert (tmp_path / "design.json").exists()
+    r.set_aside_design_json(tmp_path, 2)
+    assert not (tmp_path / "design.json").exists() and (tmp_path / "design_attempt1.json").exists()
+    assert r.design_space_of(tmp_path) is None
+
+
+def test_integrator_text_is_read_from_a_failed_attempts_messages():
+    from types import SimpleNamespace
+
+    r = _runner()
+    res = SimpleNamespace(messages=[{"content": "geometry done"},
+                                    {"content": "DESIGN_STATE:\n  RECOMMENDATION_TO: aerodynamics_analyst\n  VERDICT: RETRY"},
+                                    {"content": "TASK_COMPLETE"}])
+    assert r.integrator_text(res).startswith("DESIGN_STATE:\n  RECOMMENDATION_TO: aerodynamics_analyst")
+    assert r.integrator_text(SimpleNamespace(messages=[])) == ""

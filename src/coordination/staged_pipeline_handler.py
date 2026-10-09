@@ -407,7 +407,8 @@ class StagedPipelineHandler(ExecutionHandler):
             if prompt_assembly.is_verbatim():
                 context = prompt_assembly.verbatim_stage_input(
                     getattr(agent, "description", "") or "", previous_outputs,
-                    prompt_assembly.read_carry_over(), stage.name if stage else None)
+                    prompt_assembly.read_carry_over(), stage.name if stage else None,
+                    prompt_assembly.read_design_json_text())
 
             # Run the agent.
             start = time.monotonic()

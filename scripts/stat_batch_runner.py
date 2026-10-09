@@ -428,6 +428,44 @@ def setup_session_with_params(
 CARRY_OVER_FILE = "carry_over.json"
 
 
+def integrator_text(result) -> str:
+    """The mdo_integrator's final text from a run's messages (capped), or ""."""
+    text = ""
+    try:
+        for m in reversed(getattr(result, "messages", None) or []):
+            c = (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
+            if "DESIGN_STATE" in c or "RECOMMENDED_CHANGE" in c or "VERDICT" in c or "MDO_REASONING" in c:
+                text = c
+                break
+        if not text and getattr(result, "messages", None):
+            last = result.messages[-1]
+            text = (last.get("content") if isinstance(last, dict) else getattr(last, "content", "")) or ""
+    except Exception:
+        text = ""
+    if len(text) > 7000:  # cap to keep the task prompt bounded
+        text = text[:7000] + "\n...[assessment truncated]"
+    return text
+
+
+def design_space_of(link_dir) -> dict | None:
+    """design.json's design_space in a link folder, or None."""
+    try:
+        return json.loads((Path(link_dir) / "design.json").read_text()).get("design_space") or None
+    except (OSError, ValueError):
+        return None
+
+
+def set_aside_design_json(link_dir, attempt: int) -> None:
+    """Before attempt N, move attempt N-1's design.json to design_attempt<N-1>.json.
+
+    design.json goes into every stage's context (2026-10-08); a retry in the same link folder
+    would otherwise start from the failed attempt's record.
+    """
+    path = Path(link_dir) / "design.json"
+    if attempt > 1 and path.exists():
+        path.replace(path.with_name(f"design_attempt{attempt - 1}.json"))
+
+
 def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
                      params: dict | None, design_space: dict | None = None) -> Path | None:
     """What a new link (iteration) inherits, for verbatim prompt assembly (Jessica, 2026-10-05).
@@ -1408,12 +1446,14 @@ def run_stat_batch(
                              chain_integrator, chain_cpacs, params, chain_design_space)
 
             # Retry loop
+            result = None
             timeout_sec = timeout_minutes * 60
             last_error = None
             attempts_used = 0
             _LIVE_STATE.update({"combo": combo.name, "link": repeat_idx, "t0": time.time()})
             for attempt in range(1, max_retries + 1):
                 _LIVE_STATE["attempt"] = attempt
+                set_aside_design_json(out_path / f"repeat_{repeat_idx:03d}" / combo.name, attempt)
                 infeasible = None
                 _take_flown_infeasible()        # drop any flag a previous attempt left behind
                 try:
@@ -1671,30 +1711,11 @@ def run_stat_batch(
                     _num = build_quick_metrics(_ec)
 
                     # Pull the integrator's full final text from the last relevant message.
-                    _integrator = ""
-                    try:
-                        for _m in reversed(result.messages or []):
-                            _c = (_m.get("content") if isinstance(_m, dict)
-                                  else getattr(_m, "content", "")) or ""
-                            if ("DESIGN_STATE" in _c or "RECOMMENDED_CHANGE" in _c
-                                    or "VERDICT" in _c or "MDO_REASONING" in _c):
-                                _integrator = _c
-                                break
-                        if not _integrator and result.messages:
-                            _last = result.messages[-1]
-                            _integrator = (_last.get("content") if isinstance(_last, dict)
-                                           else getattr(_last, "content", "")) or ""
-                    except Exception:
-                        _integrator = ""
-                    if len(_integrator) > 7000:  # cap to keep the task prompt bounded
-                        _integrator = _integrator[:7000] + "\n...[assessment truncated]"
+                    _integrator = integrator_text(result)
                     result_dict["chain_integrator_text"] = _integrator
                     chain_integrator = _integrator or chain_integrator
-                    try:
-                        _dj = json.loads((out_path / f"repeat_{repeat_idx:03d}" / combo.name / "design.json").read_text())
-                        chain_design_space = _dj.get("design_space") or chain_design_space
-                    except (OSError, ValueError):
-                        pass
+                    chain_design_space = (design_space_of(out_path / f"repeat_{repeat_idx:03d}" / combo.name)
+                                          or chain_design_space)
                     result_dict["chain_design_space"] = chain_design_space
 
                     if _integrator or _num:
@@ -1814,6 +1835,16 @@ def run_stat_batch(
                 save_checkpoint(ckpt_path, checkpoint)
                 _plural = "attempt" if _used == 1 else "attempts"
                 print(f"  FAILED after {_used} {_plural} (max {max_retries}): {last_error}")
+                # A failed link still hands the next one what it learned (2026-10-08): v2b149's link 1
+                # started with an empty STARTING DESIGN and no assessment because only a COMPLETED
+                # link set these.
+                _failed_text = integrator_text(result) if result is not None else ""
+                chain_integrator = _failed_text or chain_integrator
+                chain_design_space = (design_space_of(out_path / f"repeat_{repeat_idx:03d}" / combo.name)
+                                      or chain_design_space)
+                checkpoint["failed"][key]["chain_integrator_text"] = _failed_text
+                checkpoint["failed"][key]["chain_design_space"] = chain_design_space
+                save_checkpoint(ckpt_path, checkpoint)
                 if wb_run:
                     wandb.log(
                         {
@@ -1883,7 +1914,7 @@ def run_stat_batch(
 
 
 # The files a reviewer needs from each link, uploaded to the W&B run when the batch ends.
-_RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "carry_over.json", "step_log_attempt*.jsonl", "step_log_attempt*.md",
+_RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "carry_over.json", "design_attempt*.json", "step_log_attempt*.jsonl", "step_log_attempt*.md",
                       "design.json", "result.json", "trace.json", "chain_anchor.json")
 
 

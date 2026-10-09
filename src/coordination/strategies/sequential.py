@@ -350,7 +350,7 @@ class SequentialStrategy(CoordinationStrategy):
             # The system message is the base instructions exactly as written; the stage's own prompt
             # (its role) is sent as the stage's task by the staged handler.
             agent = prompt_assembly.make_agent_class()(
-                tools=tools,
+                tools=prompt_assembly.with_reference_tools(tools),
                 model=model,
                 name=stage.name,
                 description=stage.role,
