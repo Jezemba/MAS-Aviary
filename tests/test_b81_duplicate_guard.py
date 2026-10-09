@@ -231,7 +231,9 @@ def test_su2_solve_is_once_only_per_mesh_and_config(srv):
     call(setm, "agent_2", session_id="su2-1", mesh_base64=BIG_MESH)
     assert call(solve, "agent_2", session_id="su2-1")["success"] is True
     assert call(solve, "agent_3", session_id="su2-1")["error_code"] == "ALREADY_DONE"
-    call(upd, "agent_3", session_id="su2-1", updates={"AOA": 3.0})             # config changed -> new work
+    # config changed -> new work. (AOA used to be the example; since B151 the angle is fixed by the
+    # framework -- the solve is trimmed to the cruise lift -- so a numerics key the agent may change.)
+    call(upd, "agent_3", session_id="su2-1", updates={"CFL_NUMBER": 5.0})
     assert call(solve, "agent_4", session_id="su2-1")["success"] is True
 
 

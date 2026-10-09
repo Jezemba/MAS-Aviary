@@ -259,12 +259,12 @@ def test_a_short_su2_budget_is_raised_to_the_floor(asked):
     if asked is not None:
         kwargs["max_runtime_seconds"] = asked
     out = dp.resolve_request("run_su2_solver", kwargs)
-    assert out["max_runtime_seconds"] == dp.SU2_MIN_RUNTIME_SECONDS == 1800
+    assert out["max_runtime_seconds"] == dp.SU2_MIN_RUNTIME_SECONDS == 3600     # B151: was 1800 (B135)
 
 
 def test_a_longer_su2_budget_is_kept():
-    assert dp.resolve_request("run_su2_solver", {"session_id": "s", "max_runtime_seconds": 3000})[
-        "max_runtime_seconds"] == 3000
+    assert dp.resolve_request("run_su2_solver", {"session_id": "s", "max_runtime_seconds": 5000})[
+        "max_runtime_seconds"] == 5000
 
 
 # ---- B138: the reported drag from su2-mcp is the one that is used -----------------------------------

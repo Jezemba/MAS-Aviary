@@ -489,6 +489,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _track_morph_export(tool_name, data)
                 _annotate_geometry_authority(tool_name, data)
                 _annotate_coupled_overrides(tool_name, data)
+                _annotate_su2_kept_back(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 _annotate_pinned(tool_name, data)
@@ -521,6 +522,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _track_morph_export(tool_name, response)
         _annotate_geometry_authority(tool_name, response)
         _annotate_coupled_overrides(tool_name, response)
+        _annotate_su2_kept_back(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         _annotate_pinned(tool_name, response)
@@ -773,7 +775,21 @@ _GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Airc
 _GEOMETRY_FUSELAGE_KEYS = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                            "Aircraft.Fuselage.MAX_WIDTH")
 _GEOMETRY_TOLERANCE = 0.02
-SU2_MIN_RUNTIME_SECONDS = 1800
+# B151: 3600, was 1800 (B135). A solve trimmed to the cruise lift (B146/B149) updates the angle and
+# re-converges after each update; v2b149's trimmed solve hit 1800 s at iteration 214 of 500 (~8.4 s per
+# iteration on the 2.3M-cell whole-aircraft mesh). With the measured lift slope (su2-mcp DCL_DALPHA 0.075)
+# it should need ~250 iterations; the floor leaves room for that.
+SU2_MIN_RUNTIME_SECONDS = 3600
+
+# B151: settings the framework fixes for every solve. An agent's update_config_entries may not change
+# them: v2b149's aero agent, after a timeout, rewrote convergence and iteration settings and the solve
+# died in 1.6 s. The trim keys keep the solve at the cruise lift (B146).
+SU2_PROTECTED_KEYS = frozenset({
+    "FIXED_CL_MODE", "TARGET_CL", "DCL_DALPHA", "UPDATE_AOA_ITER_LIMIT", "ITER_DCL_DALPHA",
+    "CONV_RESIDUAL_MINVAL", "RESIDUAL_REDUCTION", "RESIDUAL_MINVAL", "CONV_FIELD", "CONV_CRITERIA",
+    "CONV_STARTITER", "ITER", "EXT_ITER", "MAX_ITER", "INNER_ITER", "TIME_ITER", "TIME_DOMAIN",
+    "MACH_NUMBER", "MACH", "AOA", "FREESTREAM_PRESSURE", "FREESTREAM_TEMPERATURE", "REF_AREA",
+})
 
 
 def design_authority() -> str:
@@ -1146,6 +1162,19 @@ def _note_coupled_override(key: str, asked, used: float) -> None:
     except (TypeError, ValueError):
         pass
     _design_state.data_store.setdefault("_coupled_override_last", {})[key] = {"asked": asked, "used": round(used, 6)}
+
+
+def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
+    """Tell the caller which SU2 settings it asked to change were kept as the framework set them (B151)."""
+    if _design_state is None or tool_name != "update_config_entries" or not isinstance(data, dict):
+        return
+    kept = _design_state.data_store.pop("_su2_kept_back_last", None)
+    if kept:
+        data["framework_kept"] = {
+            "ignored": {k: str(v) for k, v in kept.items()},
+            "note": ("The convergence, iteration, flight-state and lift-trim settings are fixed by the framework "
+                     "for every solve (the solve is trimmed to the cruise lift). These were not changed."),
+        }
 
 
 def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
@@ -2333,6 +2362,10 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name == "update_config_entries" and _design_state:
         updates = resolved.get("updates")
         if isinstance(updates, dict):
+            kept_back = {k: updates.pop(k) for k in list(updates) if str(k).upper() in SU2_PROTECTED_KEYS}
+            if kept_back:
+                _design_state.data_store["_su2_kept_back_last"] = kept_back
+                logger.warning("[B151] kept the framework's SU2 settings; ignored %s", sorted(kept_back))
             wall_marker = _design_state.data_store.get("mesh_marker_wall", "aircraft")
             far_marker = _design_state.data_store.get("mesh_marker_farfield", "farfield")
             _fix_su2_markers(updates, wall_marker, far_marker)
