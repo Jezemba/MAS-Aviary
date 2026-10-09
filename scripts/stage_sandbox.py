@@ -129,6 +129,7 @@ def seed_data_plane(design: dict) -> list[str]:
     if st.get("wing_mass_kg") is not None:
         store["mass_wing_kg"] = st["wing_mass_kg"]
         store["mass_wing_source"] = st.get("wing_mass_source")
+        coupling.put_var(ds, "mass.wing_kg", st["wing_mass_kg"], source_tool="sandbox seed")
         seeded.append("structures.wing_mass_kg")
     if st.get("mtom_kg") is not None:
         store["mass_mtom_kg"] = st["mtom_kg"]
@@ -138,6 +139,9 @@ def seed_data_plane(design: dict) -> list[str]:
     if prop.get("sfc_cruise") is not None:
         store["prop_cycle_outputs"] = {"prop.sfc_cruise": prop.get("sfc_cruise"), "prop.fn_lbf": prop.get("fn_lbf")}
         store["prop_cycle_converged"] = prop.get("cycle_converged")
+        coupling.put_var(ds, "prop.sfc_cruise", prop["sfc_cruise"], source_tool="sandbox seed")
+        if prop.get("fn_lbf") is not None:
+            coupling.put_var(ds, "prop.fn_lbf", prop["fn_lbf"], source_tool="sandbox seed")
         seeded.append("propulsion")
     space = design.get("design_space") or {}
     if space.get("geometry"):
