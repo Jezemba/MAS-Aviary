@@ -140,3 +140,28 @@ def test_a_session_without_a_cpacs_is_not_given_a_target(fresh):
     fresh.cpacs_file_path = None
     resolved = dp.resolve_request("create_su2_session", {"cruise_mach": 0.78})
     assert resolved.get("cpacs_file_path") or "target_cl" not in resolved
+
+
+# ---- B154: nobody measured the wing; the framework does ------------------------------------------
+
+def test_the_framework_measures_the_wing_when_no_agent_did(fresh, tmp_path, monkeypatch):
+    """Sandbox 20261009-105438: open_cpacs -> generate_volume_mesh -> finish, no measurement."""
+    calls = []
+
+    class Measure:
+        def forward(self, **kw):           # the registered tool goes through the middleware
+            calls.append(kw)
+            return dp.intercept_response("get_high_level_parameters", json.dumps(WING1))
+
+    monkeypatch.setattr(dp, "_registered_tools", {"get_high_level_parameters": Measure()})
+    fresh.sessions["tigl"] = "tigl-1"
+    resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": _cpacs(tmp_path)})
+    assert calls == [{"session_id": "tigl-1", "component_uid": "Wing1"}]
+    assert 0.5 < resolved["target_cl"] < 0.6
+    assert resolved["aspect_ratio"] == pytest.approx(9.367)
+
+
+def test_no_tigl_session_no_measurement(fresh, tmp_path, monkeypatch):
+    monkeypatch.setattr(dp, "_registered_tools", {"get_high_level_parameters": object()})
+    resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": _cpacs(tmp_path)})
+    assert "target_cl" not in resolved

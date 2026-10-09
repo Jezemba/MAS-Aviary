@@ -862,6 +862,8 @@ def _inject_target_cl(resolved: dict) -> None:
         # the CPACS file itself declares -- the mass that geometry was sized for.
         mass_kg = _cpacs_design_mtom(resolved.get("cpacs_file_path"))
         mass_source = "cpacs designMasses/mTOM"
+    if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
+        _auto_measure_wing()    # B154: nobody measured the wing; the framework does
     area = (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")
     if area is None:
         area = (store.get("design_params_applied") or {}).get("Aircraft.Wing.AREA")
@@ -888,6 +890,35 @@ def _inject_target_cl(resolved: dict) -> None:
                                      "wing_area_m2": float(area)}
     logger.info("[B111] trimming the solve to CL %.4f (mass %.0f kg from %s, wing %.2f m^2)",
                 target, float(mass_kg), mass_source, float(area))
+
+
+def _auto_measure_wing() -> None:
+    """Measure the main wing through the registered get_high_level_parameters tool (B154).
+
+    Sandbox 20261009-105438: the geometry agent opened the CPACS, meshed it and finished
+    without measuring anything, so no wing area was captured, the cruise-lift target could
+    not be computed, and SU2 flew a fixed 2 deg (CL 0.240). Same pattern as
+    _auto_export_morph: the call goes through the full middleware, whose capture records
+    the wing. Does nothing without an open tigl session. Never raises.
+    """
+    if _design_state is None:
+        return
+    sid = _design_state.sessions.get("tigl")
+    tool = (_registered_tools or {}).get("get_high_level_parameters")
+    if not sid or tool is None:
+        return
+    uid = "Wing1"
+    try:
+        from src.tools.procedures import component_uids
+
+        uid = next((u for u in component_uids() if str(u).lower().startswith("wing")), "Wing1")
+    except Exception:      # pragma: no cover
+        pass
+    try:
+        tool.forward(session_id=sid, component_uid=uid)
+        logger.info("[B154] measured %s for the cruise-lift target (no agent had)", uid)
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[B154] could not measure the wing: %s", exc)
 
 
 def _cpacs_design_mtom(path) -> float | None:
