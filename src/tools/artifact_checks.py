@@ -129,9 +129,90 @@ def mesh_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> boo
     )
 
 
+# ---- the mission stage: apply and validate before finishing (2026-10-09) -----------------------------
+#
+# Sandbox 20261009-093133: the mission agent read design.json, called configure_mission, reasoned that
+# set_aircraft_parameters was "redundant", and finished with PARAMETERS_SET and VALIDATION_STATUS: valid
+# it never produced. The aviary session therefore never received the geometry, SU2 aero or wing mass
+# (the data plane applies them inside set_aircraft_parameters), and run_simulation was refused three
+# times (GEOMETRY_NOT_APPLIED). The pipeline's completion criterion for that stage is observational only.
+# Same rule as the mesh gate: keyed on the agent's own actions, so it binds the agent that did mission
+# work in every coordination structure, and never one that did not.
+
+APPLY_TOOL = "set_aircraft_parameters"
+MISSION_WORK_TOOLS = frozenset({"configure_mission", APPLY_TOOL})
+MAX_VALIDATION_REFUSALS = 3
+
+
+class MissingValidatedParameters(Exception):
+    """Raised to reject a final answer; smolagents shows the message to the agent."""
+
+
+def _steps(memory: Any) -> list:
+    return list(getattr(memory, "steps", None) or [])
+
+
+def mission_work_done(memory: Any) -> list[str]:
+    """Names of mission-work tools this agent called in its current turn."""
+    called: list[str] = []
+    for step in _steps(memory):
+        for tc in getattr(step, "tool_calls", None) or []:
+            name = getattr(tc, "name", None)
+            if name in MISSION_WORK_TOOLS and name not in called:
+                called.append(name)
+    return called
+
+
+def parameters_validated(memory: Any) -> bool:
+    """True if a set_aircraft_parameters call in this turn came back valid."""
+    import json
+
+    for step in _steps(memory):
+        names = [getattr(tc, "name", None) for tc in getattr(step, "tool_calls", None) or []]
+        if APPLY_TOOL not in names:
+            continue
+        text = str(getattr(step, "observations", "") or "")
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and data.get("valid") is True:
+                return True
+        except ValueError:
+            if '"valid": true' in text:
+                return True
+    return False
+
+
+def validated_parameters_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> bool:
+    """smolagents final_answer check: whoever worked on the mission must apply and validate it."""
+    tools = getattr(agent, "tools", None) or {}
+    if APPLY_TOOL not in tools:
+        return True
+    mem = memory if memory is not None else getattr(agent, "memory", None)
+    did = mission_work_done(mem)
+    if not did or parameters_validated(mem):
+        return True
+
+    name = getattr(agent, "name", None) or "agent"
+    refused = int(getattr(agent, "_avion_validation_refusals", 0) or 0)
+    if refused >= MAX_VALIDATION_REFUSALS:
+        _record("finished_without_validated_parameters", name)
+        return True
+
+    agent._avion_validation_refusals = refused + 1
+    _record("final_answer_refused_not_validated", 1)
+    raise MissingValidatedParameters(
+        f"NOT FINISHED (refusal {refused + 1} of {MAX_VALIDATION_REFUSALS}): you worked on the mission "
+        f"in this turn ({', '.join(did)}), but no {APPLY_TOOL} call in this turn returned valid: true. "
+        f"The aviary session only receives the design (the geometry's wing and fuselage, the SU2 lift "
+        f"and drag, the wing mass) when {APPLY_TOOL} is called, and the simulation cannot fly without it. "
+        f"Call {APPLY_TOOL} now, then give your final answer with the validation it returns."
+    )
+
+
 def with_artifact_checks(checks: list[Callable] | None = None) -> list[Callable]:
     """Existing final-answer checks plus the artifact checks, without duplicates."""
     combined = list(checks or [])
-    if mesh_before_finish not in combined:
-        combined.append(mesh_before_finish)
+    for check in (mesh_before_finish, validated_parameters_before_finish):
+        if check not in combined:
+            combined.append(check)
     return combined

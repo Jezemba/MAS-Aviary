@@ -90,10 +90,12 @@ def test_refusals_are_bounded_and_the_meshless_finish_is_recorded():
 def test_with_artifact_checks_keeps_existing_checks_and_does_not_duplicate():
     def other(a, m, agent=None):
         return True
+    # 2026-10-09: the mission validation gate joins the mesh gate (test_mission_validation_gate.py).
+    gates = [ac.mesh_before_finish, ac.validated_parameters_before_finish]
     combined = ac.with_artifact_checks([other])
-    assert combined == [other, ac.mesh_before_finish]
+    assert combined == [other, *gates]
     assert ac.with_artifact_checks(combined) == combined
-    assert ac.with_artifact_checks(None) == [ac.mesh_before_finish]
+    assert ac.with_artifact_checks(None) == gates
 
 
 def test_export_reports_whether_a_mesh_was_generated():

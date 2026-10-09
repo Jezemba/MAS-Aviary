@@ -248,7 +248,7 @@ DESIGN_STATE:
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
 SESSION STATE FILE
-Use exsisting aviary session and use applicable parameters from design.json (read it with read_design_json)
+Use exsisting aviary session and use applicable parameters from design.json (read it with read_design_json) then set the parameters with set_aircraft_parameters
 ```
 
 ## Agent: Simulation Executor
