@@ -76,6 +76,9 @@ After the agent runs you see the DESIGN_STATE it produced and decide: run that s
 
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
 
+RECOMMENDATIONS
+Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
+
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.
 - create_agent(name, persona, tools): create an agent; the persona becomes its system prompt.
@@ -447,6 +450,9 @@ If no simulation succeeds, you are called again with what each agent produced, a
 
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
 
+RECOMMENDATIONS
+Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
+
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.
 - create_agent(name, persona, tools): create an agent; the persona becomes its system prompt.
@@ -817,6 +823,9 @@ A workflow graph then runs your agents: it decides which agent works next from w
 If no simulation succeeds, you are called again with what each agent produced, and can create new agents or assign new tasks.
 
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
+
+RECOMMENDATIONS
+Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
 
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.

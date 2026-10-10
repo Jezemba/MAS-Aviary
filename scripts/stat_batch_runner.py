@@ -432,8 +432,17 @@ def integrator_text(result) -> str:
     """The mdo_integrator's final text from a run's messages (capped), or ""."""
     text = ""
     try:
-        for m in reversed(getattr(result, "messages", None) or []):
-            c = (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
+        msgs = list(getattr(result, "messages", None) or [])
+        _name = lambda m: (m.get("agent_name") if isinstance(m, dict) else getattr(m, "agent_name", "")) or ""
+        _content = lambda m: (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
+        # The integrator by name first (orchestrated agents also write DESIGN_STATEs; the recommendation that must
+        # reach the next link is the mdo_integrator's -- Jessica, 2026-10-10), then the keyword rule.
+        for m in reversed(msgs):
+            if _name(m) == "mdo_integrator" and _content(m).strip():
+                text = _content(m)
+                break
+        for m in ([] if text else reversed(msgs)):
+            c = _content(m)
             if "DESIGN_STATE" in c or "RECOMMENDED_CHANGE" in c or "VERDICT" in c or "MDO_REASONING" in c:
                 text = c
                 break

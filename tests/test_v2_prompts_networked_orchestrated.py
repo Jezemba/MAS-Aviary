@@ -320,3 +320,44 @@ def test_a_second_pycycle_session_is_refused_while_one_is_open():
     dp.note_session_closed("close_cycle_model", {"session_id": "py-1"}, json.dumps({"success": True}))
     assert dp.pycycle_session_refusal("create_cycle_model", {}) is None
     assert dp.pycycle_session_refusal("open_cpacs", {}) is None
+
+
+# ---- recommendations across links (Jessica, 2026-10-10) ---------------------------------------------
+
+def test_every_orchestrator_prompt_routes_the_recommendation():
+    for sec in SECTIONS["orchestrated.md"]:
+        t = prompt_assembly.system_text("orchestrated.md", sec)
+        assert "RECOMMENDATIONS\nYour mdo_integrator ends each iteration" in t
+        assert "report to you with message_orchestrator how it implemented the recommendation" in t
+
+
+def test_the_next_link_carries_the_mdo_integrators_text_not_another_agents():
+    from types import SimpleNamespace
+
+    import scripts.stat_batch_runner as r
+    msgs = [{"agent_name": "mdo_integrator", "content": "DESIGN_STATE:\n  RECOMMENDATION_TO: aerodynamics_analyst"},
+            {"agent_name": "orchestrator", "content": "DELEGATION_COMPLETE"},
+            {"agent_name": "geometry_engineer", "content": "DESIGN_STATE:\n  GEOMETRY_SET: true"}]
+    assert r.integrator_text(SimpleNamespace(messages=msgs)).startswith("DESIGN_STATE:\n  RECOMMENDATION_TO")
+
+
+def test_the_orchestrators_first_message_on_link_2_carries_the_recommendation(tmp_path):
+    from src.tools import knowledge_base as kbm
+
+    (tmp_path / "carry_over.json").write_text(json.dumps({
+        "link": 1, "baseline_cpacs": "/x/mass-mcp/tests/fixtures/D150_simple.xml",
+        "previous_integrator_design_state": "DESIGN_STATE:\n  RECOMMENDATION_TO: aerodynamics_analyst\n"
+                                            "  RECOMMENDED_CHANGE: Wing1 aspect_ratio -> 10.5\nTASK_COMPLETE",
+        "starting_design": {"CPACS_FILE": "/runs/link0/geometry_end.xml", "geometry": {"Wing1": {"area_m2": 122.8}}}}))
+    kbm.configure_run(path=str(tmp_path / "knowledge_base.jsonl"), chain_link=1, attempt=1, seed=None)
+    try:
+        s, model, orch = _orchestrated()
+        a = s.next_step([], {"task": "RUNNER"})
+        assert a.input_context.startswith("DESIGN_STATE from the previous iteration (mdo_integrator):\nDESIGN_STATE:\n"
+                                          "  RECOMMENDATION_TO: aerodynamics_analyst\n"
+                                          "  RECOMMENDED_CHANGE: Wing1 aspect_ratio -> 10.5")
+        assert "TASK_COMPLETE" not in a.input_context
+        assert "CPACS_FILE: /runs/link0/geometry_end.xml" in a.input_context
+        assert "/runs/link0/geometry_end.xml" in s._system_text      # the prompts name the carried CPACS
+    finally:
+        kbm.configure_run(None, None, None, None)
