@@ -121,6 +121,8 @@ _MDO_F25_STAGED_HANDLER_CONFIG: dict = {
     "pipeline_path": "config/mdo_f25_staged_pipeline.yaml",
     "context_mode": "all_stages",
     "verdict_patterns": _MDO_F25_STAGED_VERDICT_PATTERNS,
+    # Verbatim orchestrated (2026-10-10): the strategy builds each agent's whole message.
+    "worker_input": "as_given",
 }
 
 # Short-prompt flavor: used by sequential_staged_pipeline. Stage prompts
@@ -248,6 +250,8 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # validation per-call, so the per-worker retry-on-warnings behavior
         # the iterative_feedback handler provides is preserved.
         strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
+        # Verbatim orchestrated (2026-10-10): the strategy builds each agent's whole message.
+        handler_config={"worker_input": "as_given"},
     ),
     CombinationConfig(
         "mdo_f25_networked_iterative_feedback",
@@ -300,7 +304,7 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # builds the team once, exits, and graph_routed runs the
         # team through every state on its own.
         strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
-        handler_config={"predefined_graph": "mdo_f25"},
+        handler_config={"predefined_graph": "mdo_f25", "worker_input": "as_given"},
     ),
     CombinationConfig(
         "mdo_f25_networked_graph_routed",

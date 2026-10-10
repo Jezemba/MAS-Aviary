@@ -263,6 +263,44 @@ def register_presession(mcp_name: str, session_id: str | None) -> None:
     _presessions[mcp_name] = session_id
 
 
+def pycycle_session_refusal(tool_name: str, kwargs: dict) -> dict | None:
+    """Refuse create_cycle_model while a pycycle session is open (Jessica, 2026-10-10).
+
+    Unlike aviary, a new pycycle session is fine when none is in use; what must not happen is a second
+    one while one is open. A session closed with close_cycle_model (note_session_closed), or one the
+    server reported gone (B113 dead_sessions), no longer counts.
+    """
+    if tool_name != "create_cycle_model" or _design_state is None:
+        return None
+    sid = _design_state.sessions.get("pycycle")
+    if not sid or (_design_state.data_store.get("dead_sessions") or {}).get("pycycle") == sid:
+        return None
+    store = _design_state.data_store
+    store["create_cycle_model_refused"] = int(store.get("create_cycle_model_refused") or 0) + 1
+    logger.warning("Refused create_cycle_model: pycycle session %s is open", sid)
+    return {
+        "success": False,
+        "error_code": "SESSION_ALREADY_OPEN",
+        "session_id": sid,
+        "error": (f"A pycycle session is already open (session_id {sid}). Use it, or close it with "
+                  "close_cycle_model first; create_cycle_model will then run."),
+    }
+
+
+def note_session_closed(tool_name: str, kwargs: dict, result) -> None:
+    """close_cycle_model succeeded: that pycycle session is no longer open (its reply names no session)."""
+    if tool_name != "close_cycle_model" or _design_state is None:
+        return
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except (TypeError, ValueError):
+        return
+    if isinstance(data, dict) and data.get("success") is True:
+        sid = (kwargs or {}).get("session_id")
+        if sid and _design_state.sessions.get("pycycle") == sid:
+            _design_state.sessions.pop("pycycle", None)
+
+
 def session_creation_refusal(tool_name: str, kwargs: dict) -> dict | None:
     """Refuse an agent's create_session while the runner's session exists.
 

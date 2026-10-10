@@ -331,6 +331,10 @@ class GraphRoutedHandler(ExecutionHandler):
 
     def __init__(self, config: dict | None = None):
         cfg = config or {}
+        # "as_given" (orchestrated, verbatim, Jessica 2026-10-10): each state's agent gets the task the
+        # orchestrator assigned it plus the previous state's DESIGN_STATE as data; no state prompt.
+        self._worker_input: str = cfg.get("worker_input", "")
+        self._last_agent_name: str = ""
         self._graph_mode: str = cfg.get("graph_mode", "predefined")
         self._predefined_graph_name: str = cfg.get("predefined_graph", "aviary")
         self._custom_graph_data: dict | None = cfg.get("custom_graph")
@@ -497,6 +501,8 @@ class GraphRoutedHandler(ExecutionHandler):
                 break
             total_steps += 1
 
+            if self._worker_input == "as_given":
+                current_state = self._past_classification(graph, current_state)
             state_def = graph.states.get(current_state)
             if state_def is None:
                 msg = AgentMessage(
@@ -547,11 +553,14 @@ class GraphRoutedHandler(ExecutionHandler):
                     break
 
                 # Build context.
-                context = self._build_agent_context(
-                    task,
-                    state_def,
-                    current_state,
-                )
+                if self._worker_input == "as_given":
+                    context = self._as_given_context(state_def, agent, _base_meta)
+                else:
+                    context = self._build_agent_context(
+                        task,
+                        state_def,
+                        current_state,
+                    )
 
                 turn += 1
                 start = time.monotonic()
@@ -658,6 +667,7 @@ class GraphRoutedHandler(ExecutionHandler):
                                 break
 
                 self._state_dict["last_agent_output"] = content
+                self._last_agent_name = getattr(agent, "name", None) or state_def.agent
                 self._state_dict["attempt_history"].append(
                     {
                         "state": current_state,
@@ -840,6 +850,32 @@ class GraphRoutedHandler(ExecutionHandler):
                     " if the next change does not improve the result, report the best"
                     " design you have so far rather than continuing to search.")
         return ""
+
+    def _past_classification(self, graph: Any, state: str) -> str:
+        """as_given: a state that only classifies complexity is skipped as 'complex' (no prompt asks it)."""
+        seen = set()
+        while state in graph.states and state not in seen:
+            seen.add(state)
+            st = graph.states[state]
+            conds = [t.condition for t in st.transitions]
+            if not conds or not all("complexity ==" in c for c in conds):
+                return state
+            self._state_dict["complexity"] = "complex"
+            if self._resource_mgr is not None:
+                self._resource_mgr.set_complexity("complex")
+            state = next((t.target for t in st.transitions if "'complex'" in t.condition), state)
+        return state
+
+    def _as_given_context(self, state_def: Any, agent: Any, meta: dict) -> str:
+        from src.coordination import prompt_assembly
+
+        tasks = meta.get("assigned_tasks") or {}
+        task = tasks.get(getattr(agent, "name", None)) or tasks.get(state_def.agent) or ""
+        out = self._state_dict.get("last_agent_output", "")
+        previous = (self._last_agent_name, out) if out else None
+        err = self._state_dict.get("last_error", "")
+        return prompt_assembly._join(prompt_assembly.worker_message(task, meta.get("system_text", ""), previous),
+                                     f"Previous error:\n{err}" if err else None)
 
     def _build_agent_context(
         self,

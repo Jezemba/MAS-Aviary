@@ -62,6 +62,8 @@ class NetworkedStrategy(CoordinationStrategy):
         self._total_turns: int = 0
         self._consecutive_errors: int = 0
         self._task: str = ""
+        self._verbatim: bool = False
+        self._system_text: str = ""
 
         # Peer prompt parts (loaded from config).
         self._base_prompt: str = ""
@@ -145,8 +147,22 @@ class NetworkedStrategy(CoordinationStrategy):
         self._hard_claiming_addition = peer_template.get("hard_claiming_addition", "")
         self._prediction_addition = peer_template.get("prediction_prompt_addition", "")
 
+        # Verbatim (Jessica, 2026-10-10): every peer's system message is this combination's section of
+        # networked.md, exactly as written; each cycle's message is data only (prompt_assembly.peer_message).
+        # set_mode is called every time so a mode left over from another combination cannot leak in.
+        from src.coordination import prompt_assembly
+
+        prompt_assembly.set_mode(peer_template.get("prompt_assembly"))
+        self._verbatim = prompt_assembly.is_verbatim()
+        self._system_text = ""
+        if self._verbatim:
+            section = ("networked_graph_routed" if config.get("_graph_def") is not None
+                       else "networked_iterative_feedback")
+            self._system_text = prompt_assembly.with_carried_cpacs(
+                prompt_assembly.system_text(peer_template.get("prompt_source", "networked.md"), section))
+
         # Assemble the final peer prompt.
-        peer_prompt = self._assemble_peer_prompt()
+        peer_prompt = self._system_text or self._assemble_peer_prompt()
 
         # Collect worker tools from config (injected by Coordinator).
         worker_tools_dict = config.get("_worker_tools", {})
@@ -332,8 +348,8 @@ class NetworkedStrategy(CoordinationStrategy):
         # Store task from state on first call.
         if "task" in current_state and not self._task:
             self._task = current_state["task"]
-            # Write task to blackboard.
-            if self._blackboard is not None:
+            # Write task to blackboard (not in verbatim mode: the runner's task text is not shown to peers).
+            if self._blackboard is not None and not getattr(self, "_verbatim", False):
                 self._blackboard.write("task", self._task, "system", "status")
 
         # Auto-complete workflow phases based on tool calls from last turn.
@@ -407,17 +423,22 @@ class NetworkedStrategy(CoordinationStrategy):
                     },
                 )
             self._concurrent_runs_dispatched += 1
+            metadata = {
+                "peers": list(self._agent_order),
+                "turn": self._total_turns + 1,
+                "cycle": self._concurrent_runs_dispatched,
+                "selection_mode": "concurrent_blackboard",
+            }
+            if self._verbatim:
+                metadata["inputs"] = self._peer_messages(metadata["peers"], show_blocking=False)
+                return CoordinationAction(action_type="parallel_run", agent_name=None,
+                                          input_context="", metadata=metadata)
             return CoordinationAction(
                 action_type="parallel_run",
                 agent_name=None,
                 input_context=self._with_board_and_uids(
                     self._task or current_state.get("task", "")),
-                metadata={
-                    "peers": list(self._agent_order),
-                    "turn": self._total_turns + 1,
-                    "cycle": self._concurrent_runs_dispatched,
-                    "selection_mode": "concurrent_blackboard",
-                },
+                metadata=metadata,
             )
 
         # Selection: volunteer broadcast OR round-robin.
@@ -682,11 +703,36 @@ class NetworkedStrategy(CoordinationStrategy):
 
         return prompt
 
+    def _peer_messages(self, peers: list, show_blocking: bool) -> dict:
+        """Verbatim mode: each peer's own message for this cycle (its recap differs; the rest is shared)."""
+        from src.coordination import prompt_assembly
+
+        return {p: prompt_assembly.peer_message(p, self._system_text, self._blackboard, show_blocking)
+                for p in peers}
+
     def _create_peer_agent(self, name: str) -> None:
         """Create a peer agent with full tools and register it."""
         tools = self._build_tool_list(name)
 
         from smolagents import ToolCallingAgent
+
+        if getattr(self, "_verbatim", False):
+            from src.coordination import prompt_assembly
+
+            agent = prompt_assembly.make_agent_class()(
+                tools=prompt_assembly.with_reference_tools(tools),
+                model=self._context.model,
+                name=name,
+                description=f"Peer agent {name}",
+                instructions=self._context.peer_prompt,
+                max_steps=self._agent_max_steps,
+                add_base_tools=False,
+                prompt_templates=prompt_assembly.verbatim_prompt_templates(),
+                final_answer_checks=with_artifact_checks(),  # B31
+            )
+            self._agents[name] = agent
+            self._agent_order.append(name)
+            return
 
         agent = ToolCallingAgent(
             tools=tools,
@@ -1239,6 +1285,13 @@ class NetworkedStrategy(CoordinationStrategy):
         n_peers = max(1, min(len(available_names), len(self._agent_order)))
         peers = list(self._agent_order)[:n_peers]
         self._concurrent_runs_dispatched += 1
+        if self._verbatim:
+            return CoordinationAction(
+                action_type="parallel_run", agent_name=None, input_context="",
+                metadata={"peers": peers, "turn": self._total_turns + 1,
+                          "cycle": self._concurrent_runs_dispatched,
+                          "selection_mode": "concurrent_blackboard", "graph_dag": True,
+                          "inputs": self._peer_messages(peers, show_blocking=True)})
         return CoordinationAction(
             action_type="parallel_run",
             agent_name=None,

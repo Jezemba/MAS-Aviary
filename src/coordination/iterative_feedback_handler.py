@@ -120,6 +120,9 @@ class IterativeFeedbackHandler(ExecutionHandler):
         human_feedback_callback: Callable[[AttemptFeedback], str | None] | None = None,
     ):
         cfg = config or {}
+        # "as_given" (orchestrated, verbatim): the strategy already built the agent's whole message;
+        # the handler adds only its retry feedback.
+        self._worker_input: str = cfg.get("worker_input", "")
         self._max_retries: int = min(cfg.get("max_retries", 20), _MAX_RETRIES_CAP)
         self._feedback_window: int = cfg.get("feedback_window", 5)
         self._retry_toolless: bool = cfg.get("retry_toolless_agents", False)
@@ -524,6 +527,9 @@ class IterativeFeedbackHandler(ExecutionHandler):
     ) -> str:
         parts: list[str] = []
 
+        if self._worker_input == "as_given":
+            return self._as_given_context(task, attempt, max_retries, feedback_history)
+
         # Human guidance (between_prompt mode — static for entire run).
         if self._human_guidance and self._human_mode == "between_prompt":
             parts.append(f'Human guidance for this run:\n"{self._human_guidance}"')
@@ -591,6 +597,31 @@ class IterativeFeedbackHandler(ExecutionHandler):
                 "This summary will be passed to the next agent."
             )
 
+        return "\n\n".join(parts)
+
+    def _as_given_context(self, task: str, attempt: int, max_retries: int,
+                          feedback_history: list[AttemptFeedback]) -> str:
+        """The strategy's message, then this handler's own retry text (unchanged from framework mode)."""
+        parts = [task]
+        for fb in feedback_history[-self._feedback_window:]:
+            parts.append(format_feedback_for_retry(fb, max_retries))
+        if attempt == max_retries - 2 and max_retries > 2:
+            parts.append(
+                "WARNING: This is your second-to-last attempt. If your next "
+                "attempt also fails, you must summarize everything you have "
+                "tried and what errors occurred so the next agent can continue "
+                "from where you left off."
+            )
+        if attempt == max_retries - 1 and max_retries > 1:
+            parts.append(
+                f"This is your FINAL attempt. You have tried {len(feedback_history)} times "
+                "and not succeeded. Instead of trying again, produce a summary of:\n"
+                "1. What approaches you tried\n"
+                "2. What errors occurred for each\n"
+                "3. What you think the issue is\n"
+                "4. What the next agent should try differently\n\n"
+                "This summary will be passed to the next agent."
+            )
         return "\n\n".join(parts)
 
     def _meets_aspiration(self, feedback: AttemptFeedback) -> bool:

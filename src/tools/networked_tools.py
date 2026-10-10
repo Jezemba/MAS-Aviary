@@ -235,9 +235,13 @@ class SpawnPeer(Tool):
             ctx.agent_counter += 1
             new_name = f"agent_{ctx.agent_counter}"
 
-        # Create agent with full tool set.
-        agent = ToolCallingAgent(
-            tools=list(ctx.all_tools),
+        # Create agent with full tool set. Verbatim mode (Jessica, 2026-10-10): the same system message
+        # as every other peer, with no library template around it.
+        from src.coordination import prompt_assembly
+
+        verbatim = prompt_assembly.is_verbatim()
+        agent = (prompt_assembly.make_agent_class() if verbatim else ToolCallingAgent)(
+            tools=prompt_assembly.with_reference_tools(list(ctx.all_tools)) if verbatim else list(ctx.all_tools),
             model=ctx.model,
             name=new_name,
             description=f"Peer agent spawned because: {reason}",
@@ -245,6 +249,7 @@ class SpawnPeer(Tool):
             max_steps=ctx.agent_max_steps,
             add_base_tools=False,
             final_answer_checks=with_artifact_checks(),  # B31
+            **({"prompt_templates": prompt_assembly.verbatim_prompt_templates()} if verbatim else {}),
         )
 
         # Register.
@@ -352,6 +357,11 @@ class ReadTodos(Tool):
         self._context = context
 
     def forward(self) -> str:  # type: ignore[override]
+        # Verbatim mode: a TODO's result is the DESIGN_STATE a peer posted, so it is shown whole.
+        from src.coordination import prompt_assembly
+
+        if prompt_assembly.is_verbatim():
+            return self._context.blackboard.render_todos(max_chars_result=20000)
         return self._context.blackboard.render_todos()
 
 

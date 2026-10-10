@@ -260,7 +260,8 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             return _json.dumps(bad_ref)
         # 2a'. A session the runner created is authoritative: refuse creating a
         #      replacement before it reaches the server, naming the one to use.
-        refused = session_creation_refusal(tool.name, resolved)
+        from src.tools.data_plane import pycycle_session_refusal
+        refused = session_creation_refusal(tool.name, resolved) or pycycle_session_refusal(tool.name, resolved)
         if refused is not None:
             _kb_record(tool.name, resolved, refused, status="refused")
             return _json.dumps(refused)
@@ -350,6 +351,8 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         duplicate_guard.release(tool.name, _fp)
         _obs_status = (_entry or {}).get("status", "success")
         duplicate_guard.observe(tool.name, resolved, result, _obs_status, _entry)
+        from src.tools.data_plane import note_session_closed
+        note_session_closed(tool.name, resolved, result)
         # 4a/4b (retired by B84): the aero warning and the optional-mass hint used to be
         #     attached here. They are unreachable now -- a mission call that reaches the
         #     server has its coupled inputs, because the contract above required them.
