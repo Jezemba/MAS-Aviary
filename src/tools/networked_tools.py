@@ -239,18 +239,29 @@ class SpawnPeer(Tool):
         # as every other peer, with no library template around it.
         from src.coordination import prompt_assembly
 
-        verbatim = prompt_assembly.is_verbatim()
-        agent = (prompt_assembly.make_agent_class() if verbatim else ToolCallingAgent)(
-            tools=prompt_assembly.with_reference_tools(list(ctx.all_tools)) if verbatim else list(ctx.all_tools),
-            model=ctx.model,
-            name=new_name,
-            description=f"Peer agent spawned because: {reason}",
-            instructions=ctx.peer_prompt,
-            max_steps=ctx.agent_max_steps,
-            add_base_tools=False,
-            final_answer_checks=with_artifact_checks(),  # B31
-            **({"prompt_templates": prompt_assembly.verbatim_prompt_templates()} if verbatim else {}),
-        )
+        if prompt_assembly.is_verbatim():
+            agent = prompt_assembly.make_agent_class()(
+                tools=prompt_assembly.with_reference_tools(list(ctx.all_tools)),
+                model=ctx.model,
+                name=new_name,
+                description=f"Peer agent spawned because: {reason}",
+                instructions=ctx.peer_prompt,
+                max_steps=ctx.agent_max_steps,
+                add_base_tools=False,
+                prompt_templates=prompt_assembly.verbatim_prompt_templates(),
+                final_answer_checks=with_artifact_checks(),  # B31
+            )
+        else:
+            agent = ToolCallingAgent(
+                tools=list(ctx.all_tools),
+                model=ctx.model,
+                name=new_name,
+                description=f"Peer agent spawned because: {reason}",
+                instructions=ctx.peer_prompt,
+                max_steps=ctx.agent_max_steps,
+                add_base_tools=False,
+                final_answer_checks=with_artifact_checks(),  # B31
+            )
 
         # Register.
         ctx.agents[new_name] = agent

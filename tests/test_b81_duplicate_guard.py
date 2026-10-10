@@ -287,6 +287,12 @@ def test_cycle_model_once_per_definition(srv):
     cyc = srv.tool("create_cycle_model", ["cycle_type", "options"])
     srv.responses["create_cycle_model"] = {"success": True, "session_id": "cyc-1"}
     call(cyc, "agent_1", cycle_type="hbtf", options={"BPR": 5.1})
+    # Jessica, 2026-10-10: no second pycycle session while one is open, whatever its arguments.
+    assert call(cyc, "agent_2", cycle_type="hbtf", options={"BPR": 5.1})["error_code"] == "SESSION_ALREADY_OPEN"
+    assert call(cyc, "agent_2", cycle_type="hbtf", options={"BPR": 6.0})["error_code"] == "SESSION_ALREADY_OPEN"
+    import src.tools.data_plane as dp
+    dp.note_session_closed("close_cycle_model", {"session_id": "cyc-1"}, '{"success": true}')
+    # Closed: the once-only guard applies again (same definition refused once, a new one runs).
     assert call(cyc, "agent_2", cycle_type="hbtf", options={"BPR": 5.1})["error_code"] == "ALREADY_DONE"
     assert call(cyc, "agent_2", cycle_type="hbtf", options={"BPR": 6.0})["success"] is True
 
