@@ -43,6 +43,20 @@ def avion_path_prefix(root: Path = AVION_ROOT) -> str:
     return "/" + "/".join(root.parts[1:3])
 
 
+# B169 (2026-10-10): Jessica's prompts name the D150 by its absolute path on the machine they were
+# written on (/home/aipexws5/Jessica/Avion/...). On aipexws8 that path does not exist. Her text is not
+# edited; the checkout part of any such path is replaced by THIS checkout at load time, so the text is
+# byte-identical on aipexws5 and names the same file in the same repo everywhere else.
+_AVION_PATH_RE = re.compile(r"/home/[^/\s]+/Jessica/Avion(?=/)")
+
+
+def relocate_avion_paths(text: str, root: Path = AVION_ROOT) -> str:
+    """Point every ``/home/<user>/Jessica/Avion/...`` path at this machine's checkout."""
+    if "/Jessica/Avion/" not in text:
+        return text
+    return _AVION_PATH_RE.sub(lambda _m: str(root), text)
+
+
 @functools.lru_cache(maxsize=1)
 def load_canonical(path: str | None = None) -> dict[str, Any]:
     """Load and cache the canonical baseline YAML."""
@@ -128,11 +142,12 @@ def render_snippets(path: str | None = None) -> dict[str, str]:
 
 
 def substitute_text(text: str, path: str | None = None) -> str:
-    """Replace every ``<<NAME>>`` in text with its canonical rendering.
+    """Replace every ``<<NAME>>`` in text with its canonical rendering (and relocate Avion paths, B169).
 
     Unknown placeholders are left untouched (and are surfaced by the identity
     test, which fails on any residual ``<<...>>``).
     """
+    text = relocate_avion_paths(text)
     if "<<" not in text:
         return text
     snippets = render_snippets(path)

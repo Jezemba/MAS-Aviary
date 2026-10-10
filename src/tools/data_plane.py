@@ -1248,7 +1248,8 @@ def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
 
 def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
     """Tell the caller which coupled values it passed were replaced, and where they come from."""
-    if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
+    if _design_state is None or tool_name not in ("set_aircraft_parameters", "set_inputs") \
+            or not isinstance(data, dict):
         return
     last = _design_state.data_store.pop("_coupled_override_last", None)
     if not last:
@@ -1256,8 +1257,10 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
     data["framework_applied"] = {
         "overridden": last,
         "note": ("Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR come from the "
-                 "SU2 result and Aircraft.Wing.MASS_SCALER from the mass estimate; the framework sets them. "
-                 "Values you passed for them were replaced. read_design_json shows the values applied."),
+                 "SU2 result, Aircraft.Wing.MASS_SCALER from the mass estimate, pycycle's Fn_DES from the "
+                 "mass and the SU2 drag (thrust sized to drag), and Aircraft.Engine.SCALE_FACTOR from "
+                 "pycycle's thrust; the framework sets them. Values you passed for them were replaced. "
+                 "read_design_json shows the values applied."),
     }
 
 
@@ -2475,6 +2478,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
         _inject_phase_k_wing_mass(resolved)
+        _inject_engine_scale(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
         _inject_phase_k_b_fn_des(resolved)
         _inject_cycle_flight_condition(resolved)
@@ -2563,19 +2567,32 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     if not isinstance(values, dict):
         return
 
-    if "Fn_DES" in values:
-        return  # respect explicit agent override
-
-    # MTOM -> pycycle Fn_DES via the named, documented transform (src/tools/coupling.py).
     from src.tools import coupling as _cpl
-    fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
+    cl = _cpl.get_var(_design_state, "aero.cl_cruise")
+    cd = _cpl.get_var(_design_state, "aero.cd_cruise")
+    if cl and cd is not None and float(cl) > 0:
+        # B170: thrust sized to this design's drag (SU2 + friction), not an assumed L/D of 17.
+        # The framework's value wins over a caller's, as for the aviary coupled values (B143).
+        reynolds, swet_sref = _friction_inputs()
+        cd_total = _cpl.total_cruise_cd(cd, reynolds, swet_sref)
+        fn_des_lbf = _cpl.fn_des_from_drag(mtom_kg, cl, cd_total)
+        if "Fn_DES" in values:
+            _note_coupled_override("Fn_DES", values["Fn_DES"], fn_des_lbf)
+        basis = f"L/D {float(cl) / cd_total:.2f} (CL {float(cl):.4f}, CD {cd_total:.4f} incl. friction)"
+    else:
+        if "Fn_DES" in values:
+            return  # no aero yet: respect explicit agent override
+        # MTOM -> pycycle Fn_DES via the named, documented transform (src/tools/coupling.py).
+        fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
+        basis = "assumed L/D 17 (no SU2 result yet)"
 
     values["Fn_DES"] = fn_des_lbf
     resolved["values"] = values
+    _design_state.data_store["engine_fn_des_basis"] = basis
     logger.info(
         "Phase K-B middleware injected Fn_DES=%.0f lbf "
-        "(mass-mcp MTOM=%.1f kg)",
-        fn_des_lbf, float(mtom_kg),
+        "(mass-mcp MTOM=%.1f kg, %s)",
+        fn_des_lbf, float(mtom_kg), basis,
     )
 
 
@@ -2924,21 +2941,7 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     # MAC; Swet/Sref from wing+fuselage wetted / reference area (design-responsive), with a
     # sane band + nominal fallback so a bad geometry read can't produce garbage drag.
     ar = parameters.get("Aircraft.Wing.ASPECT_RATIO")
-    reynolds = swet_sref = None
-    try:
-        from src.config.canonical import load_canonical
-        _mis = load_canonical().get("mission", {})
-        mac = coupling.get_var(_design_state, "geom.mac_length") or 4.0
-        reynolds = coupling.reynolds_number(_mis.get("cruise_mach", 0.78),
-                                            _mis.get("cruise_altitude_ft", 33000), mac)
-        _ref = coupling.get_var(_design_state, "geom.reference_area")
-        _wwet = coupling.get_var(_design_state, "geom.wing_wetted_area")
-        _fwet = coupling.get_var(_design_state, "geom.fuselage_wetted_area") or 0.0
-        if _ref and _ref > 0 and _wwet:
-            ratio = (_wwet + _fwet) / _ref
-            swet_sref = ratio if 3.0 <= ratio <= 9.0 else None  # else fall back to nominal
-    except Exception:
-        pass
+    reynolds, swet_sref = _friction_inputs()
     scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
 
     # The drag factor is already held to aviary's declared range by
@@ -2992,6 +2995,58 @@ def _inject_phase_h_aero(resolved: dict) -> None:
             "(CL=%.4f, scale_factor=%.3f)",
             ", ".join(injected), float(cl), float(scale_factor),
         )
+
+
+def _friction_inputs() -> tuple:
+    """(Reynolds, Swet/Sref) for the skin-friction build-up; None for whichever is unavailable."""
+    from src.tools import coupling
+    reynolds = swet_sref = None
+    try:
+        from src.config.canonical import load_canonical
+        _mis = load_canonical().get("mission", {})
+        mac = coupling.get_var(_design_state, "geom.mac_length") or 4.0
+        reynolds = coupling.reynolds_number(_mis.get("cruise_mach", 0.78),
+                                            _mis.get("cruise_altitude_ft", 33000), mac)
+        _ref = coupling.get_var(_design_state, "geom.reference_area")
+        _wwet = coupling.get_var(_design_state, "geom.wing_wetted_area")
+        _fwet = coupling.get_var(_design_state, "geom.fuselage_wetted_area") or 0.0
+        if _ref and _ref > 0 and _wwet:
+            ratio = (_wwet + _fwet) / _ref
+            swet_sref = ratio if 3.0 <= ratio <= 9.0 else None  # else fall back to nominal
+    except Exception:
+        pass
+    return reynolds, swet_sref
+
+
+def _inject_engine_scale(resolved: dict) -> None:
+    """Give aviary's engine pycycle's design thrust: Aircraft.Engine.SCALE_FACTOR (B170).
+
+    pycycle's thrust was captured (prop.fn_lbf) but never reached aviary, which flew the bench engine
+    whatever the design's drag (sandbox 20261010-091649: drag factor 1.714, engine 1.0, ZERO_FUEL).
+    The framework's value wins, as for the drag factor and the wing mass scaler (B143).
+    """
+    if _design_state is None:
+        return
+    from src.tools import coupling
+    fn_lbf = coupling.get_var(_design_state, "prop.fn_lbf")
+    if fn_lbf is None:
+        return
+    parameters = resolved.get("parameters")
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(parameters, dict):
+        return
+    scale = coupling.fn_to_aviary_engine_scale(fn_lbf)
+    if "Aircraft.Engine.SCALE_FACTOR" in parameters:
+        _note_coupled_override("Aircraft.Engine.SCALE_FACTOR", parameters["Aircraft.Engine.SCALE_FACTOR"], scale)
+    parameters["Aircraft.Engine.SCALE_FACTOR"] = scale
+    resolved["parameters"] = parameters
+    _design_state.data_store["engine_injected_scale_factor"] = scale
+    logger.info("[B170] injected Aircraft.Engine.SCALE_FACTOR=%.3f (pycycle Fn=%.0f lbf / bench %.0f lbf)",
+                scale, float(fn_lbf), coupling.BENCH_ENGINE_CRUISE_FN_LBF)
 
 
 def _fix_su2_markers(updates: dict, wall: str, far: str) -> None:

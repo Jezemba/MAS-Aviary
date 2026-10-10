@@ -185,6 +185,39 @@ def mtom_to_pycycle_fn_des(mtom_kg: float) -> float:
     return max(2000.0, min(float(mtom_kg) * FN_DES_PER_KG_LBF, 25000.0))
 
 
+# Engine sized to the design's drag (B170, Jessica 2026-10-10). FN_DES_PER_KG_LBF is
+#   0.0811 = 9.81 / 17.0 / 2 / 4.448 * 1.25   (g / assumed L/D / engines / N->lbf * climb margin);
+# the coupled form keeps that formula and puts the design's measured L/D in place of the assumed 17.
+_G = 9.81
+_N_PER_LBF = 4.448
+_N_ENGINES = 2
+_CLIMB_THRUST_MARGIN = 1.25
+# aviary bench engine (models/engines/turbofan_28k.deck, SCALE_FACTOR 1.0): maximum net thrust
+# (gross - ram drag, throttle 50) at the mission cruise point M0.78 / 33,000 ft, interpolated from
+# the deck rows M0.75/0.79 x 30,000/35,000 ft (6714.4, 6808.3, 5314.1, 5387.9 lbf). The L/D-17
+# formula above gives 5,920 lbf at 73 t, so engine scale 1.0 is the old assumption.
+BENCH_ENGINE_CRUISE_FN_LBF = 5936.0
+
+
+def total_cruise_cd(cd_inviscid: float, reynolds: float | None = None,
+                    swet_sref: float | None = None) -> float:
+    """SU2's (Euler) CD plus the skin friction Euler misses -- the drag aviary is given."""
+    return float(cd_inviscid) + skin_friction_cd(reynolds or _NOMINAL_REYNOLDS,
+                                                 swet_sref or _NOMINAL_SWET_SREF)
+
+
+def fn_des_from_drag(mtom_kg: float, cl: float, cd_total: float) -> float:
+    """pycycle ``Fn_DES`` (lbf per engine) = MTOM*g / (L/D * engines) * climb margin, L/D = CL/CD."""
+    l_over_d = float(cl) / float(cd_total)
+    fn = float(mtom_kg) * _G / l_over_d / _N_ENGINES / _N_PER_LBF * _CLIMB_THRUST_MARGIN
+    return max(2000.0, min(fn, 25000.0))
+
+
+def fn_to_aviary_engine_scale(fn_lbf: float) -> float:
+    """aviary ``Aircraft.Engine.SCALE_FACTOR`` that gives the bench engine pycycle's design thrust."""
+    return float(fn_lbf) / BENCH_ENGINE_CRUISE_FN_LBF
+
+
 # ---------------------------------------------------------------------------
 # Typed registry helpers (operate on a DesignState-like object with .data_store).
 # ---------------------------------------------------------------------------
