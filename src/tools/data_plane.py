@@ -492,6 +492,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _annotate_su2_kept_back(tool_name, data)
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
+                _warn_flown_not_converged(tool_name, data)
                 _annotate_pinned(tool_name, data)
                 _write_design_json()
                 data = _intercept_binaries(tool_name, data)
@@ -525,6 +526,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _annotate_su2_kept_back(tool_name, response)
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
+        _warn_flown_not_converged(tool_name, response)
         _annotate_pinned(tool_name, response)
         _write_design_json()
         response = _intercept_binaries(tool_name, response)
@@ -721,6 +723,37 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
             "failure": failure or None,
         }
 
+
+
+def _warn_flown_not_converged(tool_name: str, data: dict) -> None:
+    """A flown mission whose optimiser stopped short of its tolerance is a result with a warning (B171).
+
+    aipexws8 v2sc2 link 1 (2026-10-10): fuel 22,999 kg, GTOW 102,188 kg, "converged": false with
+    residuals of 726 kg (climb mass), 84 kg (mass balance) and 22 nm (descent distance). The aircraft
+    flew; the integrator prompt read "did not converge" as RETRY and the runner scored it sim_fail.
+    The framework only states what aviary reported -- whether the residuals matter is the agents' call.
+    Did-not-fly (no fuel) stays with _flag_zero_fuel.
+    """
+    if tool_name not in _FLOWN_MISSION_TOOLS or data.get("converged") is not False:
+        return
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
+    outputs = summary.get("outputs") if isinstance(summary.get("outputs"), dict) else summary
+    try:
+        fuel = float((outputs or {}).get("fuel_burned_kg"))
+    except (TypeError, ValueError):
+        return
+    if fuel <= _ZERO_FUEL_FLOOR_KG:
+        return
+    failure = data.get("failure") if isinstance(data.get("failure"), dict) else {}
+    residuals = [v for v in (failure.get("violated_constraints") or []) if isinstance(v, dict)]
+    data["flown"] = True
+    data["convergence_warning"] = {
+        "note": (f"WARNING, not a failure: the mission flew ({fuel:.1f} kg of fuel burned) and these are its "
+                 "results, but aviary's optimiser stopped before meeting its convergence tolerance. The "
+                 "remaining residuals are listed so you can judge how far to trust the numbers."),
+        "optimizer_message": failure.get("optimizer_message"),
+        "residuals": [{"constraint": v.get("constraint"), "violation": v.get("violation")} for v in residuals],
+    }
 
 
 def _capture_applied_design(tool_name: str, data: dict) -> None:

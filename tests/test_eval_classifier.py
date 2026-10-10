@@ -65,20 +65,23 @@ class TestSuccess:
 
 
 class TestSimFail:
+    # B171 (Jessica, 2026-10-10): sim_fail means the mission did not fly. A flown mission whose
+    # optimiser did not converge is scored on its metrics, with converged=False and a warning.
     def test_sim_fail(self):
         result = classify_aviary_eval(
-            {"fuel_burned_kg": 7000.0, "gtow_kg": 67000.0, "wing_mass_kg": 7400.0},
+            {"fuel_burned_kg": 0.0, "gtow_kg": 67000.0, "wing_mass_kg": 7400.0},
             converged=False,
         )
         assert result.result == "sim_fail"
         assert result.converged is False
 
-    def test_sim_fail_ignores_good_metrics(self):
+    def test_flown_unconverged_with_good_metrics_is_a_warned_success(self):
         result = classify_aviary_eval(
             DEFAULT_AVIARY_THRESHOLDS.reference.copy(),
             converged=False,
         )
-        assert result.result == "sim_fail"
+        assert result.result == "success"
+        assert result.converged is False and "warning" in result.reason
 
 
 # ---- Eval skipped ----------------------------------------------------------
