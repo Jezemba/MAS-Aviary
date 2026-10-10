@@ -306,9 +306,10 @@ def test_a_later_link_inherits_the_integrator_and_the_design(tmp_path, monkeypat
     # The aviary chain values are the framework's business now, not the prompt's (2026-10-08).
     assert "Aircraft.Wing.SWEEP" not in first and "_seed" not in first
     assert f"Use CPACS file at {morph}" in first and "D150_simple.xml" not in first
-    # Later stages: the carried CPACS too, but not the previous iteration's assessment.
+    # Later stages: the carried CPACS and the recommendation (B172), but not the previous iteration's assessment.
     later = prompt_assembly.verbatim_stage_input(p["structures_analyst"], [("aerodynamics_analyst", "X", None)], carry)
-    assert morph in later and "previous iteration" not in later
+    assert morph in later and "DESIGN_STATE from the previous iteration" not in later and "VERDICT" not in later
+    assert "RECOMMENDATION_TO: geometry_engineer" in later
 
 
 def test_without_a_morph_the_prompt_keeps_the_baseline_path(tmp_path):
@@ -345,22 +346,61 @@ def test_both_integrator_formats_parse():
     assert parse_recommendation("no recommendation here") == {}
 
 
-def test_the_named_stage_gets_the_recommendation_and_the_others_do_not():
+def test_every_stage_gets_just_the_recommendation():
+    """B172 (Jessica, 2026-10-10): all stages see RECOMMENDATION_TO / RECOMMENDED_CHANGE (not the reasoning)
+    and any of them may respond. Role-name routing had sent an aero recommendation to geometry only."""
     from src.coordination import prompt_assembly
 
     p = _her_prompts()
     carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
     prev = [("structures_analyst", "DESIGN_STATE:\n  OEM_KG: 47164", None)]
-    prop = prompt_assembly.verbatim_stage_input(p["propulsion_analyst"], prev, carry, "propulsion_analyst")
-    assert prop.endswith("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
-                         "  RECOMMENDATION_TO: propulsion_analyst\n  RECOMMENDED_CHANGE: Raise splitter.BPR to 7\n"
-                         "  MDO_REASONING: Fuel burn is 3726 kg over.")
-    assert prop.startswith(p["propulsion_analyst"])
-    mission = prompt_assembly.verbatim_stage_input(p["mission_architect"], prev, carry, "mission_architect")
-    assert "RECOMMENDATION" not in mission.split(p["mission_architect"], 1)[1]
+    block = ("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
+             "  RECOMMENDATION_TO: propulsion_analyst\n  RECOMMENDED_CHANGE: Raise splitter.BPR to 7\n"
+             "This recommendation is addressed to the stage named in RECOMMENDATION_TO, but any stage may act on "
+             "it. If your stage addresses it, fully or in part, or finds that it belongs to another stage, add "
+             "RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
+    for stage in ("propulsion_analyst", "mission_architect", "structures_analyst"):
+        out = prompt_assembly.verbatim_stage_input(p[stage], prev, carry, stage)
+        assert out.startswith(p[stage]) and out.endswith(block)
+        assert "MDO_REASONING" not in out.split(p[stage], 1)[1]
+    first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry, "geometry_engineer")
+    assert first.endswith(block)
     # No carry-over (first link): nothing added.
     assert "RECOMMENDATION from" not in prompt_assembly.verbatim_stage_input(
         p["propulsion_analyst"], prev, None, "propulsion_analyst")
+
+
+def test_responses_from_any_stage_accumulate():
+    """An aero recommendation answered by geometry (the change) and by aero (it was a geometry change)."""
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
+    prev = [("geometry_engineer", "DESIGN_STATE:\n  RECOMMENDATION_IMPLEMENTED: aspect ratio 9.36 -> 10.5\n", None),
+            ("aerodynamics_analyst", '{"RECOMMENDATION_IMPLEMENTED": "geometry change, made by geometry; re-solved",', None),
+            ("structures_analyst", "DESIGN_STATE:\n  OEM_KG: 47500", None)]
+    out = prompt_assembly.verbatim_stage_input(p["mdo_integrator"], prev, carry, "mdo_integrator")
+    assert out.endswith(
+        "Responses so far:\n"
+        "RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): aspect ratio 9.36 -> 10.5\n"
+        "RECOMMENDATION_IMPLEMENTED (reported by aerodynamics_analyst): geometry change, made by geometry; re-solved\n"
+        "Use these responses in your verdict and your next recommendation.")
+    assert "Use these responses" not in prompt_assembly.verbatim_stage_input(p["structures_analyst"], prev, carry,
+                                                                            "structures_analyst")
+
+
+def test_responses_do_not_cross_into_the_next_link():
+    """Link 2's responses answer link 1's recommendation; link 3 starts from link 2's recommendation only."""
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    link3_carry = {"previous_integrator_design_state": LINES_FORMAT, "starting_design": {}}
+    first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], link3_carry, "geometry_engineer")
+    assert "Responses so far" not in first and "RECOMMENDATION_TO: mission_architect" in first
+    second = prompt_assembly.verbatim_stage_input(
+        p["aerodynamics_analyst"], [("geometry_engineer", "DESIGN_STATE:\n  GEOMETRY_SET: true", None)],
+        link3_carry, "aerodynamics_analyst")
+    assert "Responses so far" not in second and "RECOMMENDATION_IMPLEMENTED (reported" not in second
 
 
 def test_the_real_almost_json_from_v2b143_routes_to_aero():

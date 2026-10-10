@@ -175,6 +175,40 @@ def _starting_design_block(start: dict) -> str:
     return "\n".join(lines)
 
 
+_RECOMMENDATION_SENT_KEYS = ("RECOMMENDATION_TO", "RECOMMENDED_CHANGE")
+_IMPLEMENTED_RE = re.compile(r"^[\s\-*\"'{,]*RECOMMENDATION_IMPLEMENTED[\"']?\s*:\s*(.+?)\s*$", re.M)
+
+
+def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_name: str | None = None) -> str:
+    """The previous iteration's recommendation for every stage, plus every response so far (B172).
+
+    Addressed to one stage, answerable by any: an integrator recommendation is often vague or spans
+    roles (an aero recommendation that is really a geometry change), so each stage that addresses it,
+    in part or by handing it on, reports RECOMMENDATION_IMPLEMENTED and the responses accumulate.
+    """
+    rec = parse_recommendation((carry_over or {}).get("previous_integrator_design_state"))
+    if not rec.get("RECOMMENDATION_TO"):
+        return ""
+    lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
+    lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
+    lines.append("This recommendation is addressed to the stage named in RECOMMENDATION_TO, but any stage may act "
+                 "on it. If your stage addresses it, fully or in part, or finds that it belongs to another stage, "
+                 "add RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
+    responses = []
+    for name, content, _ in previous_outputs or []:
+        for m in _IMPLEMENTED_RE.finditer(str(content or "")):
+            value = m.group(1).strip().rstrip(",").strip().strip('"').strip()
+            if value:
+                responses.append(f"RECOMMENDATION_IMPLEMENTED (reported by {name}): {value}")
+    if responses:
+        lines.append("Responses so far:")
+        lines += responses
+    # The responses are this link's only: the next link starts from its own integrator's recommendation.
+    if _stage_key(stage_name) == "mdo_integrator":
+        lines.append("Use these responses in your verdict and your next recommendation.")
+    return "\n".join(lines)
+
+
 def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: dict | None = None,
                          stage_name: str | None = None, design_json: str | None = None) -> str:
     """The stage prompt as written, then the previous stage's DESIGN_STATE (if there is one).
@@ -193,12 +227,6 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
     if previous_outputs:
         prev_name, prev_content, _ = previous_outputs[-1]
         text += f"\n\nDESIGN_STATE from the previous stage ({prev_name}):\n{prev_content}"
-        # The stage the previous iteration's integrator addressed also gets its recommendation
-        # (Jessica, 2026-10-05). The first stage already receives the whole DESIGN_STATE below.
-        rec = parse_recommendation((carry_over or {}).get("previous_integrator_design_state"))
-        if rec.get("RECOMMENDATION_TO") and stage_name and _stage_key(rec["RECOMMENDATION_TO"]) == _stage_key(stage_name):
-            lines = "\n".join(f"  {k}: {rec[k]}" for k in _RECOMMENDATION_KEYS if k in rec)
-            text += f"\n\nRECOMMENDATION from the previous iteration (mdo_integrator):\n{lines}"
     elif carry_over:
         # The framework appends its termination keyword to the last message; it is not the integrator's.
         integrator = re.sub(r"\s*TASK_COMPLETE\s*$", "",
@@ -207,6 +235,12 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
             text += f"\n\nDESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}"
         if start:
             text += "\n\n" + _starting_design_block(start)
+    # B172 (Jessica, 2026-10-10): every stage sees the recommendation itself (not the whole integrator
+    # assessment); any stage may respond with RECOMMENDATION_IMPLEMENTED, and the framework carries every
+    # response to every later stage. Routing by role name had sent an aero recommendation to geometry only.
+    rec_block = recommendation_block(carry_over, previous_outputs, stage_name)
+    if rec_block:
+        text += "\n\n" + rec_block
     # Jessica (2026-10-08): the design record goes into the context, not behind a tool the model may
     # never call (read_design_json was called 0 times in 16 attempts).
     if design_json:
