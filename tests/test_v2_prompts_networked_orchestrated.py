@@ -102,7 +102,8 @@ def test_the_link0_design_state_is_the_prompt_table_baseline_with_sessions():
     assert text.startswith("DESIGN_STATE (the starting design for this iteration):")
     assert "Wing1: area 122.78, aspect_ratio 9.37, sweep 27.33" in text
     assert "Fuselage1: length 37.68, diameter 4.15" in text
-    assert "splitter.BPR 5.105" in text and "SCALE_FACTOR 1.0" in text
+    assert "splitter.BPR 5.105" in text
+    assert "SCALE_FACTOR" not in text          # B170: the framework sets it from propulsion; not a starting value
     assert text.endswith("SESSIONS (already open -- reuse them):\n    aviary: av-1")
 
 

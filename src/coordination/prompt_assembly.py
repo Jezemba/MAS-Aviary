@@ -290,7 +290,7 @@ def _baseline_lines(system: str) -> list[str]:
     lines = [f"  CPACS_FILE: {BASELINE_CPACS}"] + [f"  {uid}: {', '.join(v)}" for uid, v in geo.items()]
     if eng:
         lines.append("  Engine inputs: " + ", ".join(eng))
-    if scale:
+    if scale and re.fullmatch(r"[0-9.]+", scale):   # since B170 the framework sets it from propulsion
         lines.append(f"  Mission: Aircraft.Engine.SCALE_FACTOR {scale}")
     return lines
 

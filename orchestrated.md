@@ -50,8 +50,8 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass | pycycle | 6336 | set by framework | lbf |
-| Engine scale factor | Derived | framework: aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | 1.0 | 0.8 to 1.5 | none |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | 6336 | set by framework | lbf |
+| Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
@@ -246,8 +246,8 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2) and the wing mass (from mass-mcp).
-- Key Task: Check the applied values with read_design_json, set only the mission values you choose (for example Aircraft.Engine.SCALE_FACTOR), and validate
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
 (every role also has read_design_json, read_best_practices, get_design_state)
@@ -262,8 +262,8 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, as applied>
-  PARAMETERS_SET: <only the mission values you chose, e.g. Engine.SCALE_FACTOR>
+  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, ENGINE SCALE_FACTOR, as applied>
+  PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
@@ -421,8 +421,8 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass | pycycle | 6336 | set by framework | lbf |
-| Engine scale factor | Derived | framework: aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | 1.0 | 0.8 to 1.5 | none |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | 6336 | set by framework | lbf |
+| Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
@@ -617,8 +617,8 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2) and the wing mass (from mass-mcp).
-- Key Task: Check the applied values with read_design_json, set only the mission values you choose (for example Aircraft.Engine.SCALE_FACTOR), and validate
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
 (every role also has read_design_json, read_best_practices, get_design_state)
@@ -633,8 +633,8 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, as applied>
-  PARAMETERS_SET: <only the mission values you chose, e.g. Engine.SCALE_FACTOR>
+  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, ENGINE SCALE_FACTOR, as applied>
+  PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
@@ -792,8 +792,8 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass | pycycle | 6336 | set by framework | lbf |
-| Engine scale factor | Derived | framework: aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | 1.0 | 0.8 to 1.5 | none |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | 6336 | set by framework | lbf |
+| Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
@@ -989,8 +989,8 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2) and the wing mass (from mass-mcp).
-- Key Task: Check the applied values with read_design_json, set only the mission values you choose (for example Aircraft.Engine.SCALE_FACTOR), and validate
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
 (every role also has read_design_json, read_best_practices, get_design_state)
@@ -1005,8 +1005,8 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, as applied>
-  PARAMETERS_SET: <only the mission values you chose, e.g. Engine.SCALE_FACTOR>
+  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, ENGINE SCALE_FACTOR, as applied>
+  PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
