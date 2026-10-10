@@ -270,9 +270,11 @@ def test_an_agent_messages_the_orchestrator_which_grants_a_tool_and_replies():
         _call("final_answer", {"answer": "ok"})]
     worker = s._agents["geometry_engineer"]
     worker.run(a.input_context)
-    orch_turn = [c for c in model.calls if c[0] == "orchestrator"][-3]
+    orch_calls = [c for c in model.calls if c[0] == "orchestrator"]
+    orch_turn = orch_calls[-2]                                    # give_tools, then reply_to_agent: the reply ends it
     assert _text(orch_turn[1][-1]) == "MESSAGE from geometry_engineer:\nI need run_su2_solver"
     assert len(orch_turn[1]) > 2                                  # it kept its own earlier turns
+    assert len(who_queue["orchestrator"]) == 1                    # the queued final_answer was never needed
     worker_second = [c for c in model.calls if c[0] == "worker"][1]
     assert "granted" in json.dumps([_text(m) for m in worker_second[1]])
     assert "run_su2_solver" in worker_second[2]                   # usable from its next step

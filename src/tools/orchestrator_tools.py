@@ -68,6 +68,7 @@ class OrchestratorContext:
     ask_orchestrator: Callable | None = None
     replies: dict = field(default_factory=dict)
     in_message_turn: bool = False
+    end_message_turn: Callable | None = None   # a reply ends the orchestrator's message turn
 
 
 # NOTE: `list_graph_roles` is only PROVISIONED when `_graph_roles` is configured
@@ -683,7 +684,8 @@ class ReplyToAgent(Tool):
     name = "reply_to_agent"
     description = (
         "Answer an agent that sent you a message with message_orchestrator. The agent receives your "
-        "message as the result of its call."
+        "message as the result of its call. Replying ends your turn: act first (create_agent, give_tools, "
+        "assign_task), then reply once."
     )
     inputs = {
         "agent_name": {"type": "string", "description": "The agent that messaged you."},
@@ -699,6 +701,10 @@ class ReplyToAgent(Tool):
         if agent_name not in self._context.agents:
             return _error(agent_name, f"Agent '{agent_name}' not found")
         self._context.replies[agent_name] = message
+        # One reply per message (v2no5 run, 2026-10-10: the orchestrator called reply_to_agent up to 10 times in
+        # one turn, re-wording the same answer). The turn ends after this step.
+        if self._context.in_message_turn and self._context.end_message_turn is not None:
+            self._context.end_message_turn()
         return json.dumps({"success": True, "agent_name": agent_name, "error": None})
 
 

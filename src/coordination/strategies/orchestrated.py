@@ -1039,11 +1039,16 @@ class OrchestratedStrategy(CoordinationStrategy):
         if thinking is not None:
             self._model.thinking_enabled = False
         self._context.in_message_turn = True
+        self._context.end_message_turn = orch.interrupt
         orch.tools[_FINAL_ANSWER_KEY] = self._gated_final_answer
         try:
             orch.run(f"MESSAGE from {sender}:\n{message}", reset=False)
+        except Exception as exc:   # the reply interrupts the run (smolagents raises AgentError "Agent interrupted.")
+            if "interrupted" not in str(exc).lower():
+                raise
         finally:
             self._context.in_message_turn = False
+            self._context.end_message_turn = None
             self._sync_orchestrator_tools()
             if thinking is not None:
                 self._model.thinking_enabled = thinking
