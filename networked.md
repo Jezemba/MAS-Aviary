@@ -345,18 +345,18 @@ Rating:
 TERMINATION CRITERIA 
 
 VERDICT: COMPLETE if ALL of:
-  - Simulation converged
+  - Simulation flew
   - All checkable constraints satisfied
   - Optimality gap <= 5% OR MTOM change < 0.5% from prior iteration
   -> Output TASK_COMPLETE
 
 VERDICT: CONTINUE if:
-  - Simulation converged but some constraints violated
+  - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
   -> Give ONE specific recommendation to ONE other role
 
 VERDICT: RETRY if:
-  - Simulation did not converge
+  - Simulation did not fly
   -> Identify likely cause (engine too small, extreme geometry)
   -> Recommend specific parameter adjustment
 
@@ -732,18 +732,18 @@ Rating:
 TERMINATION CRITERIA 
 
 VERDICT: COMPLETE if ALL of:
-  - Simulation converged
+  - Simulation flew
   - All checkable constraints satisfied
   - Optimality gap <= 5% OR MTOM change < 0.5% from prior iteration
   -> Output TASK_COMPLETE
 
 VERDICT: CONTINUE if:
-  - Simulation converged but some constraints violated
+  - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
   -> Give ONE specific recommendation to ONE other role
 
 VERDICT: RETRY if:
-  - Simulation did not converge
+  - Simulation did not fly
   -> Identify likely cause (engine too small, extreme geometry)
   -> Recommend specific parameter adjustment
 
