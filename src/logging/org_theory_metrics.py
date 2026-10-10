@@ -748,6 +748,12 @@ def _staged_pipeline_metrics(
     )
 
     def _stage_met(m) -> bool:
+        # B171: the handler records each stage's real completion result; use it. The keyword
+        # heuristic below scored every mdo_integrator stage NOT MET (Jessica's template has a
+        # CONSTRAINTS_FAILED field) and a flown simulation whose note said "optimizer failed".
+        meta = _get(m, "metadata") or {}
+        if isinstance(meta, dict) and isinstance(meta.get("completion_met"), bool):
+            return meta["completion_met"]
         content = _get(m, "content", "") or ""
         err = _get(m, "error")
         if err:
@@ -762,7 +768,10 @@ def _staged_pipeline_metrics(
     completion_rate = sum(stage_results) / stage_count if stage_count else None
 
     per_stage_completion = [
-        {"stage": name, "met": met, "reason": "heuristic"} for name, met in zip(stage_names, stage_results)
+        {"stage": name, "met": met,
+         "reason": "completion_criteria" if isinstance((_get(m, "metadata") or {}).get("completion_met"), bool)
+         else "heuristic"}
+        for name, met, m in zip(stage_names, stage_results, stages)
     ]
 
     # Error propagation analysis

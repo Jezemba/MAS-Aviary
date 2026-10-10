@@ -6,7 +6,9 @@ Given eval results and threshold config, classifies each run as one of:
               eval metrics outside thresholds
   - commission: an agent reviewed/approved output during execution,
                 but eval shows metrics outside thresholds
-  - sim_fail: simulation didn't converge (Aviary)
+  - sim_fail: the mission did not fly (no Aviary result, or no fuel burned)
+A flown mission whose optimiser did not converge is classified on its metrics like any other,
+with converged=False and a warning in the reason (B171): whether that matters is the agents' call.
   - eval_skipped: eval was not performed
 """
 
@@ -28,6 +30,10 @@ _AVIARY_METRIC_NAMES = [
     "reserve_fuel_kg",
     "zero_fuel_weight_kg",
 ]
+
+# A flown mission burns fuel; at or below this it did not fly (same floor as the data plane's
+# _ZERO_FUEL_FLOOR_KG and stat_batch_runner.ZERO_FUEL_FLOOR_KG).
+ZERO_FUEL_FLOOR_KG = 100.0
 
 # Aviary-specific approval/issue keywords (from mdo_integrator VERDICT output).
 _AVIARY_APPROVAL_KEYWORDS = {"COMPLETE", "TASK_COMPLETE"}
@@ -139,11 +145,17 @@ def classify_aviary_eval(
             reason="Eval data not extracted from agent messages",
         )
 
-    # Simulation didn't converge.
-    if not converged:
+    # The mission did not fly (B171: non-convergence alone is a warning, not a failure).
+    try:
+        _fuel = float(eval_result.get("fuel_burned_kg"))
+    except (TypeError, ValueError):
+        _fuel = None
+    # Fuel not extracted: fall back to aviary's own flag, as before (missing metrics are skipped).
+    flew = _fuel > ZERO_FUEL_FLOOR_KG if _fuel is not None else converged
+    if not flew:
         return AviaryEvalClassification(
             result="sim_fail",
-            converged=False,
+            converged=converged,
             fuel_burned_kg=eval_result.get("fuel_burned_kg") or 0.0,
             gtow_kg=eval_result.get("gtow_kg") or 0.0,
             wing_mass_kg=eval_result.get("wing_mass_kg") or 0.0,
@@ -155,7 +167,8 @@ def classify_aviary_eval(
             wing_mass_pass=False,
             reserve_fuel_pass=False,
             zero_fuel_weight_pass=False,
-            reason="Simulation did not converge — results unreliable",
+            reason=("The mission did not fly: " + (f"{_fuel:.1f} kg of fuel burned" if _fuel is not None
+                                                  else "no fuel result and Aviary did not converge")),
         )
 
     # Extract metrics and check deviation from reference.
@@ -179,13 +192,15 @@ def classify_aviary_eval(
     zfw, zfw_pass, zfw_found = _check("zero_fuel_weight_kg")
     gap = float(eval_result.get("optimality_gap_pct", 0.0))
 
+    _warning = "" if converged else " (warning: Aviary's optimiser did not converge; the mission flew)"
+
     # Only count found metrics for pass/fail — missing metrics are skipped.
     all_pass = fuel_pass and gtow_pass and wing_pass and reserve_pass and zfw_pass
 
     if all_pass:
         return AviaryEvalClassification(
             result="success",
-            converged=True,
+            converged=converged,
             fuel_burned_kg=fuel,
             gtow_kg=gtow,
             wing_mass_kg=wing,
@@ -197,7 +212,7 @@ def classify_aviary_eval(
             wing_mass_pass=True,
             reserve_fuel_pass=True,
             zero_fuel_weight_pass=True,
-            reason="All metrics within thresholds",
+            reason="All metrics within thresholds" + _warning,
         )
 
     # Failed — determine omission vs commission.
@@ -224,7 +239,7 @@ def classify_aviary_eval(
 
     return AviaryEvalClassification(
         result=result_type,
-        converged=True,
+        converged=converged,
         fuel_burned_kg=fuel,
         gtow_kg=gtow,
         wing_mass_kg=wing,
@@ -236,7 +251,7 @@ def classify_aviary_eval(
         wing_mass_pass=wing_pass,
         reserve_fuel_pass=reserve_pass,
         zero_fuel_weight_pass=zfw_pass,
-        reason=reason,
+        reason=reason + _warning,
     )
 
 
