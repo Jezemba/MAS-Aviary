@@ -176,7 +176,26 @@ def _starting_design_block(start: dict) -> str:
 
 
 _RECOMMENDATION_SENT_KEYS = ("RECOMMENDATION_TO", "RECOMMENDED_CHANGE")
-_IMPLEMENTED_RE = re.compile(r"^[\s\-*\"'{,]*RECOMMENDATION_IMPLEMENTED[\"']?\s*:\s*(.+?)\s*$", re.M)
+# B174: found anywhere, not only at a line start. A final answer given as a dict reaches the next stage as
+# one line ({'GEOMETRY_SET': True, 'RECOMMENDATION_IMPLEMENTED': '...'}), and the line-start pattern missed
+# the geometry engineer's response in aipexws8 v2b173 link 2. Quoted values (JSON, dict text) are read to
+# their closing quote; unquoted ones to the end of the line.
+_IMPLEMENTED_RE = re.compile(
+    r"""RECOMMENDATION[_ ]IMPLEMENTED\**["']?\**\s*[:=]\s*"""
+    r"""(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([^\n]+))""",
+    re.IGNORECASE)
+
+
+def _implemented_values(content: str) -> list[str]:
+    values = []
+    for m in _IMPLEMENTED_RE.finditer(content):
+        value = next(g for g in m.groups() if g is not None)
+        value = value.replace('\\"', '"').replace("\\'", "'").strip()
+        if m.group(3) is not None:          # unquoted: trim JSON/dict punctuation left on the line
+            value = value.rstrip(",}] ").strip().strip("*").strip()
+        if value and not value.startswith("<how"):
+            values.append(value)
+    return values
 
 
 def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_name: str | None = None) -> str:
@@ -196,16 +215,15 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
                  "add RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
     responses = []
     for name, content, _ in previous_outputs or []:
-        for m in _IMPLEMENTED_RE.finditer(str(content or "")):
-            value = m.group(1).strip().rstrip(",").strip().strip('"').strip()
-            if value:
-                responses.append(f"RECOMMENDATION_IMPLEMENTED (reported by {name}): {value}")
+        for value in _implemented_values(str(content or "")):
+            responses.append(f"RECOMMENDATION_IMPLEMENTED (reported by {name}): {value}")
     if responses:
         lines.append("Responses so far:")
         lines += responses
     # The responses are this link's only: the next link starts from its own integrator's recommendation.
     if _stage_key(stage_name) == "mdo_integrator":
-        lines.append("Use these responses in your verdict and your next recommendation.")
+        lines.append("Use these responses in your verdict and your next recommendation." if responses else
+                     "No stage reported RECOMMENDATION_IMPLEMENTED in this iteration.")
     return "\n".join(lines)
 
 

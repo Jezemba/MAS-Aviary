@@ -479,3 +479,35 @@ def test_integrator_text_is_read_from_a_failed_attempts_messages():
                                     {"content": "TASK_COMPLETE"}])
     assert r.integrator_text(res).startswith("DESIGN_STATE:\n  RECOMMENDATION_TO: aerodynamics_analyst")
     assert r.integrator_text(SimpleNamespace(messages=[])) == ""
+
+
+def test_a_response_inside_a_one_line_dict_answer_is_found():
+    """B174: aipexws8 v2b173 link 2 -- the geometry engineer's response never reached the integrator. A final
+    answer given as a dict reaches the next stage as one line, and the line-start pattern missed it."""
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
+    prev = [("geometry_engineer", "{'GEOMETRY_SET': True, 'RECOMMENDATION_IMPLEMENTED': 'Increased aspect ratio "
+             "9.36 -> 10.5 via set_high_level_parameters', 'MESH_ELEMENTS': 2400000}", None),
+            ("aerodynamics_analyst", "- **RECOMMENDATION_IMPLEMENTED**: handed to geometry (AR is geometry)", None),
+            ("structures_analyst", "Saw RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): Increased ...\n"
+             "RECOMMENDATION_IMPLEMENTED: <how you addressed it>", None)]
+    out = prompt_assembly.verbatim_stage_input(p["mdo_integrator"], prev, carry, "mdo_integrator")
+    assert out.endswith(
+        "Responses so far:\n"
+        "RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): Increased aspect ratio 9.36 -> 10.5 via "
+        "set_high_level_parameters\n"
+        "RECOMMENDATION_IMPLEMENTED (reported by aerodynamics_analyst): handed to geometry (AR is geometry)\n"
+        "Use these responses in your verdict and your next recommendation.")
+
+
+def test_the_integrator_is_told_when_nobody_responded():
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
+    out = prompt_assembly.verbatim_stage_input(
+        p["mdo_integrator"], [("simulation_executor", "DESIGN_STATE:\n  CONVERGED: true", None)], carry, "mdo_integrator")
+    assert out.endswith("No stage reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+    assert "Use these responses" not in out
