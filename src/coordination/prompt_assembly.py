@@ -210,8 +210,10 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
         return ""
     lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
     lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
-    lines.append("This recommendation is addressed to the stage named in RECOMMENDATION_TO, but any stage may act "
-                 "on it. If your stage addresses it, fully or in part, or finds that it belongs to another stage, "
+    # B176 (Jessica, 2026-10-10): role/agent wording -- "stage" belongs to the staged pipeline, and this
+    # text is shared with sequential + iterative_feedback.
+    lines.append("This recommendation is addressed to the role named in RECOMMENDATION_TO, but any agent may act "
+                 "on it. If you address it, fully or in part, or find that it belongs to another role, "
                  "add RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
     responses = []
     for name, content, _ in previous_outputs or []:
@@ -223,7 +225,7 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
     # The responses are this link's only: the next link starts from its own integrator's recommendation.
     if _stage_key(stage_name) == "mdo_integrator":
         lines.append("Use these responses in your verdict and your next recommendation." if responses else
-                     "No stage reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+                     "No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
     return "\n".join(lines)
 
 
@@ -244,7 +246,7 @@ def verbatim_stage_input(stage_prompt: str, previous_outputs: list, carry_over: 
         text = re.sub(r"\S*/mass-mcp/tests/fixtures/D150_simple\.xml", lambda _m: cpacs, text)
     if previous_outputs:
         prev_name, prev_content, _ = previous_outputs[-1]
-        text += f"\n\nDESIGN_STATE from the previous stage ({prev_name}):\n{prev_content}"
+        text += f"\n\nDESIGN_STATE from the previous agent ({prev_name}):\n{prev_content}"
     elif carry_over:
         # The framework appends its termination keyword to the last message; it is not the integrator's.
         integrator = re.sub(r"\s*TASK_COMPLETE\s*$", "",

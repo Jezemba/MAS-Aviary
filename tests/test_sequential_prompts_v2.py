@@ -251,7 +251,7 @@ def test_a_later_stage_gets_its_prompt_then_the_previous_design_state():
     out = prompt_assembly.verbatim_stage_input(p["aerodynamics_analyst"],
                                                [("geometry_engineer", "DESIGN_STATE:\n  GEOMETRY_SET: true", None)])
     assert out.startswith(p["aerodynamics_analyst"])
-    assert out.endswith("DESIGN_STATE from the previous stage (geometry_engineer):\nDESIGN_STATE:\n  GEOMETRY_SET: true")
+    assert out.endswith("DESIGN_STATE from the previous agent (geometry_engineer):\nDESIGN_STATE:\n  GEOMETRY_SET: true")
 
 
 def test_framework_mode_is_unchanged_by_default():
@@ -356,8 +356,8 @@ def test_every_stage_gets_just_the_recommendation():
     prev = [("structures_analyst", "DESIGN_STATE:\n  OEM_KG: 47164", None)]
     block = ("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
              "  RECOMMENDATION_TO: propulsion_analyst\n  RECOMMENDED_CHANGE: Raise splitter.BPR to 7\n"
-             "This recommendation is addressed to the stage named in RECOMMENDATION_TO, but any stage may act on "
-             "it. If your stage addresses it, fully or in part, or finds that it belongs to another stage, add "
+             "This recommendation is addressed to the role named in RECOMMENDATION_TO, but any agent may act on "
+             "it. If you address it, fully or in part, or find that it belongs to another role, add "
              "RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
     for stage in ("propulsion_analyst", "mission_architect", "structures_analyst"):
         out = prompt_assembly.verbatim_stage_input(p[stage], prev, carry, stage)
@@ -436,7 +436,7 @@ def test_every_stage_gets_design_json_after_its_input(tmp_path, monkeypatch):
                                                None, "propulsion_analyst", dj)
     assert out.startswith(p["propulsion_analyst"])
     head, _, tail = out.partition("\n\ndesign.json (the framework's current record of this design")
-    assert "DESIGN_STATE from the previous stage (structures_analyst):\nX" in head
+    assert "DESIGN_STATE from the previous agent (structures_analyst):\nX" in head
     assert tail.endswith('{"design_space": {"engine": {"splitter.BPR": 6.5}}}')
 
 
@@ -509,5 +509,5 @@ def test_the_integrator_is_told_when_nobody_responded():
     carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
     out = prompt_assembly.verbatim_stage_input(
         p["mdo_integrator"], [("simulation_executor", "DESIGN_STATE:\n  CONVERGED: true", None)], carry, "mdo_integrator")
-    assert out.endswith("No stage reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+    assert out.endswith("No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
     assert "Use these responses" not in out

@@ -59,11 +59,11 @@ def test_each_stage_gets_its_prompt_the_previous_design_state_and_the_responses(
     assert "RECOMMENDED_CHANGE: Increase aspect ratio 9.36 -> 10.5" in first and "design.json" in first
     second = aero.calls[0]
     assert second.startswith("ROLE: AERODYNAMICS ANALYST")
-    assert "DESIGN_STATE from the previous stage (geometry_engineer):\n{'GEOMETRY_SET': True" in second
+    assert "DESIGN_STATE from the previous agent (geometry_engineer):\n{'GEOMETRY_SET': True" in second
     assert "RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): AR 9.36 -> 10.5" in second
     assert "Context from previous agent" not in second
     last = integ.calls[0]
-    assert "DESIGN_STATE from the previous stage (aerodynamics_analyst)" in last
+    assert "DESIGN_STATE from the previous agent (aerodynamics_analyst)" in last
     assert "Use these responses in your verdict and your next recommendation." in last
 
 
