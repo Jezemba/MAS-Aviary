@@ -154,6 +154,11 @@ class IterativeFeedbackHandler(ExecutionHandler):
         # self-correct when the pipeline loops back to them.
         self._upstream_errors: list[str] = []
 
+        # B175 (2026-10-10): with Jessica's verbatim prompts the coordinator hands this handler ONE stage
+        # per call, so the stages' final outputs are kept here: they are the previous stage's DESIGN_STATE
+        # and the RECOMMENDATION_IMPLEMENTED responses (prompt_assembly.verbatim_stage_input).
+        self._verbatim_outputs: list[tuple[str, str, None]] = []
+
     # ------------------------------------------------------------------
     # Cross-stage error forwarding
     # ------------------------------------------------------------------
@@ -373,6 +378,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
                     effective_max,
                     attempt_feedbacks,
                     human_feedback_text,
+                    verbatim_base=self._verbatim_base(agent, assignment.agent_name),
                 )
 
                 turn += 1
@@ -501,6 +507,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
             # Update previous_output for next assignment.
             if messages:
                 previous_output = messages[-1].content
+                self._verbatim_outputs.append((assignment.agent_name, messages[-1].content, None))
 
         # Cache the last successful output so subsequent calls short-circuit.
         if messages and not any(m.error for m in messages):
@@ -521,8 +528,17 @@ class IterativeFeedbackHandler(ExecutionHandler):
         max_retries: int,
         feedback_history: list[AttemptFeedback],
         human_feedback: str | None,
+        verbatim_base: str | None = None,
     ) -> str:
         parts: list[str] = []
+
+        # B175: verbatim mode -- the stage's own prompt + previous DESIGN_STATE (+ carry-over, recommendation
+        # and design.json), exactly as the staged pipeline builds it. What this handler adds is only its
+        # own mechanism: the feedback from failed attempts and the last-attempt notices.
+        if verbatim_base is not None:
+            parts.append(verbatim_base)
+            parts.extend(self._retry_parts(attempt, max_retries, feedback_history, human_feedback))
+            return "\n\n".join(parts)
 
         # Human guidance (between_prompt mode — static for entire run).
         if self._human_guidance and self._human_mode == "between_prompt":
@@ -559,6 +575,28 @@ class IterativeFeedbackHandler(ExecutionHandler):
         else:
             parts.append(task)
 
+        parts.extend(self._retry_parts(attempt, max_retries, feedback_history, human_feedback))
+        return "\n\n".join(parts)
+
+    def _verbatim_base(self, agent: Any, agent_name: str) -> str | None:
+        """The verbatim stage input, or None when the prompts are not in verbatim mode."""
+        from src.coordination import prompt_assembly
+
+        if not prompt_assembly.is_verbatim():
+            return None
+        return prompt_assembly.verbatim_stage_input(
+            getattr(agent, "description", "") or "", self._verbatim_outputs,
+            prompt_assembly.read_carry_over(), agent_name, prompt_assembly.read_design_json_text())
+
+    def _retry_parts(
+        self,
+        attempt: int,
+        max_retries: int,
+        feedback_history: list[AttemptFeedback],
+        human_feedback: str | None,
+    ) -> list[str]:
+        """This handler's own additions: feedback from failed attempts and the last-attempt notices."""
+        parts: list[str] = []
         # Feedback from previous attempts (windowed).
         if feedback_history:
             window = feedback_history[-self._feedback_window :]
@@ -591,7 +629,7 @@ class IterativeFeedbackHandler(ExecutionHandler):
                 "This summary will be passed to the next agent."
             )
 
-        return "\n\n".join(parts)
+        return parts
 
     def _meets_aspiration(self, feedback: AttemptFeedback) -> bool:
         """Check if the feedback meets the configured aspiration level."""
