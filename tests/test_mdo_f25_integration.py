@@ -272,6 +272,9 @@ class TestStageToolInvocation:
             mass_result = tools["estimate_mass"](
                 cpacs_file_path=str(CPACS_FILE),
                 wing_mass_method="flops",
+                # The fixture is tracked and every run starts from it: never write the breakdown into it
+                # (it did, whenever the live servers were up -- found 2026-10-12).
+                write_back_to_cpacs=False,
             )
             mass_str = str(mass_result)
             print(f"  Mass estimate: {mass_str[:500]}")
@@ -548,6 +551,9 @@ class TestCrossMCPDataFlow:
             mass_result = tool_map["estimate_mass"](
                 cpacs_file_path=str(CPACS_FILE),
                 wing_mass_method="flops",
+                # The fixture is tracked and every run starts from it: never write the breakdown into it
+                # (it did, whenever the live servers were up -- found 2026-10-12).
+                write_back_to_cpacs=False,
             )
             mass_str = str(mass_result)
             print(f"  Mass estimate result: {mass_str[:500]}")
