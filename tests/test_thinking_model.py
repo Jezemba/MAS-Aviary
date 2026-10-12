@@ -295,3 +295,65 @@ def test_json_tool_calls_are_unchanged():
     assert f.name == "open_cpacs" and f.arguments == {"source_type": "path", "source": "/x.xml"}
     with pytest.raises(ValueError):
         _parse("no tool call here")
+
+
+# ---- litellm kwargs for OpenAI reasoning models (gpt-6.1-sol rejects max_tokens and temperature != 1) ----
+
+def test_openai_reasoning_models_get_max_completion_tokens_and_no_temperature(monkeypatch):
+    import smolagents
+
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    seen = {}
+
+    class _Stub:                                        # stands in for LiteLLMModel: no API call is made
+        def __init__(self, **kwargs):
+            seen.clear(); seen.update(kwargs)
+
+    monkeypatch.setattr(smolagents, "LiteLLMModel", _Stub)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    for mid in ("openai/gpt-6.1-sol", "openai/gpt-5", "openai/o3", "gpt-6-luna"):
+        model_loader._build_model(LLMConfig(model_id=mid, backend="litellm", max_new_tokens=4096, temperature=0.3))
+        assert seen.get("max_completion_tokens") == 4096 and "max_tokens" not in seen and "temperature" not in seen, mid
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-4.1", backend="litellm", max_new_tokens=4096, temperature=0.3))
+    assert seen.get("max_tokens") == 4096 and seen.get("temperature") == 0.3 and "max_completion_tokens" not in seen
+
+
+def test_openai_reasoning_models_are_sent_no_stop_sequences(monkeypatch):
+    """gpt-6.1-sol rejects `stop`; smolagents 1.24's own check only knows o3/o4/gpt-5*."""
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    for mid, expected in (("openai/gpt-6.1-sol", False), ("openai/gpt-5", False), ("openai/o3", False),
+                          ("openai/gpt-4.1", True), ("anthropic/claude-x", True)):
+        m = model_loader._build_model(LLMConfig(model_id=mid, backend="litellm", max_new_tokens=64))
+        assert m.supports_stop_parameter is expected, mid
+        kw = m._prepare_completion_kwargs(messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+                                          stop_sequences=["Observation:"])
+        assert ("stop" in kw) is expected, mid
+
+
+def test_gpt6_goes_through_the_responses_api_with_the_thinking_switch(monkeypatch):
+    import smolagents
+
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    seen = {}
+
+    class _Stub:
+        def __init__(self, **kwargs):
+            seen.clear(); seen.update(kwargs)
+
+    monkeypatch.setattr(smolagents, "LiteLLMModel", _Stub)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", enable_thinking=False))
+    assert seen["model_id"] == "openai/responses/gpt-6.1-sol" and seen["reasoning_effort"] == "low"
+    assert seen["allowed_openai_params"] == ["reasoning_effort"] and "temperature" not in seen
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", reasoning_effort="high"))
+    assert seen["reasoning_effort"] == "high"
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-5", backend="litellm"))
+    assert seen["model_id"] == "openai/gpt-5" and "reasoning_effort" not in seen      # gpt-5: unchanged route
+    assert model_loader._is_openai_reasoning("openai/responses/gpt-6.1-sol")
