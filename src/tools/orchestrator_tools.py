@@ -68,8 +68,9 @@ class OrchestratorContext:
     ask_orchestrator: Callable | None = None
     replies: dict = field(default_factory=dict)
     in_message_turn: bool = False
-    end_message_turn: Callable | None = None   # a reply ends the orchestrator's message turn
     message_sender: str | None = None          # the agent waiting for this message turn's reply
+    inbox: dict = field(default_factory=dict)  # agent name -> orchestrator messages for its next task
+    role_contracts: dict = field(default_factory=dict)  # role name -> her template block attached to its persona
 
 
 # NOTE: `list_graph_roles` is only PROVISIONED when `_graph_roles` is configured
@@ -93,6 +94,9 @@ ORCHESTRATOR_TOOL_NAMES = frozenset(
 )
 
 DELEGATION_COMPLETE = "DELEGATION_COMPLETE"
+
+# What an agent receives when its message got no answer in the orchestrator's turn (Jessica, 2026-10-11).
+NO_REPLY = "The orchestrator did not reply. You can rephrase your question and send it again."
 
 
 class GatedFinalAnswer(Tool):
@@ -363,12 +367,16 @@ class CreateAgent(Tool):
             # the orchestrator; the reference tools are added as for sequential stages.
             from src.coordination import prompt_assembly
 
+            # Her role template's DELIVERABLE / DESIGN_STATE / SESSION STATE FILE block is attached to the persona
+            # of every agent created under that role name (Jessica, 2026-10-11): the orchestrator writes the
+            # persona, but cannot drop the contract (v2no6: geometry never exported or reported CPACS_FILE).
+            contract = ctx.role_contracts.get(name)
             agent = prompt_assembly.make_agent_class()(
                 tools=prompt_assembly.with_reference_tools(tool_objects) + [MessageOrchestrator(ctx, name)],
                 model=ctx.model,
                 name=name,
                 description=persona,
-                instructions=persona,
+                instructions=f"{persona}\n\n{contract}" if contract else persona,
                 max_steps=ctx.worker_max_steps,
                 add_base_tools=False,
                 prompt_templates=prompt_assembly.verbatim_prompt_templates(),
@@ -672,25 +680,31 @@ class MessageOrchestrator(Tool):
 
     def forward(self, message: str) -> str:
         ctx = self._context
-        if ctx.ask_orchestrator is None:
-            return "The orchestrator did not reply."
         ctx.replies.pop(self._agent_name, None)
-        ctx.ask_orchestrator(self._agent_name, message)
-        return ctx.replies.pop(self._agent_name, None) or "The orchestrator did not reply."
+        if ctx.ask_orchestrator is not None:
+            ctx.ask_orchestrator(self._agent_name, message)
+        replies = ctx.replies.pop(self._agent_name, None)
+        if replies:
+            return "\n\n".join(replies)
+        return NO_REPLY
 
 
 class ReplyToAgent(Tool):
-    """Orchestrator: answer an agent that sent a message."""
+    """Orchestrator: send a message to an agent (Jessica, 2026-10-11).
+
+    The agent waiting on message_orchestrator receives it as the result of its call. Any other agent receives it
+    with its next task (staged: when its stage comes around), so a message is never lost. No recipient is
+    refused; the message turn is bounded by its step budget, not by the reply.
+    """
 
     name = "reply_to_agent"
     description = (
-        "Answer an agent that sent you a message with message_orchestrator. The agent receives your "
-        "message as the result of its call. Replying ends your turn: act first (create_agent, give_tools, "
-        "assign_task), then reply once."
+        "Send a message to an agent. The agent that messaged you with message_orchestrator receives it as the "
+        "result of its call; any other agent receives it with its next task."
     )
     inputs = {
-        "agent_name": {"type": "string", "description": "The agent that messaged you."},
-        "message": {"type": "string", "description": "Your reply."},
+        "agent_name": {"type": "string", "description": "The agent to send the message to."},
+        "message": {"type": "string", "description": "Your message."},
     }
     output_type = "string"
 
@@ -700,22 +714,12 @@ class ReplyToAgent(Tool):
 
     def forward(self, agent_name: str, message: str) -> str:
         ctx = self._context
-        if agent_name not in ctx.agents:
-            return _error(agent_name, f"Agent '{agent_name}' not found")
-        # Only the agent that sent the message is waiting; a reply to anyone else is never read (v2no6,
-        # 2026-10-11: replies to propulsion/geometry while the mission architect waited, 9 times).
-        if not ctx.in_message_turn or not ctx.message_sender:
-            return _error(agent_name, "No agent is waiting for a reply. To give an agent work, use assign_task.")
-        if agent_name != ctx.message_sender:
-            return _error(agent_name, f"Only {ctx.message_sender} is waiting for a reply; {agent_name} did not "
-                                      "message you and will not read this. To give another agent work, use "
-                                      f"assign_task; answer {ctx.message_sender} with reply_to_agent.")
-        ctx.replies[agent_name] = message
-        # One reply per message (v2no5 run, 2026-10-10: the orchestrator called reply_to_agent up to 10 times in
-        # one turn, re-wording the same answer). The turn ends after this step.
-        if self._context.in_message_turn and self._context.end_message_turn is not None:
-            self._context.end_message_turn()
-        return json.dumps({"success": True, "agent_name": agent_name, "error": None})
+        if ctx.in_message_turn and agent_name == ctx.message_sender:
+            ctx.replies.setdefault(agent_name, []).append(message)
+            return json.dumps({"success": True, "agent_name": agent_name, "delivered": "now", "error": None})
+        ctx.inbox.setdefault(agent_name, []).append(message)
+        return json.dumps({"success": True, "agent_name": agent_name, "delivered": "with its next task",
+                           "error": None})
 
 
 class GiveTools(Tool):

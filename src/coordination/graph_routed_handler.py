@@ -335,6 +335,7 @@ class GraphRoutedHandler(ExecutionHandler):
         # orchestrator assigned it plus the previous state's DESIGN_STATE as data; no state prompt.
         self._worker_input: str = cfg.get("worker_input", "")
         self._last_agent_name: str = ""
+        self._outputs: list = []          # (agent, latest output) in run order, for the summary lines
         self._graph_mode: str = cfg.get("graph_mode", "predefined")
         self._predefined_graph_name: str = cfg.get("predefined_graph", "aviary")
         self._custom_graph_data: dict | None = cfg.get("custom_graph")
@@ -452,7 +453,9 @@ class GraphRoutedHandler(ExecutionHandler):
             design_states=design_states or None,
         )
 
-        # 3. Initialize state dict.
+        # 3. Initialize state dict (and this graph run's outputs for the summary lines).
+        self._outputs = []
+        self._last_agent_name = ""
         self._state_dict = {
             "prompt_length": len(task.split()),
             "execution_success": False,
@@ -668,6 +671,9 @@ class GraphRoutedHandler(ExecutionHandler):
 
                 self._state_dict["last_agent_output"] = content
                 self._last_agent_name = getattr(agent, "name", None) or state_def.agent
+                if content.strip():
+                    self._outputs = [o for o in self._outputs if o[0] != self._last_agent_name]
+                    self._outputs.append((self._last_agent_name, content))
                 self._state_dict["attempt_history"].append(
                     {
                         "state": current_state,
@@ -870,12 +876,18 @@ class GraphRoutedHandler(ExecutionHandler):
         from src.coordination import prompt_assembly
 
         tasks = meta.get("assigned_tasks") or {}
-        task = tasks.get(getattr(agent, "name", None)) or tasks.get(state_def.agent) or ""
+        name = getattr(agent, "name", None) or state_def.agent
+        task = tasks.get(name) or tasks.get(state_def.agent) or ""
         out = self._state_dict.get("last_agent_output", "")
         previous = (self._last_agent_name, out) if out else None
+        # Every earlier agent's DESIGN_STATE as a summary line, and the orchestrator's stored messages for this
+        # agent (Jessica, 2026-10-11).
+        earlier = [o for o in self._outputs if o[0] != self._last_agent_name] if previous else []
+        inbox = (meta.get("inbox") or {}).pop(name, None)
         err = self._state_dict.get("last_error", "")
-        return prompt_assembly._join(prompt_assembly.worker_message(task, meta.get("system_text", ""), previous),
-                                     f"Previous error:\n{err}" if err else None)
+        return prompt_assembly._join(
+            prompt_assembly.worker_message(task, meta.get("system_text", ""), previous, earlier, inbox),
+            f"Previous error:\n{err}" if err else None)
 
     def _build_agent_context(
         self,

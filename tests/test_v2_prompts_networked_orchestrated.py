@@ -247,7 +247,9 @@ def test_an_agent_sees_only_the_persona_then_its_task_and_the_design_state():
     worker = s._agents["geometry_engineer"]
     worker.run(a.input_context)
     _, msgs, tools = [c for c in model.calls if c[0] == "worker"][0]
-    assert _roles(msgs) == ["system", "user"] and _text(msgs[0]) == "PERSONA TEXT"
+    contract = prompt_assembly.role_contracts(s._system_text)["geometry_engineer"]
+    assert _roles(msgs) == ["system", "user"] and _text(msgs[0]) == f"PERSONA TEXT\n\n{contract}"
+    assert contract.startswith("DELIVERABLE") and "CPACS_FILE:" in contract and "SESSION STATE FILE" in contract
     assert _text(msgs[1]) == a.input_context
     assert {"open_cpacs", "message_orchestrator", "read_design_json"} <= set(tools)
 
@@ -271,10 +273,10 @@ def test_an_agent_messages_the_orchestrator_which_grants_a_tool_and_replies():
     worker = s._agents["geometry_engineer"]
     worker.run(a.input_context)
     orch_calls = [c for c in model.calls if c[0] == "orchestrator"]
-    orch_turn = orch_calls[-2]                                    # give_tools, then reply_to_agent: the reply ends it
+    orch_turn = orch_calls[-3]                                    # give_tools, reply_to_agent, final_answer
     assert _text(orch_turn[1][-1]) == "MESSAGE from geometry_engineer:\nI need run_su2_solver"
     assert len(orch_turn[1]) > 2                                  # it kept its own earlier turns
-    assert len(who_queue["orchestrator"]) == 1                    # the queued final_answer was never needed
+    assert who_queue["orchestrator"] == []                        # a reply does not end the turn
     worker_second = [c for c in model.calls if c[0] == "worker"][1]
     assert "granted" in json.dumps([_text(m) for m in worker_second[1]])
     assert "run_su2_solver" in worker_second[2]                   # usable from its next step
@@ -367,22 +369,23 @@ def test_the_orchestrators_first_message_on_link_2_carries_the_recommendation(tm
 
 # ---- message turns end (v2no6, 2026-10-11) ----------------------------------------------------------
 
-def test_a_reply_to_an_agent_that_is_not_waiting_is_refused_and_the_turn_goes_on():
+def test_a_message_to_another_agent_is_kept_for_its_next_task():
     s, model, orch = _orchestrated()
     history = _build_team(s, orch)
     a = s.next_step(history, {"task": "RUNNER"})
-    s._context.agents["propulsion_analyst"] = s._context.agents["geometry_engineer"]
     who_queue["worker"] = [_call("message_orchestrator", {"message": "need the engine changed"}),
                            _call("final_answer", {"answer": "done"})]
     who_queue["orchestrator"] = [
-        _call("reply_to_agent", {"agent_name": "propulsion_analyst", "message": "change BPR"}),
-        _call("reply_to_agent", {"agent_name": "geometry_engineer", "message": "assigned to propulsion"})]
+        _call("reply_to_agent", {"agent_name": "propulsion_analyst", "message": "lower the BPR"}),
+        _call("reply_to_agent", {"agent_name": "geometry_engineer", "message": "asked propulsion"}),
+        _call("final_answer", {"answer": "ok"})]
     s._agents["geometry_engineer"].run(a.input_context)
-    orch_calls = [c for c in model.calls if c[0] == "orchestrator"]
-    refused = _text(orch_calls[-1][1][-1])
-    assert "Only geometry_engineer is waiting for a reply" in refused   # the refusal reached the orchestrator
-    worker_second = [c for c in model.calls if c[0] == "worker"][1]
-    assert "assigned to propulsion" in json.dumps([_text(m) for m in worker_second[1]])
+    worker = [c for c in model.calls if c[0] == "worker" and _text(c[1][0]).startswith("PERSONA TEXT")]
+    assert "asked propulsion" in json.dumps([_text(m) for m in worker[1][1]])     # the asker got its answer
+    assert s._context.inbox == {"propulsion_analyst": ["lower the BPR"]}           # kept, not refused
+    msg = s._verbatim_worker_input("PROP TASK", history, "propulsion_analyst")     # delivered with its next task
+    assert msg.startswith("PROP TASK\n\nMessages from the orchestrator:\n- lower the BPR\n\n")
+    assert "propulsion_analyst" not in s._context.inbox                          # delivered once
     assert s._context.message_sender is None and not s._context.in_message_turn
 
 
@@ -398,5 +401,73 @@ def test_a_message_turn_that_never_replies_stops_after_a_few_steps():
     s._agents["geometry_engineer"].run(a.input_context)
     used = len([c for c in model.calls if c[0] == "orchestrator"]) - before
     assert used <= MESSAGE_TURN_STEPS + 1                               # + smolagents' final summary call
-    worker = [c for c in model.calls if c[0] == "worker" and _text(c[1][0]) == "PERSONA TEXT"]
-    assert "The orchestrator did not reply." in json.dumps([_text(m) for m in worker[1][1]])
+    worker = [c for c in model.calls if c[0] == "worker" and _text(c[1][0]).startswith("PERSONA TEXT")]
+    assert ("The orchestrator did not reply. You can rephrase your question and send it again."
+            in json.dumps([_text(m) for m in worker[1][1]]))
+
+
+
+# ---- 2026-10-11: contract, placeholders, cumulative DESIGN_STATE --------------------------------------
+
+def test_the_prompt_sources_have_their_placeholders_filled():
+    for source, sections in SECTIONS.items():
+        for sec in sections:
+            assert "<<" not in prompt_assembly.system_text(source, sec), (source, sec)
+    assert "MASS_METHOD_USED: flops" in prompt_assembly.system_text("orchestrated.md", "orchestrated_staged_pipeline")
+
+
+def test_every_role_has_a_contract_with_its_design_state():
+    c = prompt_assembly.role_contracts(prompt_assembly.system_text("orchestrated.md", "orchestrated_graph_routed"))
+    assert set(c) == {"geometry_engineer", "aerodynamics_analyst", "structures_analyst", "propulsion_analyst",
+                      "mission_architect", "simulation_executor", "mdo_integrator"}
+    assert all(v.startswith("DELIVERABLE") and "DESIGN_STATE:" in v and "SESSION STATE FILE" in v for v in c.values())
+    assert "Use CPACS file at" in c["structures_analyst"]
+
+
+def test_an_agent_with_another_name_gets_no_contract():
+    s, model, orch = _orchestrated()
+    who_queue["orchestrator"] = [
+        _call("create_agent", {"name": "xml_editor", "persona": "EDITOR", "tools": ["open_cpacs"]}),
+        _call("final_answer", {"answer": "DELEGATION_COMPLETE"})]
+    orch.run(s.next_step([], {"task": "RUNNER"}).input_context)
+    assert s._agents["xml_editor"].instructions == "EDITOR"
+
+
+def test_outside_staged_an_agent_gets_every_earlier_design_state_as_a_line():
+    s, model, orch = _orchestrated()
+    hist = [AgentMessage(agent_name="orchestrator", content="DELEGATION_COMPLETE", turn_number=1, timestamp=0),
+            AgentMessage(agent_name="geometry_engineer", content="DESIGN_STATE:\n  CPACS_FILE: /x/D150.xml\n"
+                         "  WING_AREA_M2: 120.3", turn_number=2, timestamp=0),
+            AgentMessage(agent_name="aerodynamics_analyst", content='{"CL_CRUISE": 0.56, "CD_CRUISE": 0.04}',
+                         turn_number=3, timestamp=0)]
+    msg = s._verbatim_worker_input("STRUCT TASK", hist, "structures_analyst")
+    assert 'DESIGN_STATE from the agent that worked before you (aerodynamics_analyst):\n{"CL_CRUISE"' in msg
+    assert ("DESIGN_STATE summary of the agents before that:\n"
+            "  geometry_engineer: CPACS_FILE=/x/D150.xml, WING_AREA_M2=120.3") in msg
+
+
+def test_in_the_staged_pipeline_an_agent_gets_only_the_previous_design_state():
+    s, model, orch = _orchestrated("per_stage")
+    hist = [AgentMessage(agent_name="geometry_engineer", content="DESIGN_STATE:\n  CPACS_FILE: /x", turn_number=1,
+                         timestamp=0),
+            AgentMessage(agent_name="aerodynamics_analyst", content="DESIGN_STATE:\n  CL_CRUISE: 0.5",
+                         turn_number=2, timestamp=0)]
+    msg = s._verbatim_worker_input("T", hist, "structures_analyst")
+    assert "summary of the agents before that" not in msg and "CPACS_FILE: /x" not in msg
+
+
+def test_the_graph_handler_adds_the_summary_and_the_stored_messages():
+    from src.coordination.graph_routed_handler import GraphRoutedHandler
+
+    h = GraphRoutedHandler({"predefined_graph": "mdo_f25", "worker_input": "as_given"})
+    g = h._load_graph({})
+    h._resource_mgr = None
+    h._outputs = [("geometry_engineer", "DESIGN_STATE:\n  CPACS_FILE: /x"), ("aerodynamics_analyst", "CL ok")]
+    h._last_agent_name = "aerodynamics_analyst"
+    h._state_dict = {"last_agent_output": "CL ok", "last_error": ""}
+    agent = type("A", (), {"name": "structures_analyst"})()
+    inbox = {"structures_analyst": ["use the exported CPACS"]}
+    ctx = h._as_given_context(g.states["MASS_ESTIMATION"], agent,
+                              {"assigned_tasks": {"structures_analyst": "T"}, "system_text": "", "inbox": inbox})
+    assert ctx.startswith("T\n\nMessages from the orchestrator:\n- use the exported CPACS")
+    assert "  geometry_engineer: CPACS_FILE=/x" in ctx and inbox == {}

@@ -20,6 +20,7 @@ Modes:
     (SUCCESS/FAILED only)
 """
 
+import logging
 import re
 
 from src.coordination.completion_signal import signals_completion
@@ -41,7 +42,9 @@ from src.tools.orchestrator_tools import (
     _check_result_signals,
 )
 
-# Steps the orchestrator gets to answer an agent's message (a reply ends the turn sooner).
+logger = logging.getLogger(__name__)
+
+# Steps the orchestrator gets to answer an agent's message. Not shown to the orchestrator.
 MESSAGE_TURN_STEPS = 6
 
 # Sentinel used by _sync_orchestrator_tools to store the GatedFinalAnswer
@@ -237,6 +240,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             self._system_text = prompt_assembly.with_carried_cpacs(
                 prompt_assembly.system_text(config.get("_prompt_source") or "orchestrated.md", section))
             orchestrator_agent.instructions = self._system_text
+            self._role_contracts = prompt_assembly.role_contracts(self._system_text)
             orchestrator_agent.prompt_templates = prompt_assembly.verbatim_prompt_templates()
             orchestrator_agent.__class__ = prompt_assembly.make_agent_class()
         else:
@@ -283,6 +287,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             required_result_signals=config.get("_required_result_signals", []),
             lifecycle_mode=self._lifecycle_mode,
             verbatim=self._verbatim,
+            role_contracts=getattr(self, "_role_contracts", {}),
             ask_orchestrator=self._ask_orchestrator if self._verbatim else None,
         )
 
@@ -1022,12 +1027,23 @@ class OrchestratedStrategy(CoordinationStrategy):
                 prompt_assembly.design_json_block())
         return prompt_assembly._join(note, prompt_assembly.orchestrator_first_message(self._system_text))
 
-    def _verbatim_worker_input(self, task: str, history: list) -> str:
+    def _verbatim_worker_input(self, task: str, history: list, agent_name: str) -> str:
+        """The orchestrator's task, its stored messages to this agent, the previous agent's DESIGN_STATE in full;
+        outside the staged pipeline also every earlier agent's DESIGN_STATE as a summary line (Jessica, 2026-10-11)."""
         from src.coordination import prompt_assembly
 
         last = self._last_worker(history)
         previous = (last.agent_name, last.content or last.error or "") if last is not None else None
-        return prompt_assembly.worker_message(task, self._system_text, previous)
+        earlier = []
+        if previous is not None and self._lifecycle_mode != "per_stage":
+            seen = {last.agent_name}
+            for m in reversed(history[:history.index(last)]):
+                if (isinstance(m, AgentMessage) and m.agent_name != self._orchestrator_name
+                        and m.agent_name not in seen and (m.content or "").strip()):
+                    seen.add(m.agent_name)
+                    earlier.insert(0, (m.agent_name, m.content))
+        inbox = self._context.inbox.pop(agent_name, None) if self._context else None
+        return prompt_assembly.worker_message(task, self._system_text, previous, earlier, inbox)
 
     def _ask_orchestrator(self, sender: str, message: str) -> None:
         """An agent called message_orchestrator: the orchestrator gets the message and nothing else.
@@ -1042,19 +1058,16 @@ class OrchestratedStrategy(CoordinationStrategy):
         if thinking is not None:
             self._model.thinking_enabled = False
         self._context.in_message_turn = True
-        self._context.end_message_turn = orch.interrupt
         self._context.message_sender = sender
         orch.tools[_FINAL_ANSWER_KEY] = self._gated_final_answer
         try:
-            # A turn ends when the waiting agent is answered, or after MESSAGE_TURN_STEPS (v2no6: a turn that
-            # never replied ran the full 20 steps, re-queuing assignments each time).
+            # The turn is bounded by MESSAGE_TURN_STEPS, which the orchestrator is not told (Jessica, 2026-10-11);
+            # it may message several agents. v2no6: an unbounded turn ran 20 steps, re-queuing assignments.
             orch.run(f"MESSAGE from {sender}:\n{message}", reset=False, max_steps=MESSAGE_TURN_STEPS)
-        except Exception as exc:   # the reply interrupts the run (smolagents raises AgentError "Agent interrupted.")
-            if "interrupted" not in str(exc).lower():
-                raise
+        except Exception as exc:   # the asking agent then gets NO_REPLY rather than an error inside its tool call
+            logger.warning("message turn for %s ended with %s", sender, exc)
         finally:
             self._context.in_message_turn = False
-            self._context.end_message_turn = None
             self._context.message_sender = None
             self._sync_orchestrator_tools()
             if thinking is not None:
@@ -1189,7 +1202,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             else match['task']
         )
         if self._verbatim:
-            input_context = self._verbatim_worker_input(match["task"], history)
+            input_context = self._verbatim_worker_input(match["task"], history, match["agent_name"])
 
         return CoordinationAction(
             action_type="invoke_agent",
@@ -1265,6 +1278,7 @@ class OrchestratedStrategy(CoordinationStrategy):
                 raw_task = ""
                 metadata["assigned_tasks"] = {a["agent_name"]: a["task"] for a in assignments}
                 metadata["system_text"] = self._system_text
+                metadata["inbox"] = self._context.inbox          # the same dict: messages stored mid-graph arrive
             return CoordinationAction(
                 action_type="invoke_agent",
                 agent_name=assignment["agent_name"],
@@ -1276,7 +1290,7 @@ class OrchestratedStrategy(CoordinationStrategy):
             return CoordinationAction(
                 action_type="invoke_agent",
                 agent_name=assignment["agent_name"],
-                input_context=self._verbatim_worker_input(assignment["task"], history),
+                input_context=self._verbatim_worker_input(assignment["task"], history, assignment["agent_name"]),
                 metadata={"phase": "execution", "assignment_index": self._execution_index},
             )
 

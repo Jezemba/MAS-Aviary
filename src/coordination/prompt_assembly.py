@@ -17,6 +17,7 @@ block), which is how tool calling works; they are not repeated as prose.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -254,7 +255,11 @@ def system_text(source: str, section: str) -> str:
     m = re.search(rf"^## {re.escape(section)}\s*\n+```[^\n]*\n(.*?)^```", text, flags=re.M | re.S)
     if not m:
         raise ValueError(f"{source} has no section '## {section}'")
-    return m.group(1).strip("\n")
+    # Her text carries the study's placeholders (<<WING_MASS_METHOD>>, <<MATERIAL>>, ...); the sequential YAML
+    # fills them at load, so these must too (found 2026-10-11: the literal placeholders reached the model).
+    from src.config.canonical import substitute_text
+
+    return substitute_text(m.group(1).strip("\n"))
 
 
 def with_carried_cpacs(text: str) -> str:
@@ -396,10 +401,53 @@ def orchestrator_first_message(system: str, stage: str | None = None) -> str:
     return _join(stage, starting_design_state(system), design_json_block())
 
 
-def worker_message(task: str, system: str, previous: tuple[str, str] | None) -> str:
-    """An orchestrated agent's message: the orchestrator's task, then the DESIGN_STATE as data."""
+def role_contracts(system: str) -> dict:
+    """Each role template's block from DELIVERABLE to its end (DESIGN_STATE, SESSION STATE FILE), by role name.
+
+    Jessica, 2026-10-11: attached by the framework to every agent the orchestrator creates under that name,
+    so the orchestrator cannot drop the DESIGN_STATE contract or the CPACS line from a persona.
+    """
+    parts = re.split(r"^AGENT NAME: (\w+)\n", system or "", flags=re.M)
+    out = {}
+    for i in range(1, len(parts) - 1, 2):
+        body = parts[i + 1]
+        k = body.find("DELIVERABLE")
+        if k >= 0:
+            out[parts[i]] = body[k:].strip("\n")
+    return out
+
+
+SUMMARY_LINE_CHARS = 400
+_STATE_LINE = re.compile(r"^\s*([A-Z][A-Z0-9_]{2,})\s*:\s*(.+?)\s*$")
+
+
+def summary_line(name: str, output: str) -> str:
+    """One line for an earlier agent: its DESIGN_STATE fields (KEY=value), else the start of its answer."""
+    fields = []
+    text = (output or "").strip()
+    try:
+        data = json.loads(text[text.index("{"):]) if "{" in text else None
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        fields = [f"{k}={v}" for k, v in data.items() if not isinstance(v, (dict, list))]
+    if not fields:
+        fields = [f"{m.group(1)}={m.group(2)}" for m in map(_STATE_LINE.match, text.splitlines()) if m]
+    line = ", ".join(fields) if fields else " ".join(text.split())
+    if len(line) > SUMMARY_LINE_CHARS:
+        line = line[:SUMMARY_LINE_CHARS] + "..."
+    return f"  {name}: {line}"
+
+
+def worker_message(task: str, system: str, previous: tuple[str, str] | None,
+                   earlier: list[tuple[str, str]] | None = None, inbox: list[str] | None = None) -> str:
+    """An orchestrated agent's message: the orchestrator's task, its stored messages to this agent, then the
+    DESIGN_STATE as data -- the previous agent's in full and (iterative, graph) every earlier one as a line."""
+    messages = ("Messages from the orchestrator:\n" + "\n".join(f"- {m}" for m in inbox)) if inbox else None
     if previous is None:
-        return _join(task, starting_design_state(system), design_json_block())
+        return _join(task, messages, starting_design_state(system), design_json_block())
     name, output = previous
-    return _join(task, f"DESIGN_STATE from the agent that worked before you ({name}):\n{output}",
-                 sessions_block(), design_json_block())
+    summary = ("DESIGN_STATE summary of the agents before that:\n" + "\n".join(summary_line(n, o) for n, o in earlier)
+               if earlier else None)
+    return _join(task, messages, f"DESIGN_STATE from the agent that worked before you ({name}):\n{output}",
+                 summary, sessions_block(), design_json_block())
