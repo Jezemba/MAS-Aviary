@@ -233,3 +233,127 @@ class TestParseToolCalls:
         msg = self._make_message(text)
         result = model.parse_tool_calls(msg)
         assert result.tool_calls[0].function.arguments == {"message": "hi"}
+
+
+# ---- llm.enable_thinking reaches the model and its chat template (2026-10-12) ----
+
+def test_loader_sets_the_thinking_flag_and_the_template_follows_it(monkeypatch):
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    class _Stub:                                   # stands in for ThinkingModel: no weights are loaded
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.thinking_enabled = True
+
+    monkeypatch.setattr(model_loader, "ThinkingModel", _Stub)
+    assert model_loader._build_model(LLMConfig(model_id="m", enable_thinking=False)).thinking_enabled is False
+    assert model_loader._build_model(LLMConfig(model_id="m")).thinking_enabled is True
+    assert (model_loader._cache_key(LLMConfig(model_id="m", enable_thinking=False))
+            != model_loader._cache_key(LLMConfig(model_id="m")))
+
+    m = ThinkingModel.__new__(ThinkingModel)        # the real flag -> template path, without __init__
+    m.apply_chat_template_kwargs = {}
+    m._thinking_enabled = False
+    assert m.apply_chat_template_kwargs == {"enable_thinking": False}
+    m._thinking_enabled = True
+    assert "enable_thinking" not in m.apply_chat_template_kwargs
+
+
+# ---- Granite 4.2 XML tool calls (ibm-granite/granite-4.2-30b chat template, 2026-10-12) ----
+
+def _bare_model():
+    m = ThinkingModel.__new__(ThinkingModel)        # parse_tool_calls only needs the key names
+    m.tool_name_key, m.tool_arguments_key = "name", "arguments"
+    return m
+
+
+def _parse(text):
+    from smolagents.models import ChatMessage, MessageRole
+    return _bare_model().parse_tool_calls(ChatMessage(role=MessageRole.ASSISTANT, content=text)).tool_calls[0].function
+
+
+def test_granite_xml_tool_call_is_parsed():
+    f = _parse("I will set the wing.\n<tool_call>\n<function=set_high_level_parameters>\n"
+               "<parameter=session_id>\nabc-123\n</parameter>\n<parameter=component_uid>\nWing1\n</parameter>\n"
+               '<parameter=updates>\n{"sweep": 25, "area": 130.5}\n</parameter>\n</function>\n</tool_call>')
+    assert f.name == "set_high_level_parameters"
+    assert f.arguments == {"session_id": "abc-123", "component_uid": "Wing1", "updates": {"sweep": 25, "area": 130.5}}
+
+
+def test_granite_xml_values_keep_types_and_multiline_text():
+    f = _parse("<think></think><tool_call>\n<function=final_answer>\n<parameter=answer>\nDESIGN_STATE:\n"
+               "  FUEL_KG: 1\n  VERDICT: CONTINUE\n</parameter>\n</function>\n</tool_call>")
+    assert f.name == "final_answer" and f.arguments == {"answer": "DESIGN_STATE:\n  FUEL_KG: 1\n  VERDICT: CONTINUE"}
+    g = _parse("<tool_call>\n<function=run_simulation>\n<parameter=session_id>\ns1\n</parameter>\n"
+               "<parameter=timeout_seconds>\n300\n</parameter>\n</function>\n</tool_call>")
+    assert g.arguments == {"session_id": "s1", "timeout_seconds": 300}
+
+
+def test_json_tool_calls_are_unchanged():
+    f = _parse('<tool_call>\n{"name": "open_cpacs", "arguments": {"source_type": "path", "source": "/x.xml"}}\n</tool_call>')
+    assert f.name == "open_cpacs" and f.arguments == {"source_type": "path", "source": "/x.xml"}
+    with pytest.raises(ValueError):
+        _parse("no tool call here")
+
+
+# ---- litellm kwargs for OpenAI reasoning models (gpt-6.1-sol rejects max_tokens and temperature != 1) ----
+
+def test_openai_reasoning_models_get_max_completion_tokens_and_no_temperature(monkeypatch):
+    import smolagents
+
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    seen = {}
+
+    class _Stub:                                        # stands in for LiteLLMModel: no API call is made
+        def __init__(self, **kwargs):
+            seen.clear(); seen.update(kwargs)
+
+    monkeypatch.setattr(smolagents, "LiteLLMModel", _Stub)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    for mid in ("openai/gpt-6.1-sol", "openai/gpt-5", "openai/o3", "gpt-6-luna"):
+        model_loader._build_model(LLMConfig(model_id=mid, backend="litellm", max_new_tokens=4096, temperature=0.3))
+        assert seen.get("max_completion_tokens") == 4096 and "max_tokens" not in seen and "temperature" not in seen, mid
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-4.1", backend="litellm", max_new_tokens=4096, temperature=0.3))
+    assert seen.get("max_tokens") == 4096 and seen.get("temperature") == 0.3 and "max_completion_tokens" not in seen
+
+
+def test_openai_reasoning_models_are_sent_no_stop_sequences(monkeypatch):
+    """gpt-6.1-sol rejects `stop`; smolagents 1.24's own check only knows o3/o4/gpt-5*."""
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    for mid, expected in (("openai/gpt-6.1-sol", False), ("openai/gpt-5", False), ("openai/o3", False),
+                          ("openai/gpt-4.1", True), ("anthropic/claude-x", True)):
+        m = model_loader._build_model(LLMConfig(model_id=mid, backend="litellm", max_new_tokens=64))
+        assert m.supports_stop_parameter is expected, mid
+        kw = m._prepare_completion_kwargs(messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+                                          stop_sequences=["Observation:"])
+        assert ("stop" in kw) is expected, mid
+
+
+def test_gpt6_goes_through_the_responses_api_with_the_thinking_switch(monkeypatch):
+    import smolagents
+
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    seen = {}
+
+    class _Stub:
+        def __init__(self, **kwargs):
+            seen.clear(); seen.update(kwargs)
+
+    monkeypatch.setattr(smolagents, "LiteLLMModel", _Stub)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", enable_thinking=False))
+    assert seen["model_id"] == "openai/responses/gpt-6.1-sol" and seen["reasoning_effort"] == "low"
+    assert seen["allowed_openai_params"] == ["reasoning_effort"] and "temperature" not in seen
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", reasoning_effort="high"))
+    assert seen["reasoning_effort"] == "high"
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-5", backend="litellm"))
+    assert seen["model_id"] == "openai/gpt-5" and "reasoning_effort" not in seen      # gpt-5: unchanged route
+    assert model_loader._is_openai_reasoning("openai/responses/gpt-6.1-sol")

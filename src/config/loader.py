@@ -19,6 +19,10 @@ class LLMConfig:
     max_new_tokens: int = 1024
     temperature: float = 0.7
     reasoning_effort: str = "medium"
+    # Qwen3 thinking mode for the transformers backend (Jessica, 2026-10-12: measure the pipeline without it).
+    # True keeps the model's default (<think> on); False renders every call with enable_thinking=False.
+    # Env override: MAS_AVIARY_ENABLE_THINKING=0/1. Strategies that set it per agent (orchestrated) still do.
+    enable_thinking: bool = True
     reliability: dict = field(default_factory=dict)
     # Extra kwargs forwarded verbatim to transformers' from_pretrained (local
     # backend only). Needed for multi-GPU placement: device_map "balanced"
@@ -133,6 +137,7 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         MAS_AVIARY_MASS_URL — overrides URL for server named "mass"
         MAS_AVIARY_PYCYCLE_URL — overrides URL for server named "pycycle"
         MAS_AVIARY_AVIARY_URL — overrides URL for server named "aviary"
+        MAS_AVIARY_ENABLE_THINKING — overrides llm.enable_thinking ("0"/"false"/"no"/"off" = off)
     """
     mcp_url = os.environ.get("MAS_AVIARY_MCP_URL")
     if mcp_url:
@@ -152,6 +157,10 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     api_base = os.environ.get("MAS_AVIARY_API_BASE")
     if api_base:
         config.llm.api_base = api_base
+
+    thinking = os.environ.get("MAS_AVIARY_ENABLE_THINKING")
+    if thinking is not None and thinking.strip():
+        config.llm.enable_thinking = thinking.strip().lower() not in ("0", "false", "no", "off")
 
     # Per-server URL overrides (multi-MCP support).
     server_by_name = {s.name: s for s in config.mcp.servers if s.name}

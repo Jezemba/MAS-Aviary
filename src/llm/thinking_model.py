@@ -58,6 +58,35 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _HARMONY_TOOL_RE = re.compile(r"to\s*=\s*(?:functions?\.)([A-Za-z_][A-Za-z0-9_]*)")
 
 
+_XML_CALL_RE = re.compile(r"<function=([^>\s]+)\s*>(.*?)</function>", re.DOTALL)
+_XML_PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>(.*?)</parameter>", re.DOTALL)
+
+
+def _find_xml_tool_call(text: str, name_key: str = "name", arguments_key: str = "arguments") -> dict | None:
+    """The first XML-style tool call in *text*, as {name_key: NAME, arguments_key: {K: V}}, or None.
+
+    Granite 4.2's chat template (ibm-granite/granite-4.2-30b, 2026-10-12) tells the model to call a
+    function as ``<tool_call>\\n<function=NAME>\\n<parameter=K>\\nV\\n</parameter>\\n</function>\\n</tool_call>``.
+    A value that is valid JSON (number, bool, null, object, array, quoted string) is decoded as JSON;
+    anything else is kept as the string between the tags, without the template's surrounding newlines.
+    """
+    m = _XML_CALL_RE.search(text or "")
+    if not m:
+        return None
+    arguments: dict[str, Any] = {}
+    for p in _XML_PARAM_RE.finditer(m.group(2)):
+        raw = p.group(2)
+        if raw.startswith("\n"):
+            raw = raw[1:]
+        if raw.endswith("\n"):
+            raw = raw[:-1]
+        try:
+            arguments[p.group(1)] = json.loads(raw)
+        except ValueError:
+            arguments[p.group(1)] = raw
+    return {name_key: m.group(1).strip(), arguments_key: arguments}
+
+
 def _find_tool_call_json(
     text: str,
     name_key: str = "name",
@@ -494,12 +523,21 @@ class ThinkingModel(TransformersModel):
             # 1. Strip <think>...</think> blocks.
             cleaned = strip_think_blocks(message.content)
 
-            # 2. Extract the tool-call JSON using the robust parser.
-            tool_dict = _find_tool_call_json(
-                cleaned,
-                name_key=self.tool_name_key,
-                arguments_key=self.tool_arguments_key,
-            )
+            # 2. Extract the tool-call JSON using the robust parser. Granite 4.2's chat template asks
+            #    for an XML call instead (<function=NAME><parameter=K>V</parameter></function>); it is
+            #    read only when the text has one and no JSON call is found, so JSON models are unchanged.
+            try:
+                tool_dict = _find_tool_call_json(
+                    cleaned,
+                    name_key=self.tool_name_key,
+                    arguments_key=self.tool_arguments_key,
+                )
+                if tool_dict.get(self.tool_name_key) is None and "<function=" in cleaned:
+                    tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key) or tool_dict
+            except ValueError:
+                tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key)
+                if tool_dict is None:
+                    raise
 
             tool_name = tool_dict.get(self.tool_name_key)
             if tool_name is None:

@@ -10,6 +10,7 @@ Supports three backends:
 """
 
 import json
+import re
 import logging
 import os
 
@@ -20,6 +21,21 @@ from src.llm.reliability import ReliabilityConfig
 from src.llm.thinking_model import ThinkingModel
 
 logger = logging.getLogger(__name__)
+
+
+# OpenAI's reasoning families (gpt-5*, gpt-6*, o1/o3/o4) reject `max_tokens` ("Use 'max_completion_tokens'
+# instead"), any temperature but the default 1, and `stop` -- measured on aipexws8 2026-10-12 against
+# openai/gpt-6.1-sol, which the pinned litellm 1.83 / smolagents 1.24 do not know (smolagents' own
+# supports_stop_parameter stops at gpt-5*), so neither can translate or drop them itself.
+_OPENAI_REASONING_RE = re.compile(r"^(openai/)?(responses/)?(gpt-[5-9]|o[1-9])")
+# gpt-6* on /v1/chat/completions refuses function tools unless reasoning_effort is 'none', and then refuses
+# 'none' ("Supported values are: 'low', 'medium', 'high', and 'xhigh'") -- so it must go through the
+# Responses API, which litellm reaches with the "openai/responses/" prefix (same date, same model).
+_OPENAI_RESPONSES_RE = re.compile(r"^(openai/)?(responses/)?gpt-[6-9]")
+
+
+def _is_openai_reasoning(model_id: str) -> bool:
+    return bool(_OPENAI_REASONING_RE.match((model_id or "").lower()))
 
 
 def _pick_litellm_api_key(model_id: str) -> str | None:
@@ -59,7 +75,7 @@ _MODEL_CACHE: dict[tuple, Model] = {}
 def _cache_key(config: LLMConfig) -> tuple:
     return (
         config.backend, config.model_id, config.device_map, config.torch_dtype,
-        config.max_new_tokens, config.temperature, config.api_base,
+        config.max_new_tokens, config.temperature, config.api_base, getattr(config, "enable_thinking", True),
         json.dumps(config.reliability or {}, sort_keys=True),
         json.dumps(config.model_kwargs or {}, sort_keys=True, default=str),
     )
@@ -159,6 +175,12 @@ def _build_model(config: LLMConfig) -> Model:
             returned 0 for the networked structure.
             """
 
+            @property
+            def supports_stop_parameter(self) -> bool:  # type: ignore[override]
+                if _is_openai_reasoning(self.model_id or ""):
+                    return False
+                return super().supports_stop_parameter
+
             def generate(self, *args, **kwargs):  # type: ignore[override]
                 msg = super().generate(*args, **kwargs)
                 try:
@@ -176,12 +198,20 @@ def _build_model(config: LLMConfig) -> Model:
         # So omit temperature entirely for those; keep it for models that accept it.
         _NO_SAMPLING = ("opus-5", "opus-4-8", "opus-4-7", "fable-5", "mythos-5", "sonnet-5")
         mid = (config.model_id or "").lower()
+        openai_reasoning = _is_openai_reasoning(mid)
         kwargs = {
             "model_id": config.model_id,
             "api_key": config.api_key or _pick_litellm_api_key(config.model_id),
-            "max_tokens": config.max_new_tokens,
         }
-        if not any(s in mid for s in _NO_SAMPLING):
+        kwargs["max_completion_tokens" if openai_reasoning else "max_tokens"] = config.max_new_tokens
+        if _OPENAI_RESPONSES_RE.match(mid):
+            bare = re.sub(r"^(openai/)?(responses/)?", "", config.model_id)
+            kwargs["model_id"] = f"openai/responses/{bare}"
+            # llm.enable_thinking=False -> the lowest effort this family accepts ('none' is refused);
+            # litellm 1.83 does not know the model, so the parameter is allowed through explicitly.
+            kwargs["reasoning_effort"] = (config.reasoning_effort or "medium") if getattr(config, "enable_thinking", True) else "low"
+            kwargs["allowed_openai_params"] = ["reasoning_effort"]
+        if not any(s in mid for s in _NO_SAMPLING) and not openai_reasoning:
             kwargs["temperature"] = config.temperature
         return CostTrackingLiteLLMModel(**kwargs)
 
@@ -214,4 +244,8 @@ def _build_model(config: LLMConfig) -> Model:
         model_kwargs.setdefault("dtype", config.torch_dtype)
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
-    return ThinkingModel(**kwargs)
+    model = ThinkingModel(**kwargs)
+    # llm.enable_thinking (default True = the model's own default). Every call reads this flag unless a
+    # strategy sets it per agent or per call.
+    model.thinking_enabled = bool(getattr(config, "enable_thinking", True))
+    return model

@@ -658,11 +658,13 @@ MDO_F25_CONSTRAINTS = {"fuel_burned_kg": 15000.0, "gtow_kg": 90000.0}
 
 
 
-def measured_fuel_from_kb(kb_path) -> float | None:
+def measured_fuel_from_kb(kb_path, attempt: int | None = None) -> float | None:
     """The fuel burn of the LAST mission this link actually flew, from its knowledge base (B102).
 
     Only a `run_simulation` / `get_results` call recorded with status `success` counts. Anything else --
     a number in the agents' text, the constraint bound echoed from the task -- is not a measurement.
+    B179: the file holds every runner attempt of the link; with ``attempt`` only that attempt counts,
+    so a retried link is not credited with an earlier attempt's mission.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -678,6 +680,8 @@ def measured_fuel_from_kb(kb_path) -> float | None:
             continue
         if entry.get("tool") not in ("run_simulation", "get_results") or entry.get("status") != "success":
             continue
+        if attempt is not None and entry.get("attempt") not in (None, attempt):
+            continue
         outputs = entry.get("outputs") or {}
         for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
             if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
@@ -689,7 +693,7 @@ def measured_fuel_from_kb(kb_path) -> float | None:
     return measured
 
 
-def reconcile_measured_fuel(result, result_dict: dict, kb_path) -> str:
+def reconcile_measured_fuel(result, result_dict: dict, kb_path, attempt: int | None = None) -> str:
     """Make the link's reported fuel the one its missions actually produced (B102).
 
     validate15 recorded eval_classification/fuel_burned_kg = 15000.0 for a link whose five
@@ -699,7 +703,7 @@ def reconcile_measured_fuel(result, result_dict: dict, kb_path) -> str:
 
     Returns the source now behind the figure: "run_simulation", "not_measured" or "zero_fuel".
     """
-    measured = measured_fuel_from_kb(kb_path)
+    measured = measured_fuel_from_kb(kb_path, attempt)
     ec_obj = getattr(result, "eval_classification", None)
     ec_dict = result_dict.get("eval_classification")
     targets = [d for d in (ec_obj, ec_dict) if isinstance(d, dict)]
@@ -1537,7 +1541,7 @@ def run_stat_batch(
                     # before result.json, the zero-fuel check and the next link's feedback read it.
                     reconcile_measured_fuel(
                         result, result_dict,
-                        out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl")
+                        out_path / f"repeat_{repeat_idx:03d}" / combo.name / "knowledge_base.jsonl", attempt)
                     result_dict["repeat_index"] = repeat_idx
                     if infeasible:
                         result_dict["infeasible_design"] = infeasible
