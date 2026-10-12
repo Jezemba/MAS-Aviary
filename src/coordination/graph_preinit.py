@@ -129,7 +129,7 @@ def _compute_baseline(cpacs: str, mission: dict) -> None:
 def prepare(carry_over: dict | None) -> dict:
     """Open the sessions and load (or compute) the discipline results for this link. Never raises."""
     from src.config.canonical import load_canonical
-    from src.tools.design_json import design_path, write_design
+    from src.tools.design_json import write_design
     from src.tools.data_plane import get_design_state
 
     report: dict = {}
@@ -152,12 +152,19 @@ def prepare(carry_over: dict | None) -> dict:
             else:
                 report["results"] = "baseline computed now (first run for this CPACS)"
                 _compute_baseline(cpacs, mission)
-                write_design(get_design_state())
-                path = design_path()
-                if path and Path(path).is_file():
+                # Cache what was just computed, built from the design state itself -- not read back from
+                # design.json, which something else may have written (the hand-off sandbox keeps a recorded
+                # one in place, and an earlier cache held that recorded design instead of the baseline).
+                from src.tools.design_json import build_design
+
+                state = get_design_state()
+                doc = build_design(state.data_store or {}, state.sessions or {})
+                if (doc.get("aero") or {}).get("cl_cruise") is not None:
                     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    cache.write_text(Path(path).read_text())
+                    cache.write_text(json.dumps(doc, indent=1, default=str))
                     report["cached_as"] = cache.name
+                else:
+                    report["cache_skipped"] = "the baseline SU2 solve produced no CL/CD"
         write_design(get_design_state())
     except Exception as exc:  # pragma: no cover - pre-init must not stop a link; the agents can still work
         logger.warning("[graph pre-init] %s", exc)
