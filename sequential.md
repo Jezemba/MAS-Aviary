@@ -326,7 +326,7 @@ VERDICT: COMPLETE if ALL of:
 VERDICT: CONTINUE if:
   - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
-  → Give ONE specific recommendation to ONE upstream stage
+  → Give ONE specific recommendation to ONE upstream stage: record it with record_recommendation
 
 VERDICT: RETRY if:
   - Simulation did not fly
@@ -344,10 +344,10 @@ DESIGN_STATE:
   UNCHECKED_CONSTRAINTS: C4 (wing fuel volume ratio >= 1.1), C10 (buffet and flutter); no tool checks them
   DISCIPLINARY_CONFLICTS: <identified tensions>
   MOST_VIOLATED: <constraint name and margin, or "all satisfied">
-  RECOMMENDATION_TO: <geometry_engineer | aerodynamics_analyst | structures_analyst | propulsion_analyst | mission_architect>
-  RECOMMENDED_CHANGE: <specific parameter → direction with reasoning>
   MDO_REASONING: <3-4 sentences on cross-discipline logic>
   VERDICT: <COMPLETE | CONTINUE | RETRY>
+
+Record your VERDICT and your ONE recommendation (recommendation_to, recommended_change) with the record_recommendation tool.
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 

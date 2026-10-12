@@ -77,7 +77,7 @@ After the agent runs you see the DESIGN_STATE it produced and decide: run that s
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
 
 RECOMMENDATIONS
-Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
+Your mdo_integrator ends each iteration with a verdict and one recommendation (recorded with record_recommendation). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to record how it implemented the recommendation with respond_to_recommendation and report it to you with message_orchestrator, and pass that on to the mdo_integrator in its task.
 
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.
@@ -349,7 +349,7 @@ VERDICT: COMPLETE if ALL of:
 VERDICT: CONTINUE if:
   - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
-  -> Give ONE specific recommendation to ONE other role
+  -> Give ONE specific recommendation to ONE other role: record it with record_recommendation
 
 VERDICT: RETRY if:
   - Simulation did not fly
@@ -367,10 +367,10 @@ DESIGN_STATE:
   UNCHECKED_CONSTRAINTS: C4 (wing fuel volume ratio >= 1.1), C10 (buffet and flutter); no tool checks them
   DISCIPLINARY_CONFLICTS: <identified tensions>
   MOST_VIOLATED: <constraint name and margin, or "all satisfied">
-  RECOMMENDATION_TO: <geometry_engineer | aerodynamics_analyst | structures_analyst | propulsion_analyst | mission_architect>
-  RECOMMENDED_CHANGE: <specific parameter -> direction with reasoning>
   MDO_REASONING: <3-4 sentences on cross-discipline logic>
   VERDICT: <COMPLETE | CONTINUE | RETRY>
+
+Record your VERDICT and your ONE recommendation (recommendation_to, recommended_change) with the record_recommendation tool.
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
@@ -451,7 +451,7 @@ If no simulation succeeds, you are called again with what each agent produced, a
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
 
 RECOMMENDATIONS
-Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
+Your mdo_integrator ends each iteration with a verdict and one recommendation (recorded with record_recommendation). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to record how it implemented the recommendation with respond_to_recommendation and report it to you with message_orchestrator, and pass that on to the mdo_integrator in its task.
 
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.
@@ -723,7 +723,7 @@ VERDICT: COMPLETE if ALL of:
 VERDICT: CONTINUE if:
   - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
-  -> Give ONE specific recommendation to ONE other role
+  -> Give ONE specific recommendation to ONE other role: record it with record_recommendation
 
 VERDICT: RETRY if:
   - Simulation did not fly
@@ -741,10 +741,10 @@ DESIGN_STATE:
   UNCHECKED_CONSTRAINTS: C4 (wing fuel volume ratio >= 1.1), C10 (buffet and flutter); no tool checks them
   DISCIPLINARY_CONFLICTS: <identified tensions>
   MOST_VIOLATED: <constraint name and margin, or "all satisfied">
-  RECOMMENDATION_TO: <geometry_engineer | aerodynamics_analyst | structures_analyst | propulsion_analyst | mission_architect>
-  RECOMMENDED_CHANGE: <specific parameter -> direction with reasoning>
   MDO_REASONING: <3-4 sentences on cross-discipline logic>
   VERDICT: <COMPLETE | CONTINUE | RETRY>
+
+Record your VERDICT and your ONE recommendation (recommendation_to, recommended_change) with the record_recommendation tool.
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 
@@ -825,7 +825,7 @@ If no simulation succeeds, you are called again with what each agent produced, a
 Your agents can message you with message_orchestrator, for example to ask for another agent or a tool. Answer with reply_to_agent; you may grant the request with your tools or decline it.
 
 RECOMMENDATIONS
-Your mdo_integrator ends each iteration with a verdict and one recommendation (RECOMMENDATION_TO, RECOMMENDED_CHANGE). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to report to you with message_orchestrator how it implemented the recommendation, and pass that on to the mdo_integrator in its task.
+Your mdo_integrator ends each iteration with a verdict and one recommendation (recorded with record_recommendation). On the next iteration your first message carries its DESIGN_STATE. Acting on the recommendation is your job: decide which agent should carry it out -- the integrator may name one role when the change belongs to another, for example the aerodynamics analyst when it is really a geometry change -- and put the recommendation in that agent's task. Tell that agent to record how it implemented the recommendation with respond_to_recommendation and report it to you with message_orchestrator, and pass that on to the mdo_integrator in its task.
 
 YOUR TOOLS
 - list_available_tools: every tool you can hand to an agent, with its description.
@@ -1098,7 +1098,7 @@ VERDICT: COMPLETE if ALL of:
 VERDICT: CONTINUE if:
   - Simulation flew but some constraints violated
   - OR optimality gap > 5% and improving
-  -> Give ONE specific recommendation to ONE other role
+  -> Give ONE specific recommendation to ONE other role: record it with record_recommendation
 
 VERDICT: RETRY if:
   - Simulation did not fly
@@ -1116,10 +1116,10 @@ DESIGN_STATE:
   UNCHECKED_CONSTRAINTS: C4 (wing fuel volume ratio >= 1.1), C10 (buffet and flutter); no tool checks them
   DISCIPLINARY_CONFLICTS: <identified tensions>
   MOST_VIOLATED: <constraint name and margin, or "all satisfied">
-  RECOMMENDATION_TO: <geometry_engineer | aerodynamics_analyst | structures_analyst | propulsion_analyst | mission_architect>
-  RECOMMENDED_CHANGE: <specific parameter -> direction with reasoning>
   MDO_REASONING: <3-4 sentences on cross-discipline logic>
   VERDICT: <COMPLETE | CONTINUE | RETRY>
+
+Record your VERDICT and your ONE recommendation (recommendation_to, recommended_change) with the record_recommendation tool.
 
 IF YOU ARE UNSURE WHETHER SOMETHING IS POSSIBLE, LOOK FOR A TOOL FIRST rather than guessing a value.
 

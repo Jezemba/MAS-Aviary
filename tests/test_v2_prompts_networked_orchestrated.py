@@ -332,7 +332,8 @@ def test_every_orchestrator_prompt_routes_the_recommendation():
     for sec in SECTIONS["orchestrated.md"]:
         t = prompt_assembly.system_text("orchestrated.md", sec)
         assert "RECOMMENDATIONS\nYour mdo_integrator ends each iteration" in t
-        assert "report to you with message_orchestrator how it implemented the recommendation" in t
+        assert "record how it implemented the recommendation with respond_to_recommendation" in t
+        assert "recorded with record_recommendation" in t
 
 
 def test_the_next_link_carries_the_mdo_integrators_text_not_another_agents():

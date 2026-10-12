@@ -111,3 +111,15 @@ def test_the_reminder_gate_is_off_by_default(monkeypatch):
     with pytest.raises(ac.MissingRecordedRecommendation):
         ac.recommendation_recorded_before_finish("x", None, agent)
     assert ac.recommendation_recorded_before_finish("x", None, agent) is True    # reminded once only
+
+
+def test_her_prompts_ask_for_the_tool_not_the_text_fields():
+    """Jessica, 2026-10-12: the old text-field way is removed from the prompts; the tool replaces it."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for name in ("sequential.md", "orchestrated.md", "networked.md", "config/mdo_f25_sequential_agents.yaml"):
+        text = (root / name).read_text()
+        assert "RECOMMENDATION_TO: <" not in text and "RECOMMENDED_CHANGE: <" not in text, name
+        assert "with the record_recommendation tool." in text, name
+        assert text.count("VERDICT: <COMPLETE | CONTINUE | RETRY>") >= 1, name
