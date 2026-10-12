@@ -17,8 +17,11 @@ block), which is how tool calling works; they are not repeated as prose.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 FRAMEWORK = "framework"
 VERBATIM = "verbatim"
@@ -144,7 +147,34 @@ def parse_recommendation(integrator_text: str | None) -> dict:
         m = re.search(rf"^\s*{key}\s*:\s*(.+)$", text, flags=re.M)
         if m:
             found[key] = m.group(1).strip().strip("'\"")
+    # B177 (aipexws8 v2ifb2, 2026-10-11): the integrator wrote markdown instead of the KEY: lines --
+    # "**RECOMMENDED CHANGE:**" / "- **Recommendation To:** propulsion_analyst" / "- **Parameter Adjustment:**
+    # ..." -- so nothing was found and no agent of link 2 received the recommendation. Only when the exact
+    # forms above found nothing: the same keys case-insensitively, with spaces or underscores, markdown bold
+    # and list/heading markers around them; an alias with no value on its line (a heading) is skipped.
+    for key, aliases in _RECOMMENDATION_ALIASES.items():
+        if key in found:
+            continue
+        for alias in aliases:
+            value = next((v for v in (_md_value(m.group(1)) for m in re.finditer(
+                rf"^[\s>#*\-+\d.)]*\**\s*{alias}\s*\**\s*[:=]\s*\**(.*)$", text, flags=re.M | re.I)) if v), None)
+            if value:
+                found[key] = value
+                break
     return found
+
+
+# Spellings tried, in order, after the exact KEY forms (B177). Word separators may be a space, "_" or "-".
+_RECOMMENDATION_ALIASES = {
+    "RECOMMENDATION_TO": (r"recommendation[ _-]+to", r"recommended[ _-]+to", r"recommend[ _-]+to"),
+    "RECOMMENDED_CHANGE": (r"recommended[ _-]+change", r"parameter[ _-]+adjustment", r"recommended[ _-]+action"),
+    "MDO_REASONING": (r"mdo[ _-]+reasoning", r"reasoning", r"rationale"),
+}
+
+
+def _md_value(raw: str) -> str:
+    """A markdown 'label: value' value without its bold/code markers and quotes; '' for a bare heading."""
+    return raw.strip().strip("*").strip().strip("'\"").strip()
 
 
 def _stage_key(name: str | None) -> str:
@@ -176,6 +206,8 @@ def _starting_design_block(start: dict) -> str:
 
 
 _RECOMMENDATION_SENT_KEYS = ("RECOMMENDATION_TO", "RECOMMENDED_CHANGE")
+# B177: an assessment passed on as written (no RECOMMENDATION_TO readable) is cut to this many characters.
+_UNPARSED_RECOMMENDATION_CAP = 4000
 # B174: found anywhere, not only at a line start. A final answer given as a dict reaches the next stage as
 # one line ({'GEOMETRY_SET': True, 'RECOMMENDATION_IMPLEMENTED': '...'}), and the line-start pattern missed
 # the geometry engineer's response in aipexws8 v2b173 link 2. Quoted values (JSON, dict text) are read to
@@ -205,14 +237,32 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
     roles (an aero recommendation that is really a geometry change), so each stage that addresses it,
     in part or by handing it on, reports RECOMMENDATION_IMPLEMENTED and the responses accumulate.
     """
-    rec = parse_recommendation((carry_over or {}).get("previous_integrator_design_state"))
-    if not rec.get("RECOMMENDATION_TO"):
-        return ""
-    lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
-    lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
+    integrator = (carry_over or {}).get("previous_integrator_design_state")
+    rec = parse_recommendation(integrator)
+    if rec.get("RECOMMENDATION_TO"):
+        lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
+        lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
+    else:
+        # B177: a recommendation the parser cannot read must not vanish silently. When the integrator's
+        # assessment talks about a recommendation but no RECOMMENDATION_TO could be read from it, every
+        # agent gets that assessment as written (the first agent already has it as the previous
+        # iteration's DESIGN_STATE, so it is pointed at that instead of receiving it twice).
+        text = re.sub(r"\s*TASK_COMPLETE\s*$", "", str(integrator or "")).strip()
+        if not text or not re.search(r"recommend", text, re.I):
+            return ""
+        _log.warning("B177: no RECOMMENDATION_TO could be read from the previous integrator's assessment; "
+                     "passing its text to %s as written", stage_name or "the agent")
+        lines = ["RECOMMENDATION from the previous iteration (mdo_integrator): it did not use the "
+                 "RECOMMENDATION_TO / RECOMMENDED_CHANGE fields, so its recommendation is given as written."]
+        if previous_outputs:
+            lines.append(f"The previous iteration's assessment:\n{text[:_UNPARSED_RECOMMENDATION_CAP]}")
+        else:
+            lines.append("It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above.")
     # B176 (Jessica, 2026-10-10): role/agent wording -- "stage" belongs to the staged pipeline, and this
     # text is shared with sequential + iterative_feedback.
-    lines.append("This recommendation is addressed to the role named in RECOMMENDATION_TO, but any agent may act "
+    addressed = ("the role named in RECOMMENDATION_TO" if rec.get("RECOMMENDATION_TO")
+                 else "the role it names")
+    lines.append(f"This recommendation is addressed to {addressed}, but any agent may act "
                  "on it. If you address it, fully or in part, or find that it belongs to another role, "
                  "add RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
     responses = []

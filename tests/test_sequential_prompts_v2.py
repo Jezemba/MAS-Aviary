@@ -511,3 +511,82 @@ def test_the_integrator_is_told_when_nobody_responded():
         p["mdo_integrator"], [("simulation_executor", "DESIGN_STATE:\n  CONVERGED: true", None)], carry, "mdo_integrator")
     assert out.endswith("No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
     assert "Use these responses" not in out
+
+
+# ---- B177: a markdown recommendation is read, and an unreadable one is passed on as written ----------
+
+def test_the_real_markdown_recommendation_from_v2ifb2_reaches_propulsion():
+    """aipexws8 v2ifb2 link 1's integrator wrote '- **Recommendation To:** propulsion_analyst' under a
+    '**RECOMMENDED CHANGE:**' heading; the parser returned {} and no agent of link 2 got the recommendation."""
+    import json as _json
+
+    from src.coordination import prompt_assembly
+
+    carry = _json.loads((ROOT / "tests/fixtures_carry_over_v2ifb2.json").read_text())
+    rec = prompt_assembly.parse_recommendation(carry["previous_integrator_design_state"])
+    assert rec["RECOMMENDATION_TO"] == "propulsion_analyst"
+    assert rec["RECOMMENDED_CHANGE"] == "Increase bypass ratio (`splitter.BPR`) from 5.105 to 6.0"
+    assert rec["MDO_REASONING"].startswith("Higher BPR improves SFC")
+    p = _her_prompts()
+    for stage in ("propulsion_analyst", "mission_architect"):
+        out = prompt_assembly.verbatim_stage_input(p[stage], [("structures_analyst", "X", None)], carry, stage)
+        assert ("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
+                "  RECOMMENDATION_TO: propulsion_analyst\n"
+                "  RECOMMENDED_CHANGE: Increase bypass ratio (`splitter.BPR`) from 5.105 to 6.0\n"
+                "This recommendation is addressed to the role named in RECOMMENDATION_TO") in out
+
+
+def test_markdown_spellings_parse_and_exact_keys_still_win():
+    from src.coordination.prompt_assembly import parse_recommendation
+
+    md = ("### Verdict: CONTINUE\n**Recommendation_to**: aerodynamics_analyst\n"
+          "* **Recommended change:** lower CFL to 10\n- Rationale: residuals oscillate")
+    assert parse_recommendation(md) == {"RECOMMENDATION_TO": "aerodynamics_analyst",
+                                        "RECOMMENDED_CHANGE": "lower CFL to 10",
+                                        "MDO_REASONING": "residuals oscillate"}
+    # A bare heading has no value; the parser moves on rather than returning "".
+    assert "RECOMMENDED_CHANGE" not in parse_recommendation("**RECOMMENDED CHANGE:**\nRecommendation To: x")
+    # The exact form is used when present, even next to a markdown spelling.
+    both = "RECOMMENDATION_TO: geometry_engineer\n- **Recommendation To:** propulsion_analyst"
+    assert parse_recommendation(both)["RECOMMENDATION_TO"] == "geometry_engineer"
+    assert parse_recommendation(LINES_FORMAT)["RECOMMENDATION_TO"] == "mission_architect"
+
+
+def test_an_unreadable_recommendation_is_passed_on_as_written(caplog):
+    """v2b171 link 1's integrator wrote '4. **Recommendation**:' then '**Aerodynamics Analyst**: ...' with no
+    target field; rather than vanish, every agent gets the assessment (the first one is pointed at it)."""
+    import json as _json
+    import logging
+
+    from src.coordination import prompt_assembly
+
+    carry = _json.loads((ROOT / "tests/fixtures_carry_over_v2b171_prose.json").read_text())
+    text = carry["previous_integrator_design_state"]
+    assert "RECOMMENDATION_TO" not in prompt_assembly.parse_recommendation(text)
+    p = _her_prompts()
+    with caplog.at_level(logging.WARNING, logger="src.coordination.prompt_assembly"):
+        later = prompt_assembly.verbatim_stage_input(p["propulsion_analyst"], [("structures_analyst", "X", None)],
+                                                     carry, "propulsion_analyst")
+    assert "B177: no RECOMMENDATION_TO could be read" in caplog.text
+    head = ("RECOMMENDATION from the previous iteration (mdo_integrator): it did not use the "
+            "RECOMMENDATION_TO / RECOMMENDED_CHANGE fields, so its recommendation is given as written.\n"
+            "The previous iteration's assessment:\n")
+    assert head + text.replace("TASK_COMPLETE", "").strip() in later
+    assert "This recommendation is addressed to the role it names, but any agent may act" in later
+    first = prompt_assembly.verbatim_stage_input(p["geometry_engineer"], [], carry, "geometry_engineer")
+    assert "It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above." in first
+    assert first.count("Validate Aviary's drag polar derivation") == 1      # not repeated for the first agent
+    integ = prompt_assembly.verbatim_stage_input(p["mdo_integrator"], [("simulation_executor", "X", None)],
+                                                 carry, "mdo_integrator")
+    assert integ.endswith("No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+
+
+def test_no_recommendation_text_means_no_block():
+    from src.coordination import prompt_assembly
+
+    p = _her_prompts()
+    for integrator in ("VERDICT: RETRY", "", None):
+        carry = {"previous_integrator_design_state": integrator, "starting_design": {}}
+        out = prompt_assembly.verbatim_stage_input(p["structures_analyst"], [("x", "X", None)], carry,
+                                                   "structures_analyst")
+        assert "RECOMMENDATION from" not in out
