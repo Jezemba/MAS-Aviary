@@ -590,3 +590,26 @@ def test_no_recommendation_text_means_no_block():
         out = prompt_assembly.verbatim_stage_input(p["structures_analyst"], [("x", "X", None)], carry,
                                                    "structures_analyst")
         assert "RECOMMENDATION from" not in out
+
+
+def test_the_integrator_is_carried_by_name_not_by_its_wording():
+    """B178: aipexws8 v2ifb3 -- link 1's integrator wrote prose ('Verdict: RETRY'), the field-name search
+    skipped it, and link 2 inherited the structures analyst's DESIGN_STATE as the integrator's."""
+    from types import SimpleNamespace
+
+    r = _runner()
+    prose = ("## MDO Assessment\n**Verdict:** RETRY\n**Recommendation:** Reduce fuselage length (currently 37.68 m) "
+             "to decrease OEM mass")
+    res = SimpleNamespace(messages=[
+        {"agent_name": "structures_analyst", "content": "DESIGN_STATE:\n  OEM_KG: 47164.4"},
+        {"agent_name": "simulation_executor", "content": "flown, fuel 22998.0 kg"},
+        {"agent_name": "mdo_integrator", "content": prose},
+    ])
+    assert r.integrator_text(res) == prose
+    # Retries: the integrator's LAST message is carried.
+    res.messages.insert(2, {"agent_name": "mdo_integrator", "content": "first attempt"})
+    assert r.integrator_text(res) == prose
+    # No integrator message at all: the old field-name search still applies.
+    no_integrator = SimpleNamespace(messages=[{"agent_name": "structures_analyst", "content": "DESIGN_STATE: x"},
+                                              {"agent_name": "mission_architect", "content": "set"}])
+    assert r.integrator_text(no_integrator) == "DESIGN_STATE: x"

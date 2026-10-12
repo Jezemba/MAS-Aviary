@@ -429,10 +429,22 @@ CARRY_OVER_FILE = "carry_over.json"
 
 
 def integrator_text(result) -> str:
-    """The mdo_integrator's final text from a run's messages (capped), or ""."""
+    """The mdo_integrator's final text from a run's messages (capped), or "".
+
+    B178 (aipexws8 v2ifb3, 2026-10-11): taken by AGENT NAME first. The search below only matches the
+    uppercase field names, and link 1's integrator wrote prose ("Verdict: RETRY ..."), so it was skipped
+    and link 2 inherited the structures analyst's DESIGN_STATE as "the previous integrator's" -- no
+    recommendation reached any agent of link 2.
+    """
     text = ""
     try:
         for m in reversed(getattr(result, "messages", None) or []):
+            name = (m.get("agent_name") if isinstance(m, dict) else getattr(m, "agent_name", "")) or ""
+            c = (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
+            if "integrator" in name.lower() and c.strip():
+                text = c
+                break
+        for m in ([] if text else reversed(getattr(result, "messages", None) or [])):
             c = (m.get("content") if isinstance(m, dict) else getattr(m, "content", "")) or ""
             if "DESIGN_STATE" in c or "RECOMMENDED_CHANGE" in c or "VERDICT" in c or "MDO_REASONING" in c:
                 text = c
