@@ -163,6 +163,11 @@ def run_link(combo, config, link_dir: Path, link: int, carried: str, recorder: R
     from src.tools.knowledge_base import configure_run
 
     link_dir.mkdir(parents=True, exist_ok=True)
+    # A run gives every link a fresh process; here both links share one, so start each with a clean design
+    # state (otherwise the duplicate guard refuses the framework's pre-initialization as repeated work).
+    from src.tools.data_plane import reset_design_state
+
+    reset_design_state()
     space = json.loads((RECORDED / "design.json").read_text()).get("design_space")
     sbr.write_carry_over(link_dir, link, carried or None, None, {}, space)
     shutil.copy(RECORDED / "design.json", link_dir / "design.json")
