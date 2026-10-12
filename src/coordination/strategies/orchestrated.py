@@ -41,6 +41,9 @@ from src.tools.orchestrator_tools import (
     _check_result_signals,
 )
 
+# Steps the orchestrator gets to answer an agent's message (a reply ends the turn sooner).
+MESSAGE_TURN_STEPS = 6
+
 # Sentinel used by _sync_orchestrator_tools to store the GatedFinalAnswer
 # instance so it can be added/removed from the agent's tool dict dynamically.
 _FINAL_ANSWER_KEY = "final_answer"
@@ -1040,15 +1043,19 @@ class OrchestratedStrategy(CoordinationStrategy):
             self._model.thinking_enabled = False
         self._context.in_message_turn = True
         self._context.end_message_turn = orch.interrupt
+        self._context.message_sender = sender
         orch.tools[_FINAL_ANSWER_KEY] = self._gated_final_answer
         try:
-            orch.run(f"MESSAGE from {sender}:\n{message}", reset=False)
+            # A turn ends when the waiting agent is answered, or after MESSAGE_TURN_STEPS (v2no6: a turn that
+            # never replied ran the full 20 steps, re-queuing assignments each time).
+            orch.run(f"MESSAGE from {sender}:\n{message}", reset=False, max_steps=MESSAGE_TURN_STEPS)
         except Exception as exc:   # the reply interrupts the run (smolagents raises AgentError "Agent interrupted.")
             if "interrupted" not in str(exc).lower():
                 raise
         finally:
             self._context.in_message_turn = False
             self._context.end_message_turn = None
+            self._context.message_sender = None
             self._sync_orchestrator_tools()
             if thinking is not None:
                 self._model.thinking_enabled = thinking

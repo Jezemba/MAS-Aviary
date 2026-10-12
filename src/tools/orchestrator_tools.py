@@ -69,6 +69,7 @@ class OrchestratorContext:
     replies: dict = field(default_factory=dict)
     in_message_turn: bool = False
     end_message_turn: Callable | None = None   # a reply ends the orchestrator's message turn
+    message_sender: str | None = None          # the agent waiting for this message turn's reply
 
 
 # NOTE: `list_graph_roles` is only PROVISIONED when `_graph_roles` is configured
@@ -698,9 +699,18 @@ class ReplyToAgent(Tool):
         self._context = context
 
     def forward(self, agent_name: str, message: str) -> str:
-        if agent_name not in self._context.agents:
+        ctx = self._context
+        if agent_name not in ctx.agents:
             return _error(agent_name, f"Agent '{agent_name}' not found")
-        self._context.replies[agent_name] = message
+        # Only the agent that sent the message is waiting; a reply to anyone else is never read (v2no6,
+        # 2026-10-11: replies to propulsion/geometry while the mission architect waited, 9 times).
+        if not ctx.in_message_turn or not ctx.message_sender:
+            return _error(agent_name, "No agent is waiting for a reply. To give an agent work, use assign_task.")
+        if agent_name != ctx.message_sender:
+            return _error(agent_name, f"Only {ctx.message_sender} is waiting for a reply; {agent_name} did not "
+                                      "message you and will not read this. To give another agent work, use "
+                                      f"assign_task; answer {ctx.message_sender} with reply_to_agent.")
+        ctx.replies[agent_name] = message
         # One reply per message (v2no5 run, 2026-10-10: the orchestrator called reply_to_agent up to 10 times in
         # one turn, re-wording the same answer). The turn ends after this step.
         if self._context.in_message_turn and self._context.end_message_turn is not None:

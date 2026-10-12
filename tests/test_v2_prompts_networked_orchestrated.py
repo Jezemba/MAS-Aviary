@@ -363,3 +363,40 @@ def test_the_orchestrators_first_message_on_link_2_carries_the_recommendation(tm
         assert "/runs/link0/geometry_end.xml" in s._system_text      # the prompts name the carried CPACS
     finally:
         kbm.configure_run(None, None, None, None)
+
+
+# ---- message turns end (v2no6, 2026-10-11) ----------------------------------------------------------
+
+def test_a_reply_to_an_agent_that_is_not_waiting_is_refused_and_the_turn_goes_on():
+    s, model, orch = _orchestrated()
+    history = _build_team(s, orch)
+    a = s.next_step(history, {"task": "RUNNER"})
+    s._context.agents["propulsion_analyst"] = s._context.agents["geometry_engineer"]
+    who_queue["worker"] = [_call("message_orchestrator", {"message": "need the engine changed"}),
+                           _call("final_answer", {"answer": "done"})]
+    who_queue["orchestrator"] = [
+        _call("reply_to_agent", {"agent_name": "propulsion_analyst", "message": "change BPR"}),
+        _call("reply_to_agent", {"agent_name": "geometry_engineer", "message": "assigned to propulsion"})]
+    s._agents["geometry_engineer"].run(a.input_context)
+    orch_calls = [c for c in model.calls if c[0] == "orchestrator"]
+    refused = _text(orch_calls[-1][1][-1])
+    assert "Only geometry_engineer is waiting for a reply" in refused   # the refusal reached the orchestrator
+    worker_second = [c for c in model.calls if c[0] == "worker"][1]
+    assert "assigned to propulsion" in json.dumps([_text(m) for m in worker_second[1]])
+    assert s._context.message_sender is None and not s._context.in_message_turn
+
+
+def test_a_message_turn_that_never_replies_stops_after_a_few_steps():
+    from src.coordination.strategies.orchestrated import MESSAGE_TURN_STEPS
+
+    s, model, orch = _orchestrated()
+    history = _build_team(s, orch)
+    a = s.next_step(history, {"task": "RUNNER"})
+    who_queue["worker"] = [_call("message_orchestrator", {"message": "help"}), _call("final_answer", {"answer": "x"})]
+    who_queue["orchestrator"] = [_call("list_available_tools", {}) for _ in range(30)]
+    before = len([c for c in model.calls if c[0] == "orchestrator"])
+    s._agents["geometry_engineer"].run(a.input_context)
+    used = len([c for c in model.calls if c[0] == "orchestrator"]) - before
+    assert used <= MESSAGE_TURN_STEPS + 1                               # + smolagents' final summary call
+    worker = [c for c in model.calls if c[0] == "worker" and _text(c[1][0]) == "PERSONA TEXT"]
+    assert "The orchestrator did not reply." in json.dumps([_text(m) for m in worker[1][1]])
