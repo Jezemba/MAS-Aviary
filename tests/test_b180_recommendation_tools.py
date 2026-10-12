@@ -99,18 +99,46 @@ def test_the_graph_routes_on_the_recorded_recommendation():
     assert (d.next_node, d.level) == (gr.AERO, gr.MODERATE)
 
 
-def test_the_reminder_gate_is_off_by_default(monkeypatch):
+def test_the_integrator_gate_reminds_twice_then_lets_it_finish(monkeypatch):
     from types import SimpleNamespace
 
     from src.tools import artifact_checks as ac
 
     agent = SimpleNamespace(name="mdo_integrator", tools={"record_recommendation": 1})
+    monkeypatch.delenv("MAS_REQUIRE_RECORDED_RECOMMENDATION", raising=False)      # on by default
+    for n in (1, 2):
+        with pytest.raises(ac.MissingRecordedRecommendation, match=f"reminder {n} of 2"):
+            ac.recommendation_recorded_before_finish("x", None, agent)
+    assert ac.recommendation_recorded_before_finish("x", None, agent) is True       # then it may finish
+    assert get_design_state().data_store["finished_without_recorded_recommendation"] == ["mdo_integrator"]
+    # Recording it satisfies the gate; and it can be switched off.
+    agent2 = SimpleNamespace(name="mdo_integrator", tools={"record_recommendation": 1})
+    with agent_scope("mdo_integrator"):
+        rt.RecordRecommendation().forward("COMPLETE")
+    assert ac.recommendation_recorded_before_finish("x", None, agent2) is True
+    monkeypatch.setenv("MAS_REQUIRE_RECORDED_RECOMMENDATION", "0")
+    agent3 = SimpleNamespace(name="mdo_integrator", tools={"record_recommendation": 1}, _avion_recommendation_since=99)
+    assert ac.recommendation_recorded_before_finish("x", None, agent3) is True
+
+
+def test_the_addressed_role_must_answer_the_recommendation(monkeypatch):
+    from types import SimpleNamespace
+
+    from src.coordination import prompt_assembly
+    from src.tools import artifact_checks as ac
+
     monkeypatch.delenv("MAS_REQUIRE_RECORDED_RECOMMENDATION", raising=False)
-    assert ac.recommendation_recorded_before_finish("x", None, agent) is True
-    monkeypatch.setenv("MAS_REQUIRE_RECORDED_RECOMMENDATION", "1")
-    with pytest.raises(ac.MissingRecordedRecommendation):
-        ac.recommendation_recorded_before_finish("x", None, agent)
-    assert ac.recommendation_recorded_before_finish("x", None, agent) is True    # reminded once only
+    carry = {"recommendation": {"verdict": "CONTINUE", "recommendation_to": "propulsion_analyst",
+                                "recommended_change": "splitter.BPR 5.1 -> 6.0"}}
+    prompt_assembly.verbatim_stage_input("ROLE: X", [], carry, "geometry_engineer")       # shows it -> active
+    prop = SimpleNamespace(name="propulsion_analyst", tools={"respond_to_recommendation": 1})
+    geo = SimpleNamespace(name="geometry_engineer", tools={"respond_to_recommendation": 1})
+    assert ac.recommendation_response_before_finish("x", None, geo) is True              # not addressed to it
+    with pytest.raises(ac.MissingRecommendationResponse, match="addressed to your role"):
+        ac.recommendation_response_before_finish("x", None, prop)
+    with agent_scope("propulsion_analyst"):
+        rt.RespondToRecommendation().forward("this is a geometry change; handed to geometry")
+    assert ac.recommendation_response_before_finish("x", None, prop) is True
 
 
 def test_her_prompts_ask_for_the_tool_not_the_text_fields():

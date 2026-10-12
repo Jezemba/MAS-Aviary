@@ -213,35 +213,78 @@ class MissingRecordedRecommendation(Exception):
     """The mdo_integrator tried to finish without recording its verdict with record_recommendation."""
 
 
-def recommendation_recorded_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> bool:
-    """B180, OFF unless MAS_REQUIRE_RECORDED_RECOMMENDATION=1: the integrator records its verdict once.
+class MissingRecommendationResponse(Exception):
+    """The role a recommendation is addressed to tried to finish without respond_to_recommendation."""
 
-    Off by default (Jessica's choice pending): a missing recommendation is then the agent's behaviour, which is
-    what is measured. On, the integrator is reminded ONCE and may then finish without it.
-    """
+
+# B180 gates (Jessica, 2026-10-12): the two tool calls that are OWED are enforced like the mesh and validation
+# gates -- the final answer is refused with the reason, at most this many times, then the agent may finish and
+# that is recorded (an explicit, counted coordination failure instead of a silent gap). Set
+# MAS_REQUIRE_RECORDED_RECOMMENDATION=0 to switch both off.
+MAX_RECOMMENDATION_REMINDERS = 2
+
+
+def _recommendation_gates_on() -> bool:
     import os
 
-    if os.environ.get("MAS_REQUIRE_RECORDED_RECOMMENDATION", "") != "1":
-        return True
+    return os.environ.get("MAS_REQUIRE_RECORDED_RECOMMENDATION", "1") != "0"
+
+
+def recommendation_recorded_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> bool:
+    """The mdo_integrator must record its verdict (and recommendation) with record_recommendation."""
     tools = getattr(agent, "tools", None) or {}
     name = getattr(agent, "name", None) or ""
-    if "record_recommendation" not in tools or "integrator" not in name.lower():
+    if not _recommendation_gates_on() or "record_recommendation" not in tools or "integrator" not in name.lower():
         return True
     from src.tools import recommendation_tools as rt
 
-    if rt.signals("recommendation") or getattr(agent, "_avion_recommendation_reminded", False):
+    since = int(getattr(agent, "_avion_recommendation_since", 0) or 0)
+    if any(s["seq"] > since for s in rt.signals("recommendation")):
         return True
-    agent._avion_recommendation_reminded = True
-    _record("final_answer_refused_no_recorded_recommendation", 1)
+    reminded = int(getattr(agent, "_avion_recommendation_reminders", 0) or 0)
+    if reminded >= MAX_RECOMMENDATION_REMINDERS:
+        _record("finished_without_recorded_recommendation", name)
+        return True
+    agent._avion_recommendation_reminders = reminded + 1
+    _record("final_answer_refused_no_recorded_recommendation", reminded + 1)
     raise MissingRecordedRecommendation(
-        "NOT FINISHED (reminder, once): record your verdict and your recommendation with record_recommendation "
-        "(verdict, recommendation_to, recommended_change), then give your final answer.")
+        f"NOT FINISHED (reminder {reminded + 1} of {MAX_RECOMMENDATION_REMINDERS}): record your verdict and your "
+        "recommendation with record_recommendation(verdict, recommendation_to, recommended_change) -- that call is "
+        "how the framework receives them -- then give your final answer.")
+
+
+def recommendation_response_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> bool:
+    """The role the active recommendation is addressed to must answer it with respond_to_recommendation."""
+    tools = getattr(agent, "tools", None) or {}
+    if not _recommendation_gates_on() or "respond_to_recommendation" not in tools:
+        return True
+    from src.tools import recommendation_tools as rt
+
+    active = rt.active_recommendation()
+    name = getattr(agent, "name", None) or ""
+    if not active or rt._role(name) != active.get("recommendation_to"):
+        return True
+    if any(r["agent"] == name or rt._role(r["agent"]) == active.get("recommendation_to")
+           for r in rt.responses_since(active.get("activated_at", 0))):
+        return True
+    reminded = int(getattr(agent, "_avion_response_reminders", 0) or 0)
+    if reminded >= MAX_RECOMMENDATION_REMINDERS:
+        _record("finished_without_recommendation_response", name)
+        return True
+    agent._avion_response_reminders = reminded + 1
+    _record("final_answer_refused_no_recommendation_response", reminded + 1)
+    raise MissingRecommendationResponse(
+        f"NOT FINISHED (reminder {reminded + 1} of {MAX_RECOMMENDATION_REMINDERS}): the recommendation "
+        f"({active.get('recommended_change', '')!s}) is addressed to your role. Say how you addressed it -- or that "
+        "it belongs to another role, and which -- with respond_to_recommendation(how_addressed), then give your "
+        "final answer.")
 
 
 def with_artifact_checks(checks: list[Callable] | None = None) -> list[Callable]:
     """Existing final-answer checks plus the artifact checks, without duplicates."""
     combined = list(checks or [])
-    for check in (mesh_before_finish, validated_parameters_before_finish, recommendation_recorded_before_finish):
+    for check in (mesh_before_finish, validated_parameters_before_finish, recommendation_recorded_before_finish,
+                  recommendation_response_before_finish):
         if check not in combined:
             combined.append(check)
     return combined

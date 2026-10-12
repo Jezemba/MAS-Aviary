@@ -82,6 +82,13 @@ class ConditionalGraphHandler(ExecutionHandler):
             kb = get_kb()
             start = len(kb.entries) if kb else 0
             seq0 = rt.last_seq()
+            # B180 gates: each visit owes its own record (the integrator runs once per pass in a link).
+            for attr, value in (("_avion_recommendation_since", seq0), ("_avion_recommendation_reminders", 0),
+                                ("_avion_response_reminders", 0)):
+                try:
+                    setattr(agent, attr, value)
+                except Exception:  # pragma: no cover
+                    pass
             base = prompt_assembly.verbatim_stage_input(
                 getattr(agent, "description", "") or "", sweep, carry_now, node,
                 prompt_assembly.read_design_json_text())

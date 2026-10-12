@@ -85,6 +85,24 @@ def complexity_requests_since(seq: int = 0) -> list[dict]:
     return [s for s in signals("complexity") if s["seq"] > seq]
 
 
+def activate(recommendation_to: str | None, recommended_change: str = "") -> None:
+    """The framework shows a recommendation to the agents: remember it, so the addressed role is asked to answer."""
+    state = _state()
+    role = _role(recommendation_to)
+    if state is None or not role:
+        return
+    current = state.data_store.get("active_recommendation") or {}
+    if current.get("recommendation_to") == role and current.get("recommended_change") == recommended_change:
+        return
+    state.data_store["active_recommendation"] = {"recommendation_to": role, "recommended_change": recommended_change,
+                                                 "activated_at": last_seq()}
+
+
+def active_recommendation() -> dict | None:
+    state = _state()
+    return (state.data_store.get("active_recommendation") if state is not None else None) or None
+
+
 def last_seq() -> int:
     s = _signals()
     return s[-1]["seq"] if s else 0

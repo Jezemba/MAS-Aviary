@@ -271,6 +271,9 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
                 lines.append(f"The previous iteration's assessment:\n{text[:_UNPARSED_RECOMMENDATION_CAP]}")
             else:
                 lines.append("It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above.")
+    if rec.get("RECOMMENDATION_TO"):
+        # B180 gate: the role it is addressed to will be asked to answer it (artifact_checks).
+        rt.activate(rec["RECOMMENDATION_TO"], str(rec.get("RECOMMENDED_CHANGE") or ""))
     # B176: role/agent wording -- "stage" belongs to the staged pipeline; this text is shared.
     addressed = ("the role named in RECOMMENDATION_TO" if rec.get("RECOMMENDATION_TO")
                  else "the role it names")
@@ -450,6 +453,9 @@ def starting_design_state(system: str) -> str:
             parts.append(f"DESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}")
         recorded = co.get("recommendation")
         if isinstance(recorded, dict) and recorded.get("recommendation_to"):
+            from src.tools import recommendation_tools as rt
+
+            rt.activate(recorded["recommendation_to"], str(recorded.get("recommended_change") or ""))
             # B180: what the integrator recorded with record_recommendation (typed, not parsed from its text).
             parts.append("RECOMMENDATION recorded by the mdo_integrator (record_recommendation):\n"
                          f"  RECOMMENDATION_TO: {recorded['recommendation_to']}\n"

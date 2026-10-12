@@ -91,7 +91,9 @@ def test_with_artifact_checks_keeps_existing_checks_and_does_not_duplicate():
     def other(a, m, agent=None):
         return True
     # 2026-10-09: the mission validation gate joins the mesh gate (test_mission_validation_gate.py).
-    gates = [ac.mesh_before_finish, ac.validated_parameters_before_finish]
+    # 2026-10-12 (B180): the recommendation gates join them.
+    gates = [ac.mesh_before_finish, ac.validated_parameters_before_finish, ac.recommendation_recorded_before_finish,
+             ac.recommendation_response_before_finish]
     combined = ac.with_artifact_checks([other])
     assert combined == [other, *gates]
     assert ac.with_artifact_checks(combined) == combined
