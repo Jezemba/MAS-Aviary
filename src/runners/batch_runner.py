@@ -280,8 +280,11 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # strategy delegates flow to the handler in graph_routed mode
         # (sequential.py _graph_routed_mode) so the per-state agent
         # roles come from config/mdo_f25_sequential_agents.yaml.
+        # Graph-routed v2 (Jessica, 2026-10-12): router "conditional" replaces that state machine with the
+        # rule table in src/coordination/graph_router.py (start SIMPLE, failure-driven upstream edges, the
+        # integrator's recommendation acted on inside the link), after framework pre-initialization.
         strategy_config={"pipeline_template": "mdo_f25"},
-        handler_config={"predefined_graph": "mdo_f25"},
+        handler_config={"predefined_graph": "mdo_f25", "router": "conditional"},
     ),
     CombinationConfig(
         "mdo_f25_orchestrated_graph_routed",
@@ -1377,6 +1380,10 @@ def _build_handler(handler_name: str, handler_config: dict):
         return IterativeFeedbackHandler(handler_config)
 
     if handler_name == "graph_routed":
+        if (handler_config or {}).get("router") == "conditional":
+            from src.coordination.conditional_graph_handler import ConditionalGraphHandler
+
+            return ConditionalGraphHandler(handler_config)
         from src.coordination.graph_routed_handler import GraphRoutedHandler
 
         return GraphRoutedHandler(handler_config)

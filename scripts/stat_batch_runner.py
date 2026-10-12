@@ -497,7 +497,16 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
     # prompt table's variables, as tools reported them), not the aviary chain values -- those are
     # applied to the session by the framework and kept here only for the record (2026-10-08).
     space = design_space or {}
+    # Graph-routed v2 pre-initialization (2026-10-12) starts a link from the previous link's end-state: its
+    # whole design.json (discipline results included), from the sibling folder repeat_<link-1>/<combo>.
+    previous_design = None
+    try:
+        prev = link_dir.parent.parent / f"repeat_{link - 1:03d}" / link_dir.name / "design.json"
+        previous_design = json.loads(prev.read_text()) if prev.is_file() else None
+    except (OSError, ValueError):
+        previous_design = None
     path.write_text(json.dumps({
+        "previous_design": previous_design,
         "link": link,
         "previous_integrator_design_state": integrator_text or "",
         "starting_design": {"CPACS_FILE": str(cpacs) if cpacs else str(_D150_FIXTURE),
