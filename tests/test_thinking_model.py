@@ -233,3 +233,28 @@ class TestParseToolCalls:
         msg = self._make_message(text)
         result = model.parse_tool_calls(msg)
         assert result.tool_calls[0].function.arguments == {"message": "hi"}
+
+
+# ---- llm.enable_thinking reaches the model and its chat template (2026-10-12) ----
+
+def test_loader_sets_the_thinking_flag_and_the_template_follows_it(monkeypatch):
+    from src.config.loader import LLMConfig
+    from src.llm import model_loader
+
+    class _Stub:                                   # stands in for ThinkingModel: no weights are loaded
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.thinking_enabled = True
+
+    monkeypatch.setattr(model_loader, "ThinkingModel", _Stub)
+    assert model_loader._build_model(LLMConfig(model_id="m", enable_thinking=False)).thinking_enabled is False
+    assert model_loader._build_model(LLMConfig(model_id="m")).thinking_enabled is True
+    assert (model_loader._cache_key(LLMConfig(model_id="m", enable_thinking=False))
+            != model_loader._cache_key(LLMConfig(model_id="m")))
+
+    m = ThinkingModel.__new__(ThinkingModel)        # the real flag -> template path, without __init__
+    m.apply_chat_template_kwargs = {}
+    m._thinking_enabled = False
+    assert m.apply_chat_template_kwargs == {"enable_thinking": False}
+    m._thinking_enabled = True
+    assert "enable_thinking" not in m.apply_chat_template_kwargs

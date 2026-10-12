@@ -59,7 +59,7 @@ _MODEL_CACHE: dict[tuple, Model] = {}
 def _cache_key(config: LLMConfig) -> tuple:
     return (
         config.backend, config.model_id, config.device_map, config.torch_dtype,
-        config.max_new_tokens, config.temperature, config.api_base,
+        config.max_new_tokens, config.temperature, config.api_base, getattr(config, "enable_thinking", True),
         json.dumps(config.reliability or {}, sort_keys=True),
         json.dumps(config.model_kwargs or {}, sort_keys=True, default=str),
     )
@@ -214,4 +214,8 @@ def _build_model(config: LLMConfig) -> Model:
         model_kwargs.setdefault("dtype", config.torch_dtype)
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
-    return ThinkingModel(**kwargs)
+    model = ThinkingModel(**kwargs)
+    # llm.enable_thinking (default True = the model's own default). Every call reads this flag unless a
+    # strategy sets it per agent or per call.
+    model.thinking_enabled = bool(getattr(config, "enable_thinking", True))
+    return model

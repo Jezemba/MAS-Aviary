@@ -261,3 +261,17 @@ def test_env_override_not_set(tmp_path):
         os.environ.pop(var, None)
     cfg = load_config(str(cfg_file))
     assert cfg.mcp.servers[0].url == "http://yaml-host:8600/mcp"
+
+
+# ---- llm.enable_thinking and its env override (Jessica, 2026-10-12: measure the pipeline without thinking) ----
+
+def test_enable_thinking_defaults_on_and_env_turns_it_off(monkeypatch):
+    from src.config.loader import AppConfig, LLMConfig, _apply_env_overrides
+
+    assert LLMConfig().enable_thinking is True
+    for value, expected in (("0", False), ("false", False), ("OFF", False), ("no", False), ("1", True),
+                            ("true", True)):
+        monkeypatch.setenv("MAS_AVIARY_ENABLE_THINKING", value)
+        assert _apply_env_overrides(AppConfig()).llm.enable_thinking is expected, value
+    monkeypatch.setenv("MAS_AVIARY_ENABLE_THINKING", "")          # empty = no override
+    assert _apply_env_overrides(AppConfig()).llm.enable_thinking is True
