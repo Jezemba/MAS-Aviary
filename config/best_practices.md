@@ -12,8 +12,9 @@ bottom: the newest entries are last.
 - [2026-10-04] Values coupled between disciplines are passed by the framework: geometry to aviary (wing area, aspect ratio, sweep, taper, fuselage), su2 CL and drag to aviary, wing mass to aviary, mass to pycycle Fn_DES, the mission to su2, mass and pycycle. Do not retype them into parameter dictionaries.
 - [2026-10-04] read_design_json returns the current design as the framework captured it from tool results. Prefer it to values copied from earlier stages' text.
 - [2026-10-12] The design variables are the ones in design.json design_space and the prompt table: the wing planform (area, aspect_ratio, sweep through set_high_level_parameters), the fuselage (length, diameter) and the engine cycle inputs. The airfoil (section shape, thickness-to-chord, camber, leading-edge radius), twist and incidence are NOT variables: no tool changes them, so do not plan or recommend changes to them.
+- [2026-10-12] When a recommendation from the mdo_integrator is shown to you and you address it (fully, in part, or by finding it belongs to another role), record how with respond_to_recommendation(how_addressed).
 - [2026-10-12] Values the framework sets from other disciplines replace anything passed for them: Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR (SU2), Aircraft.Wing.MASS_SCALER (mass), Fn_DES and Aircraft.Engine.SCALE_FACTOR (engine sized to drag and mass). To move them, change the design variable that drives them.
-- [2026-10-12] Graph-routed combinations: if the task needs more disciplines re-run, write COMPLEXITY: moderate or COMPLEXITY: complex with the reason in your DESIGN_STATE. Only that field is read.
+- [2026-10-12] Graph-routed combinations: if the task needs more disciplines re-run, call request_complexity(level, reason) with level moderate or complex. The framework reads that call, not your text.
 
 ## geometry
 
@@ -78,6 +79,6 @@ bottom: the newest entries are last.
 - [2026-10-04] Constraint ids: C1 range >= 2500 nmi; C2 TOFL <= 2200 m; C3 Vref <= 136 KCAS; C4 wing fuel volume ratio >= 1.1 (no tool checks it); C5 2nd-segment climb >= 2.4 %; C7 rear spar height >= 0.15 m; C8 no flow separation; C9 buckling margin >= 1.0; C10 buffet and flutter (no tool checks it).
 - [2026-10-04] Typical conflicts: aero vs structures (more area or aspect ratio lowers drag but adds wing mass); propulsion vs weight (a smaller engine saves mass but risks the climb); the snowball (higher OEM, higher MTOM, more thrust, heavier engine).
 - [2026-10-04] RECOMMENDED_CHANGE should name an input the next iteration can set (a tigl or pycycle input), not a value the framework derives (AREA, SWEEP, TAPER, fuselage height and width follow the geometry).
-- [2026-10-12] Write the recommendation as fields, RECOMMENDATION_TO: <role> and RECOMMENDED_CHANGE: <one design variable and its direction>. Prose or markdown headings have been missed by the framework.
+- [2026-10-12] Record your verdict and recommendation with record_recommendation(verdict, recommendation_to, recommended_change): that call is how the framework receives them (your text is not parsed). Also write them in your DESIGN_STATE for the agents to read.
 - [2026-10-12] Name a design variable (see general): a change no tool can make, such as the airfoil thickness-to-chord, cannot be acted on.
-- [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with RECOMMENDATION_IMPLEMENTED. Use those answers in your verdict.
+- [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with respond_to_recommendation. Use those answers in your verdict.

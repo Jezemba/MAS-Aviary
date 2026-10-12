@@ -63,9 +63,12 @@ def with_reference_tools(tools: list) -> list:
     from src.tools.best_practices_tool import ReadBestPractices
     from src.tools.design_json import ReadDesignJson
     from src.tools.design_state_tool import GetDesignState
+    from src.tools.recommendation_tools import RecordRecommendation, RespondToRecommendation
 
     have = {getattr(t, "name", None) for t in tools}
-    extra = [cls() for cls in (ReadDesignJson, ReadBestPractices, GetDesignState) if cls.name not in have]
+    # B180: the coordination signals are tool calls (typed arguments), not text keys the framework parses.
+    extra = [cls() for cls in (ReadDesignJson, ReadBestPractices, GetDesignState, RecordRecommendation,
+                               RespondToRecommendation) if cls.name not in have]
     return list(tools) + extra
 
 
@@ -232,42 +235,58 @@ def _implemented_values(content: str) -> list[str]:
 
 
 def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_name: str | None = None) -> str:
-    """The previous iteration's recommendation for every stage, plus every response so far (B172).
+    """The previous iteration's recommendation for every agent, plus every response so far (B172, B180).
 
-    Addressed to one stage, answerable by any: an integrator recommendation is often vague or spans
-    roles (an aero recommendation that is really a geometry change), so each stage that addresses it,
-    in part or by handing it on, reports RECOMMENDATION_IMPLEMENTED and the responses accumulate.
+    Addressed to one role, answerable by any: each agent that addresses it, in part or by handing it on,
+    responds, and the responses accumulate. B180: the recommendation and the responses are read from the
+    agents' tool calls (record_recommendation / respond_to_recommendation); the text keys are only the
+    fallback for an agent that never called the tool.
     """
+    from src.tools import recommendation_tools as rt
+
+    recorded = (carry_over or {}).get("recommendation")
     integrator = (carry_over or {}).get("previous_integrator_design_state")
-    rec = parse_recommendation(integrator)
-    if rec.get("RECOMMENDATION_TO"):
-        lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
-        lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
+    rec = {}
+    if isinstance(recorded, dict) and recorded.get("recommendation_to") and recorded.get("verdict") != "COMPLETE":
+        rec = {"RECOMMENDATION_TO": recorded["recommendation_to"],
+               "RECOMMENDED_CHANGE": recorded.get("recommended_change", "")}
+        lines = ["RECOMMENDATION from the previous iteration (mdo_integrator, recorded with record_recommendation):"]
+        lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if rec.get(k)]
     else:
-        # B177: a recommendation the parser cannot read must not vanish silently. When the integrator's
-        # assessment talks about a recommendation but no RECOMMENDATION_TO could be read from it, every
-        # agent gets that assessment as written (the first agent already has it as the previous
-        # iteration's DESIGN_STATE, so it is pointed at that instead of receiving it twice).
-        text = re.sub(r"\s*TASK_COMPLETE\s*$", "", str(integrator or "")).strip()
-        if not text or not re.search(r"recommend", text, re.I):
-            return ""
-        _log.warning("B177: no RECOMMENDATION_TO could be read from the previous integrator's assessment; "
-                     "passing its text to %s as written", stage_name or "the agent")
-        lines = ["RECOMMENDATION from the previous iteration (mdo_integrator): it did not use the "
-                 "RECOMMENDATION_TO / RECOMMENDED_CHANGE fields, so its recommendation is given as written."]
-        if previous_outputs:
-            lines.append(f"The previous iteration's assessment:\n{text[:_UNPARSED_RECOMMENDATION_CAP]}")
+        rec = parse_recommendation(integrator)
+        if rec.get("RECOMMENDATION_TO"):
+            lines = ["RECOMMENDATION from the previous iteration (mdo_integrator):"]
+            lines += [f"  {k}: {rec[k]}" for k in _RECOMMENDATION_SENT_KEYS if k in rec]
         else:
-            lines.append("It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above.")
-    # B176 (Jessica, 2026-10-10): role/agent wording -- "stage" belongs to the staged pipeline, and this
-    # text is shared with sequential + iterative_feedback.
+            # B177: a recommendation that was neither recorded nor readable must not vanish silently: when the
+            # assessment talks about a recommendation, every agent gets it as written.
+            text = re.sub(r"\s*TASK_COMPLETE\s*$", "", str(integrator or "")).strip()
+            if not text or not re.search(r"recommend", text, re.I):
+                return ""
+            _log.warning("B177: no RECOMMENDATION_TO recorded or readable; passing the assessment to %s as written",
+                         stage_name or "the agent")
+            lines = ["RECOMMENDATION from the previous iteration (mdo_integrator): it was not recorded with "
+                     "record_recommendation, so its recommendation is given as written."]
+            if previous_outputs:
+                lines.append(f"The previous iteration's assessment:\n{text[:_UNPARSED_RECOMMENDATION_CAP]}")
+            else:
+                lines.append("It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above.")
+    # B176: role/agent wording -- "stage" belongs to the staged pipeline; this text is shared.
     addressed = ("the role named in RECOMMENDATION_TO" if rec.get("RECOMMENDATION_TO")
                  else "the role it names")
     lines.append(f"This recommendation is addressed to {addressed}, but any agent may act "
                  "on it. If you address it, fully or in part, or find that it belongs to another role, "
-                 "add RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
-    responses = []
+                 "say how with respond_to_recommendation (and RECOMMENDATION_IMPLEMENTED in your DESIGN_STATE).")
+    # Responses: recorded ones first (since the recommendation, when it was recorded in this link); then, for
+    # an agent that recorded none, a RECOMMENDATION_IMPLEMENTED line in its text.
+    since = recorded.get("seq", 0) if isinstance(recorded, dict) and recorded.get("in_link") else 0
+    responses, answered = [], set()
+    for r in rt.responses_since(since):
+        responses.append(f"RECOMMENDATION_IMPLEMENTED (reported by {r['agent']}): {r['how_addressed']}")
+        answered.add(r["agent"])
     for name, content, _ in previous_outputs or []:
+        if name in answered:
+            continue
         for value in _implemented_values(str(content or "")):
             responses.append(f"RECOMMENDATION_IMPLEMENTED (reported by {name}): {value}")
     if responses:
@@ -275,8 +294,10 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
         lines += responses
     # The responses are this link's only: the next link starts from its own integrator's recommendation.
     if _stage_key(stage_name) == "mdo_integrator":
-        lines.append("Use these responses in your verdict and your next recommendation." if responses else
-                     "No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+        lines.append("Use these responses in your verdict, and record your verdict and next recommendation with "
+                     "record_recommendation." if responses else
+                     "No agent reported RECOMMENDATION_IMPLEMENTED in this iteration. Record your verdict and next "
+                     "recommendation with record_recommendation.")
     return "\n".join(lines)
 
 
@@ -427,6 +448,13 @@ def starting_design_state(system: str) -> str:
         integrator = re.sub(r"\s*TASK_COMPLETE\s*$", "", (co.get("previous_integrator_design_state") or "").strip())
         if integrator:
             parts.append(f"DESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}")
+        recorded = co.get("recommendation")
+        if isinstance(recorded, dict) and recorded.get("recommendation_to"):
+            # B180: what the integrator recorded with record_recommendation (typed, not parsed from its text).
+            parts.append("RECOMMENDATION recorded by the mdo_integrator (record_recommendation):\n"
+                         f"  RECOMMENDATION_TO: {recorded['recommendation_to']}\n"
+                         f"  RECOMMENDED_CHANGE: {recorded.get('recommended_change', '')}\n"
+                         f"  VERDICT: {recorded.get('verdict', '')}")
         start = dict(co.get("starting_design") or {})
         lines = ["DESIGN_STATE (the starting design for this iteration, from the previous iteration's design.json):"]
         lines += _starting_design_block(start).splitlines()[1:]

@@ -64,7 +64,7 @@ def test_each_stage_gets_its_prompt_the_previous_design_state_and_the_responses(
     assert "Context from previous agent" not in second
     last = integ.calls[0]
     assert "DESIGN_STATE from the previous agent (aerodynamics_analyst)" in last
-    assert "Use these responses in your verdict and your next recommendation." in last
+    assert "Use these responses in your verdict" in last
 
 
 def test_a_failed_attempt_adds_only_the_retry_feedback(verbatim):

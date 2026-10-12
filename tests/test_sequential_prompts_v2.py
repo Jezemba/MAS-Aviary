@@ -357,8 +357,8 @@ def test_every_stage_gets_just_the_recommendation():
     block = ("RECOMMENDATION from the previous iteration (mdo_integrator):\n"
              "  RECOMMENDATION_TO: propulsion_analyst\n  RECOMMENDED_CHANGE: Raise splitter.BPR to 7\n"
              "This recommendation is addressed to the role named in RECOMMENDATION_TO, but any agent may act on "
-             "it. If you address it, fully or in part, or find that it belongs to another role, add "
-             "RECOMMENDATION_IMPLEMENTED: <how you addressed it> to your DESIGN_STATE.")
+             "it. If you address it, fully or in part, or find that it belongs to another role, say how with "
+             "respond_to_recommendation (and RECOMMENDATION_IMPLEMENTED in your DESIGN_STATE).")
     for stage in ("propulsion_analyst", "mission_architect", "structures_analyst"):
         out = prompt_assembly.verbatim_stage_input(p[stage], prev, carry, stage)
         assert out.startswith(p[stage]) and out.endswith(block)
@@ -384,7 +384,8 @@ def test_responses_from_any_stage_accumulate():
         "Responses so far:\n"
         "RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): aspect ratio 9.36 -> 10.5\n"
         "RECOMMENDATION_IMPLEMENTED (reported by aerodynamics_analyst): geometry change, made by geometry; re-solved\n"
-        "Use these responses in your verdict and your next recommendation.")
+        "Use these responses in your verdict, and record your verdict and next recommendation with "
+        "record_recommendation.")
     assert "Use these responses" not in prompt_assembly.verbatim_stage_input(p["structures_analyst"], prev, carry,
                                                                             "structures_analyst")
 
@@ -456,7 +457,8 @@ def test_the_reference_tools_the_prompts_name_are_given_once():
     from src.tools.design_json import ReadDesignJson
 
     names = [t.name for t in prompt_assembly.with_reference_tools([ReadDesignJson()])]
-    assert sorted(names) == ["get_design_state", "read_best_practices", "read_design_json"]
+    assert sorted(names) == ["get_design_state", "read_best_practices", "read_design_json", "record_recommendation",
+                            "respond_to_recommendation"]
 
 
 def test_the_runner_sets_aside_a_failed_attempts_design_json(tmp_path):
@@ -499,7 +501,8 @@ def test_a_response_inside_a_one_line_dict_answer_is_found():
         "RECOMMENDATION_IMPLEMENTED (reported by geometry_engineer): Increased aspect ratio 9.36 -> 10.5 via "
         "set_high_level_parameters\n"
         "RECOMMENDATION_IMPLEMENTED (reported by aerodynamics_analyst): handed to geometry (AR is geometry)\n"
-        "Use these responses in your verdict and your next recommendation.")
+        "Use these responses in your verdict, and record your verdict and next recommendation with "
+        "record_recommendation.")
 
 
 def test_the_integrator_is_told_when_nobody_responded():
@@ -509,7 +512,7 @@ def test_the_integrator_is_told_when_nobody_responded():
     carry = {"previous_integrator_design_state": JSON_FORMAT, "starting_design": {}}
     out = prompt_assembly.verbatim_stage_input(
         p["mdo_integrator"], [("simulation_executor", "DESIGN_STATE:\n  CONVERGED: true", None)], carry, "mdo_integrator")
-    assert out.endswith("No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+    assert "No agent reported RECOMMENDATION_IMPLEMENTED in this iteration." in out
     assert "Use these responses" not in out
 
 
@@ -567,9 +570,9 @@ def test_an_unreadable_recommendation_is_passed_on_as_written(caplog):
     with caplog.at_level(logging.WARNING, logger="src.coordination.prompt_assembly"):
         later = prompt_assembly.verbatim_stage_input(p["propulsion_analyst"], [("structures_analyst", "X", None)],
                                                      carry, "propulsion_analyst")
-    assert "B177: no RECOMMENDATION_TO could be read" in caplog.text
-    head = ("RECOMMENDATION from the previous iteration (mdo_integrator): it did not use the "
-            "RECOMMENDATION_TO / RECOMMENDED_CHANGE fields, so its recommendation is given as written.\n"
+    assert "B177: no RECOMMENDATION_TO recorded or readable" in caplog.text
+    head = ("RECOMMENDATION from the previous iteration (mdo_integrator): it was not recorded with "
+            "record_recommendation, so its recommendation is given as written.\n"
             "The previous iteration's assessment:\n")
     assert head + text.replace("TASK_COMPLETE", "").strip() in later
     assert "This recommendation is addressed to the role it names, but any agent may act" in later
@@ -578,7 +581,7 @@ def test_an_unreadable_recommendation_is_passed_on_as_written(caplog):
     assert first.count("Validate Aviary's drag polar derivation") == 1      # not repeated for the first agent
     integ = prompt_assembly.verbatim_stage_input(p["mdo_integrator"], [("simulation_executor", "X", None)],
                                                  carry, "mdo_integrator")
-    assert integ.endswith("No agent reported RECOMMENDATION_IMPLEMENTED in this iteration.")
+    assert "No agent reported RECOMMENDATION_IMPLEMENTED in this iteration." in integ
 
 
 def test_no_recommendation_text_means_no_block():

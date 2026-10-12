@@ -66,6 +66,9 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
                        "cycle_converged": store.get("prop_cycle_converged")},
         "mission_applied": _public(store.get("design_params_applied")),
         "sessions": dict(sessions or {}),
+        # B180: the recommendation, the responses to it and complexity requests, as recorded by the agents'
+        # tool calls (src/tools/recommendation_tools.py), in order. Carried to the next link with design.json.
+        "coordination_signals": list(store.get("coordination_signals") or []),
     }
 
 

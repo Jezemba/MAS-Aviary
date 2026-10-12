@@ -505,7 +505,11 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
         previous_design = json.loads(prev.read_text()) if prev.is_file() else None
     except (OSError, ValueError):
         previous_design = None
+    # B180: the recommendation the previous link's integrator RECORDED (record_recommendation), if it did.
+    recorded = [s for s in ((previous_design or {}).get("coordination_signals") or [])
+                if isinstance(s, dict) and s.get("kind") == "recommendation"]
     path.write_text(json.dumps({
+        "recommendation": recorded[-1] if recorded else None,
         "previous_design": previous_design,
         "link": link,
         "previous_integrator_design_state": integrator_text or "",

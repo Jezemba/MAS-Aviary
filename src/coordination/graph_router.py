@@ -162,7 +162,8 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
 
 
 def route_after_node(node: str, records: list, output: str, level: str, retries: int,
-                     registry: dict | None = None, failure: dict | None = None) -> Decision:
+                     registry: dict | None = None, failure: dict | None = None,
+                     requested_level: str | None = None) -> Decision:
     """The next node after one visit of `node` (not REVIEW, see route_after_review)."""
     registry = registry or {}
     if node == SIMULATION:
@@ -182,7 +183,8 @@ def route_after_node(node: str, records: list, output: str, level: str, retries:
         # Rule 1's cap, for every node: after RETRIES_PER_VISIT attempts the sweep moves on.
         decision = Decision(NODES[NODES.index(node) + 1], decision.level, "1-cap",
                             f"{KEY_TOOL[node]} did not succeed after {RETRIES_PER_VISIT} attempts; moving on")
-    asked = complexity_request(output)
+    # B180: a request_complexity tool call made during this visit; the text field only as the fallback.
+    asked = requested_level or complexity_request(output)
     if asked and LEVELS.index(asked) > LEVELS.index(decision.level):
         entry = ENTRY_OF_LEVEL[asked]
         # Escalating to a level whose entry is upstream of here: go back there and sweep forward.
@@ -202,19 +204,28 @@ def recommendation_target(rec: dict) -> str | None:
     return next((n for key, n in _ROLE_NODE.items() if key in to), None)
 
 
-def route_after_review(output: str, level: str) -> Decision:
+def route_after_review(output: str, level: str, recorded: dict | None = None,
+                       requested_level: str | None = None) -> Decision:
     """REVIEW: COMPLETE when the integrator is satisfied or gave nothing to act on; else rules 10-13."""
     from src.coordination.completion_signal import signals_completion
     from src.coordination.prompt_assembly import parse_recommendation
 
-    verdict = re.search(r"VERDICT\W*[:=]\s*\W*(COMPLETE|CONTINUE|RETRY)", output or "", re.I)
-    if (verdict and verdict.group(1).upper() == "COMPLETE") or signals_completion(output or "", "TASK_COMPLETE"):
-        return Decision(COMPLETE, level, "complete", "the integrator's verdict is COMPLETE")
-    rec = parse_recommendation(output)
+    # B180: what the integrator recorded with record_recommendation during this visit wins; its text is the
+    # fallback for an integrator that never called the tool.
+    if recorded:
+        if recorded.get("verdict") == "COMPLETE":
+            return Decision(COMPLETE, level, "complete", "the integrator recorded the verdict COMPLETE")
+        rec = {"RECOMMENDATION_TO": recorded.get("recommendation_to"),
+               "RECOMMENDED_CHANGE": recorded.get("recommended_change")}
+    else:
+        verdict = re.search(r"VERDICT\W*[:=]\s*\W*(COMPLETE|CONTINUE|RETRY)", output or "", re.I)
+        if (verdict and verdict.group(1).upper() == "COMPLETE") or signals_completion(output or "", "TASK_COMPLETE"):
+            return Decision(COMPLETE, level, "complete", "the integrator's verdict is COMPLETE")
+        rec = parse_recommendation(output)
     target = recommendation_target(rec) if rec else None
     if not target:
         return Decision(COMPLETE, level, "complete", "the integrator gave no recommendation to act on")
-    asked = complexity_request(output)
+    asked = requested_level or complexity_request(output)
     new_level = higher(level, LEVEL_OF_NODE[target])
     if asked:
         new_level = higher(new_level, asked)

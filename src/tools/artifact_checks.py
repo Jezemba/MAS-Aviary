@@ -209,10 +209,39 @@ def validated_parameters_before_finish(final_answer: Any, memory: Any, agent: An
     )
 
 
+class MissingRecordedRecommendation(Exception):
+    """The mdo_integrator tried to finish without recording its verdict with record_recommendation."""
+
+
+def recommendation_recorded_before_finish(final_answer: Any, memory: Any, agent: Any = None) -> bool:
+    """B180, OFF unless MAS_REQUIRE_RECORDED_RECOMMENDATION=1: the integrator records its verdict once.
+
+    Off by default (Jessica's choice pending): a missing recommendation is then the agent's behaviour, which is
+    what is measured. On, the integrator is reminded ONCE and may then finish without it.
+    """
+    import os
+
+    if os.environ.get("MAS_REQUIRE_RECORDED_RECOMMENDATION", "") != "1":
+        return True
+    tools = getattr(agent, "tools", None) or {}
+    name = getattr(agent, "name", None) or ""
+    if "record_recommendation" not in tools or "integrator" not in name.lower():
+        return True
+    from src.tools import recommendation_tools as rt
+
+    if rt.signals("recommendation") or getattr(agent, "_avion_recommendation_reminded", False):
+        return True
+    agent._avion_recommendation_reminded = True
+    _record("final_answer_refused_no_recorded_recommendation", 1)
+    raise MissingRecordedRecommendation(
+        "NOT FINISHED (reminder, once): record your verdict and your recommendation with record_recommendation "
+        "(verdict, recommendation_to, recommended_change), then give your final answer.")
+
+
 def with_artifact_checks(checks: list[Callable] | None = None) -> list[Callable]:
     """Existing final-answer checks plus the artifact checks, without duplicates."""
     combined = list(checks or [])
-    for check in (mesh_before_finish, validated_parameters_before_finish):
+    for check in (mesh_before_finish, validated_parameters_before_finish, recommendation_recorded_before_finish):
         if check not in combined:
             combined.append(check)
     return combined

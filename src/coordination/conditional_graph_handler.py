@@ -40,8 +40,8 @@ class ConditionalGraphHandler(ExecutionHandler):
                  f"You are running because: {reason} (rule {rule})."]
         if feedback:
             lines.append(f"Your previous attempt did not succeed: {feedback}. Try a different approach to fix this.")
-        lines.append("If you judge that the task needs more disciplines re-run, add COMPLEXITY: moderate or "
-                     "COMPLEXITY: complex, with the reason, to your DESIGN_STATE.")
+        lines.append("If you judge that the task needs more disciplines re-run, call request_complexity with the "
+                     "level (moderate or complex) and the reason.")
         return "\n".join(lines)
 
     def execute(self, assignments: list[Assignment], agents: dict, logger_=None, turn_offset: int = 0,
@@ -51,7 +51,14 @@ class ConditionalGraphHandler(ExecutionHandler):
         from src.tools.data_plane import get_design_state
         from src.tools.knowledge_base import get_kb
 
+        from src.tools import recommendation_tools as rt
+
         inst_logger = kwargs.get("logger", logger_)
+        # B180: graph-routed agents reclassify with a tool call; only this handler hands that tool out.
+        for agent in agents.values():
+            tools = getattr(agent, "tools", None)
+            if isinstance(tools, dict) and rt.RequestComplexity.name not in tools:
+                tools[rt.RequestComplexity.name] = rt.RequestComplexity()
         carry = prompt_assembly.read_carry_over() or {}
         if self._preinit:
             self.preinit_report = graph_preinit.prepare(carry)
@@ -74,6 +81,7 @@ class ConditionalGraphHandler(ExecutionHandler):
                 break
             kb = get_kb()
             start = len(kb.entries) if kb else 0
+            seq0 = rt.last_seq()
             base = prompt_assembly.verbatim_stage_input(
                 getattr(agent, "description", "") or "", sweep, carry_now, node,
                 prompt_assembly.read_design_json_text())
@@ -87,13 +95,16 @@ class ConditionalGraphHandler(ExecutionHandler):
                 error = str(exc)
             records = list(kb.entries[start:]) if kb else []
             state = get_design_state()
+            asked = [s["level"] for s in rt.complexity_requests_since(seq0)]
+            requested = max(asked, key=gr.LEVELS.index) if asked else None
+            recorded = next((s for s in reversed(rt.signals("recommendation")) if s["seq"] > seq0), None)
             if node == gr.REVIEW:
-                decision = gr.route_after_review(content, level)
+                decision = gr.route_after_review(content, level, recorded, requested)
             else:
                 infeasible = ((state.data_store or {}).get("_simulation_flown_infeasible") or {}) if state else {}
                 decision = gr.route_after_node(node, records, content if not error else f"error: {error}", level,
                                                retries, coupling.registry(state) if state else {},
-                                               infeasible.get("failure"))
+                                               infeasible.get("failure"), requested)
             route = {"turn": turn, "node": node, "level": level, "next": decision.next_node,
                      "next_level": decision.level, "rule": decision.rule, "reason": decision.reason}
             self.route_log.append(route)
@@ -115,7 +126,8 @@ class ConditionalGraphHandler(ExecutionHandler):
                 if node == gr.REVIEW and decision.next_node != gr.COMPLETE:
                     # The recommendation is acted on inside the link: the next sweep sees it as the previous
                     # iteration's assessment, and its responses accumulate afresh.
-                    carry_now = dict(carry_now or {}, previous_integrator_design_state=content)
+                    carry_now = dict(carry_now or {}, previous_integrator_design_state=content,
+                                     recommendation=dict(recorded, in_link=True) if recorded else None)
                     sweep = []
                 elif decision.next_node != gr.COMPLETE and gr.NODES.index(decision.next_node) <= gr.NODES.index(node):
                     # Back upstream: the roles from the target on re-run, so their earlier outputs are dropped.
