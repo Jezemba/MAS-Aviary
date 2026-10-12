@@ -17,6 +17,7 @@ block), which is how tool calling works; they are not repeated as prose.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -337,3 +338,220 @@ def make_agent_class():
             return messages
 
     return VerbatimToolCallingAgent
+
+
+# ---- networked and orchestrated (Jessica, 2026-10-10) -----------------------------------------------
+# The system message of each combination is one section of networked.md / orchestrated.md, sent as written.
+# Everything below adds DATA only, under the same labels sequential uses: the DESIGN_STATE (with the open
+# sessions), the TODO board, the peer's own recent work, design.json.
+
+from pathlib import Path as _Path
+
+_REPO = _Path(__file__).resolve().parents[2]
+BASELINE_CPACS = _REPO.parent / "mass-mcp" / "tests" / "fixtures" / "D150_simple.xml"
+DESIGN_JSON_LABEL = ("design.json (the framework's current record of this design, from tool results; "
+                     "read_design_json returns the same):")
+
+
+def system_text(source: str, section: str) -> str:
+    """The fenced text of '## <section>' in <source> (a file at the repo root), exactly as written."""
+    text = (_REPO / source).read_text(encoding="utf-8")
+    m = re.search(rf"^## {re.escape(section)}\s*\n+```[^\n]*\n(.*?)^```", text, flags=re.M | re.S)
+    if not m:
+        raise ValueError(f"{source} has no section '## {section}'")
+    # Her text carries the study's placeholders (<<WING_MASS_METHOD>>, <<MATERIAL>>, ...); the sequential YAML
+    # fills them at load, so these must too (found 2026-10-11: the literal placeholders reached the model).
+    from src.config.canonical import substitute_text
+
+    return substitute_text(m.group(1).strip("\n"))
+
+
+def with_carried_cpacs(text: str) -> str:
+    """On a later iteration the prompts' baseline CPACS path becomes the carried one (as for sequential)."""
+    co = read_carry_over() or {}
+    cpacs = (co.get("starting_design") or {}).get("CPACS_FILE")
+    if cpacs and cpacs != co.get("baseline_cpacs"):
+        text = re.sub(r"\S*/mass-mcp/tests/fixtures/D150_simple\.xml", lambda _m: cpacs, text)
+    return text
+
+
+def _baseline_lines(system: str) -> list[str]:
+    """Link 0: the starting design is the Default column of the prompt's own design-space table."""
+    geo: dict[str, list[str]] = {}
+    eng: list[str] = []
+    scale = None
+    for row in (system or "").splitlines():
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) != 7:
+            continue
+        where, default = cells[2], cells[4]
+        if "Aircraft.Engine.SCALE_FACTOR" in where:
+            scale = default
+        if not cells[1].startswith("Set"):
+            continue
+        m = re.search(r"tigl: `set_high_level_parameters`, .*?`(\w+)`, key `(\w+)`", where)
+        if m:
+            geo.setdefault(m.group(1), []).append(f"{m.group(2)} {default}")
+            continue
+        m = re.search(r"pycycle: `([\w.]+)`", where)
+        if m:
+            eng.append(f"{m.group(1)} {default}")
+    lines = [f"  CPACS_FILE: {BASELINE_CPACS}"] + [f"  {uid}: {', '.join(v)}" for uid, v in geo.items()]
+    if eng:
+        lines.append("  Engine inputs: " + ", ".join(eng))
+    if scale and re.fullmatch(r"[0-9.]+", scale):   # since B170 the framework sets it from propulsion
+        lines.append(f"  Mission: Aircraft.Engine.SCALE_FACTOR {scale}")
+    return lines
+
+
+def open_sessions() -> dict:
+    """The MCP sessions the framework has recorded as open (data_plane captures every session a tool creates)."""
+    try:
+        from src.tools import data_plane
+
+        ds = data_plane.get_design_state()
+        return {k: v for k, v in (getattr(ds, "sessions", None) or {}).items() if v}
+    except Exception:
+        return {}
+
+
+def sessions_lines(indent: str = "  ") -> list[str]:
+    return [f"{indent}{k}: {v}" for k, v in open_sessions().items()]
+
+
+def starting_design_state(system: str) -> str:
+    """The DESIGN_STATE every agent's first message opens with, with the sessions already open."""
+    co = read_carry_over()
+    parts: list[str] = []
+    if co:
+        integrator = re.sub(r"\s*TASK_COMPLETE\s*$", "", (co.get("previous_integrator_design_state") or "").strip())
+        if integrator:
+            parts.append(f"DESIGN_STATE from the previous iteration (mdo_integrator):\n{integrator}")
+        start = dict(co.get("starting_design") or {})
+        lines = ["DESIGN_STATE (the starting design for this iteration, from the previous iteration's design.json):"]
+        lines += _starting_design_block(start).splitlines()[1:]
+    else:
+        lines = ["DESIGN_STATE (the starting design for this iteration):"] + _baseline_lines(system)
+    sess = sessions_lines("    ")
+    if sess:
+        lines += ["  SESSIONS (already open -- reuse them):"] + sess
+    parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def sessions_block() -> str | None:
+    sess = sessions_lines()
+    return "SESSIONS open now (from design.json -- reuse them):\n" + "\n".join(sess) if sess else None
+
+
+def design_json_block() -> str | None:
+    dj = read_design_json_text()
+    return f"{DESIGN_JSON_LABEL}\n{dj}" if dj else None
+
+
+def _join(*parts) -> str:
+    return "\n\n".join(p for p in parts if p)
+
+
+RECAP_LINES = 10
+
+
+def work_recap(agent: str, board=None) -> str | None:
+    """A VERY short recap of one peer's own earlier work, from the knowledge base (Jessica, 2026-10-10)."""
+    from src.tools.knowledge_base import get_kb
+
+    lines: list[str] = []
+    for t in (board.read_todos() if board is not None else []):
+        if t.assigned_to == agent:
+            lines.append(f"  {t.status} {t.name}")
+    kb = get_kb()
+    entries = kb.select(agent=agent) if kb is not None else []
+    lines += [f"  #{e['seq']} {e['tool']} {e['status']}" for e in entries[-RECAP_LINES:]]
+    if not lines:
+        return None
+    return (f'YOUR WORK SO FAR ({agent}, from the knowledge base; read_design_knowledge(agent="{agent}", '
+            'mode="full") has the details):\n' + "\n".join(lines))
+
+
+def board_block(board, show_blocking: bool) -> str:
+    """The TODO board as data, then the full DESIGN_STATE each finished TODO posted."""
+    todos = board.read_todos()
+    done = {t.name for t in todos if t.status == "done"}
+    width = max((len(t.name) for t in todos), default=0)
+    rows, posted = [], []
+    for t in todos:
+        if t.status == "done":
+            state = f"done by {t.assigned_to}"
+            if t.result:
+                posted.append(f"DESIGN_STATE posted on the board by {t.name} ({t.assigned_to}):\n{t.result}")
+        elif t.status == "claimed":
+            state = f"claimed by {t.assigned_to}"
+        else:
+            state = t.status + (f" ({t.failure_reason})" if t.status == "failed" and t.failure_reason else "")
+            if show_blocking:
+                unmet = [d for d in t.depends_on if d not in done]
+                state += f"  [BLOCKED on {', '.join(unmet)}]" if unmet else "  [AVAILABLE]"
+        rows.append(f"  - {t.name:{width}s}  {state}")
+    return _join("TODO BOARD:\n" + "\n".join(rows), *posted)
+
+
+def peer_message(agent: str, system: str, board, show_blocking: bool) -> str:
+    """One networked peer's message for this cycle (its system message is sent separately)."""
+    return _join(work_recap(agent, board), starting_design_state(system), board_block(board, show_blocking),
+                 design_json_block())
+
+
+def orchestrator_first_message(system: str, stage: str | None = None) -> str:
+    return _join(stage, starting_design_state(system), design_json_block())
+
+
+def role_contracts(system: str) -> dict:
+    """Each role template's block from DELIVERABLE to its end (DESIGN_STATE, SESSION STATE FILE), by role name.
+
+    Jessica, 2026-10-11: attached by the framework to every agent the orchestrator creates under that name,
+    so the orchestrator cannot drop the DESIGN_STATE contract or the CPACS line from a persona.
+    """
+    parts = re.split(r"^AGENT NAME: (\w+)\n", system or "", flags=re.M)
+    out = {}
+    for i in range(1, len(parts) - 1, 2):
+        body = parts[i + 1]
+        k = body.find("DELIVERABLE")
+        if k >= 0:
+            out[parts[i]] = body[k:].strip("\n")
+    return out
+
+
+SUMMARY_LINE_CHARS = 400
+_STATE_LINE = re.compile(r"^\s*([A-Z][A-Z0-9_]{2,})\s*:\s*(.+?)\s*$")
+
+
+def summary_line(name: str, output: str) -> str:
+    """One line for an earlier agent: its DESIGN_STATE fields (KEY=value), else the start of its answer."""
+    fields = []
+    text = (output or "").strip()
+    try:
+        data = json.loads(text[text.index("{"):]) if "{" in text else None
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        fields = [f"{k}={v}" for k, v in data.items() if not isinstance(v, (dict, list))]
+    if not fields:
+        fields = [f"{m.group(1)}={m.group(2)}" for m in map(_STATE_LINE.match, text.splitlines()) if m]
+    line = ", ".join(fields) if fields else " ".join(text.split())
+    if len(line) > SUMMARY_LINE_CHARS:
+        line = line[:SUMMARY_LINE_CHARS] + "..."
+    return f"  {name}: {line}"
+
+
+def worker_message(task: str, system: str, previous: tuple[str, str] | None,
+                   earlier: list[tuple[str, str]] | None = None, inbox: list[str] | None = None) -> str:
+    """An orchestrated agent's message: the orchestrator's task, its stored messages to this agent, then the
+    DESIGN_STATE as data -- the previous agent's in full and (iterative, graph) every earlier one as a line."""
+    messages = ("Messages from the orchestrator:\n" + "\n".join(f"- {m}" for m in inbox)) if inbox else None
+    if previous is None:
+        return _join(task, messages, starting_design_state(system), design_json_block())
+    name, output = previous
+    summary = ("DESIGN_STATE summary of the agents before that:\n" + "\n".join(summary_line(n, o) for n, o in earlier)
+               if earlier else None)
+    return _join(task, messages, f"DESIGN_STATE from the agent that worked before you ({name}):\n{output}",
+                 summary, sessions_block(), design_json_block())

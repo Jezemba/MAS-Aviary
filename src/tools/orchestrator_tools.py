@@ -61,6 +61,17 @@ class OrchestratorContext:
     # mdo_f25_orchestrated_staged_pipeline).
     lifecycle_mode: str = "active"
 
+    # Verbatim mode (Jessica, 2026-10-10): a worker's system message is the persona the orchestrator
+    # wrote, nothing else, and every worker may message the orchestrator (message_orchestrator). The
+    # strategy sets ask_orchestrator; the orchestrator answers through reply_to_agent into replies.
+    verbatim: bool = False
+    ask_orchestrator: Callable | None = None
+    replies: dict = field(default_factory=dict)
+    in_message_turn: bool = False
+    message_sender: str | None = None          # the agent waiting for this message turn's reply
+    inbox: dict = field(default_factory=dict)  # agent name -> orchestrator messages for its next task
+    role_contracts: dict = field(default_factory=dict)  # role name -> her template block attached to its persona
+
 
 # NOTE: `list_graph_roles` is only PROVISIONED when `_graph_roles` is configured
 # (see OrchestratedStrategy), so naming it here unconditionally told the
@@ -75,11 +86,17 @@ ORCHESTRATOR_TOOL_NAMES = frozenset(
         "list_graph_roles",
         "create_agent",
         "assign_task",
+        "give_tools",
+        "reply_to_agent",
+        "message_orchestrator",
         "final_answer",
     }
 )
 
 DELEGATION_COMPLETE = "DELEGATION_COMPLETE"
+
+# What an agent receives when its message got no answer in the orchestrator's turn (Jessica, 2026-10-11).
+NO_REPLY = "The orchestrator did not reply. You can rephrase your question and send it again."
 
 
 class GatedFinalAnswer(Tool):
@@ -118,6 +135,9 @@ class GatedFinalAnswer(Tool):
 
     def forward(self, answer: str) -> str:
         ctx = self._context
+        if ctx.in_message_turn:
+            # Answering an agent's message ends the turn; delegation is not what is being checked.
+            return answer
         if not ctx.created_agents:
             raise ValueError(
                 "You have not created any agents yet. "
@@ -341,6 +361,36 @@ class CreateAgent(Tool):
 
         # Resolve tool objects.
         tool_objects = [ctx.available_tools[tn] for tn in tool_names]
+
+        if ctx.verbatim:
+            # The persona the orchestrator wrote is the whole system message; the agent can message
+            # the orchestrator; the reference tools are added as for sequential stages.
+            from src.coordination import prompt_assembly
+
+            # Her role template's DELIVERABLE / DESIGN_STATE / SESSION STATE FILE block is attached to the persona
+            # of every agent created under that role name (Jessica, 2026-10-11): the orchestrator writes the
+            # persona, but cannot drop the contract (v2no6: geometry never exported or reported CPACS_FILE).
+            contract = ctx.role_contracts.get(name)
+            agent = prompt_assembly.make_agent_class()(
+                tools=prompt_assembly.with_reference_tools(tool_objects) + [MessageOrchestrator(ctx, name)],
+                model=ctx.model,
+                name=name,
+                description=persona,
+                instructions=f"{persona}\n\n{contract}" if contract else persona,
+                max_steps=ctx.worker_max_steps,
+                add_base_tools=False,
+                prompt_templates=prompt_assembly.verbatim_prompt_templates(),
+                final_answer_checks=with_artifact_checks(ctx.worker_final_answer_checks),  # B31
+            )
+            ctx.agents[name] = agent
+            ctx.created_agents.append(name)
+            if ctx.on_delegation_change:
+                ctx.on_delegation_change()
+            result = {"success": True, "agent_name": name, "persona": persona, "tools_assigned": tool_names,
+                      "error": None}
+            if added_tools:
+                result["tools_added"] = added_tools
+            return json.dumps(result)
 
         # Build system prompt from persona.
         system_prompt = f"Reasoning: medium\n{persona}"
@@ -604,3 +654,100 @@ def _error(agent_name: str, message: str) -> str:
             "error": message,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Agent <-> orchestrator messages (Jessica, 2026-10-10)
+# ---------------------------------------------------------------------------
+
+
+class MessageOrchestrator(Tool):
+    """Optional for every worker, whatever its role: ask the orchestrator for something."""
+
+    name = "message_orchestrator"
+    description = (
+        "Send a message to the orchestrator, for example to ask for another agent or for a tool you do "
+        "not have. You wait for its reply, which is returned to you. Optional: you do not need to report "
+        "to the orchestrator when you finish."
+    )
+    inputs = {"message": {"type": "string", "description": "What you want to tell or ask the orchestrator."}}
+    output_type = "string"
+
+    def __init__(self, context: OrchestratorContext, agent_name: str, **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+        self._agent_name = agent_name
+
+    def forward(self, message: str) -> str:
+        ctx = self._context
+        ctx.replies.pop(self._agent_name, None)
+        if ctx.ask_orchestrator is not None:
+            ctx.ask_orchestrator(self._agent_name, message)
+        replies = ctx.replies.pop(self._agent_name, None)
+        if replies:
+            return "\n\n".join(replies)
+        return NO_REPLY
+
+
+class ReplyToAgent(Tool):
+    """Orchestrator: send a message to an agent (Jessica, 2026-10-11).
+
+    The agent waiting on message_orchestrator receives it as the result of its call. Any other agent receives it
+    with its next task (staged: when its stage comes around), so a message is never lost. No recipient is
+    refused; the message turn is bounded by its step budget, not by the reply.
+    """
+
+    name = "reply_to_agent"
+    description = (
+        "Send a message to an agent. The agent that messaged you with message_orchestrator receives it as the "
+        "result of its call; any other agent receives it with its next task."
+    )
+    inputs = {
+        "agent_name": {"type": "string", "description": "The agent to send the message to."},
+        "message": {"type": "string", "description": "Your message."},
+    }
+    output_type = "string"
+
+    def __init__(self, context: OrchestratorContext, **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+
+    def forward(self, agent_name: str, message: str) -> str:
+        ctx = self._context
+        if ctx.in_message_turn and agent_name == ctx.message_sender:
+            ctx.replies.setdefault(agent_name, []).append(message)
+            return json.dumps({"success": True, "agent_name": agent_name, "delivered": "now", "error": None})
+        ctx.inbox.setdefault(agent_name, []).append(message)
+        return json.dumps({"success": True, "agent_name": agent_name, "delivered": "with its next task",
+                           "error": None})
+
+
+class GiveTools(Tool):
+    """Orchestrator: give an existing agent more tools (usable from its next step)."""
+
+    name = "give_tools"
+    description = "Give an existing agent more tools. tools: names from list_available_tools."
+    inputs = {
+        "agent_name": {"type": "string", "description": "An agent you created."},
+        "tools": {"type": "any", "description": "List of tool names from list_available_tools."},
+    }
+    output_type = "string"
+
+    def __init__(self, context: OrchestratorContext, **kwargs):
+        super().__init__(**kwargs)
+        self._context = context
+
+    def forward(self, agent_name: str, tools) -> str:
+        ctx = self._context
+        agent = ctx.agents.get(agent_name)
+        if agent is None or agent_name in ctx.system_agent_names:
+            return _error(agent_name, f"Agent '{agent_name}' not found among the agents you created")
+        names = _parse_tool_names(tools)
+        unknown = [n for n in names if n not in ctx.available_tools]
+        if unknown:
+            return _error(agent_name, f"Tool(s) {unknown} not found. Available: {sorted(ctx.available_tools)}")
+        added = [n for n in names if n not in agent.tools]
+        for n in added:
+            agent.tools[n] = ctx.available_tools[n]
+        return json.dumps({"success": True, "agent_name": agent_name, "tools_added": added,
+                           "tools_now": sorted(agent.tools), "error": None})

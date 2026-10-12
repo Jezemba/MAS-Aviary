@@ -59,7 +59,13 @@ EXPECTED_RENDER = {
 
 
 def _text(path: str) -> str:
-    return (_ROOT / path).read_text()
+    """The config, plus the prompt source it sends verbatim (prompt_source, 2026-10-10)."""
+    import re
+
+    raw = (_ROOT / path).read_text()
+    for src in re.findall(r"^\s*prompt_source:\s*(\S+)", raw, flags=re.M):
+        raw += "\n" + (_ROOT / src).read_text()
+    return raw
 
 
 @pytest.mark.parametrize("cfg", COMBO_CONFIGS)

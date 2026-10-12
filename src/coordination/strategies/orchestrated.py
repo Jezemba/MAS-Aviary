@@ -20,6 +20,7 @@ Modes:
     (SUCCESS/FAILED only)
 """
 
+import logging
 import re
 
 from src.coordination.completion_signal import signals_completion
@@ -33,11 +34,18 @@ from src.tools.orchestrator_tools import (
     AssignTask,
     CreateAgent,
     GatedFinalAnswer,
+    GiveTools,
     ListAvailableTools,
     ListGraphRoles,
     OrchestratorContext,
+    ReplyToAgent,
     _check_result_signals,
 )
+
+logger = logging.getLogger(__name__)
+
+# Steps the orchestrator gets to answer an agent's message. Not shown to the orchestrator.
+MESSAGE_TURN_STEPS = 6
 
 # Sentinel used by _sync_orchestrator_tools to store the GatedFinalAnswer
 # instance so it can be added/removed from the agent's tool dict dynamically.
@@ -124,6 +132,8 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._worker_max_steps: int = 8
         self._termination_keyword: str = "TASK_COMPLETE"
         self._pending_phase_note: str | None = None
+        self._verbatim: bool = False
+        self._system_text: str = ""
         self._phase_gap_reported: bool = False
         self._phase_gap_pending: str | None = None
         self._phase_gap_ignored: str | None = None
@@ -215,7 +225,26 @@ class OrchestratedStrategy(CoordinationStrategy):
         # task-specific coupling info OUT of the generic orchestrator
         # YAML; a different design task swaps the skill folder. Plumbed
         # in from Coordinator.from_config when config.skills.path is set.
-        _inject_skill_reference(orchestrator_agent, config.get("_skill_loader"))
+        # Verbatim (Jessica, 2026-10-10): the orchestrator's system message is this combination's section
+        # of orchestrated.md, exactly as written, and every message the framework sends it or its agents is
+        # data only (prompt_assembly). set_mode runs every time so another combination's mode cannot leak in.
+        from src.coordination import prompt_assembly
+
+        prompt_assembly.set_mode(config.get("_prompt_assembly"))
+        self._verbatim = prompt_assembly.is_verbatim()
+        self._system_text = ""
+        if self._verbatim:
+            section = ("orchestrated_staged_pipeline" if self._lifecycle_mode == "per_stage"
+                       else "orchestrated_graph_routed" if config.get("_graph_roles")
+                       else "orchestrated_iterative_feedback")
+            self._system_text = prompt_assembly.with_carried_cpacs(
+                prompt_assembly.system_text(config.get("_prompt_source") or "orchestrated.md", section))
+            orchestrator_agent.instructions = self._system_text
+            self._role_contracts = prompt_assembly.role_contracts(self._system_text)
+            orchestrator_agent.prompt_templates = prompt_assembly.verbatim_prompt_templates()
+            orchestrator_agent.__class__ = prompt_assembly.make_agent_class()
+        else:
+            _inject_skill_reference(orchestrator_agent, config.get("_skill_loader"))
 
         # Collect available worker tools from config or extract from agents.
         worker_tools = config.get("_worker_tools", {})
@@ -257,6 +286,9 @@ class OrchestratedStrategy(CoordinationStrategy):
             required_tool_phases=config.get("_required_tool_phases", {}),
             required_result_signals=config.get("_required_result_signals", []),
             lifecycle_mode=self._lifecycle_mode,
+            verbatim=self._verbatim,
+            role_contracts=getattr(self, "_role_contracts", {}),
+            ask_orchestrator=self._ask_orchestrator if self._verbatim else None,
         )
 
         # Create orchestrator management tools.
@@ -272,6 +304,8 @@ class OrchestratedStrategy(CoordinationStrategy):
             CreateAgent(self._context),
             AssignTask(self._context),
         ]
+        if self._verbatim:
+            orch_tools += [GiveTools(self._context), ReplyToAgent(self._context)]
 
         # If graph roles are configured, give the orchestrator a tool to
         # discover them.  This is a deterministic Python function (not a
@@ -677,7 +711,9 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._sync_orchestrator_tools()
 
         # Build input context for orchestrator.
-        if self._lifecycle_mode == "per_stage" and self._pipeline_stage_names:
+        if self._verbatim:
+            input_context = self._verbatim_orchestrator_input(history)
+        elif self._lifecycle_mode == "per_stage" and self._pipeline_stage_names:
             input_context = self._build_per_stage_context(history, current_state)
         elif not history:
             input_context = current_state.get("task", "")
@@ -794,6 +830,22 @@ class OrchestratedStrategy(CoordinationStrategy):
             self._context.assignments.clear()
         # Remove final_answer so the orchestrator must delegate again.
         self._sync_orchestrator_tools()
+
+        if self._verbatim:
+            from src.coordination import prompt_assembly
+
+            outputs = [f"{m.agent_name}:\n{m.content}" for m in history
+                       if isinstance(m, AgentMessage) and m.agent_name != self._orchestrator_name]
+            context = prompt_assembly._join("run_simulation did not succeed. What each agent produced:",
+                                            *outputs, prompt_assembly.design_json_block())
+            self._orchestrator_turns_used += 1
+            return CoordinationAction(
+                action_type="invoke_agent",
+                agent_name=self._orchestrator_name,
+                input_context=context,
+                metadata={"phase": "creation", "orchestrator_turn": self._orchestrator_turns_used,
+                          "retry_reason": "simulation_failed"},
+            )
 
         context = (
             "SIMULATION FAILED — all run_simulation calls returned errors. "
@@ -949,6 +1001,78 @@ class OrchestratedStrategy(CoordinationStrategy):
 
         return "\n".join(parts).strip()
 
+    # -- verbatim messages (Jessica, 2026-10-10): data only -------------------------------------------
+
+    def _last_worker(self, history: list):
+        for m in reversed(history or []):
+            if isinstance(m, AgentMessage) and m.agent_name != self._orchestrator_name:
+                return m
+        return None
+
+    def _verbatim_orchestrator_input(self, history: list) -> str:
+        from src.coordination import prompt_assembly
+
+        note, self._pending_phase_note = self._pending_phase_note, None
+        if self._lifecycle_mode == "per_stage" and self._pipeline_stage_names:
+            stages = self._pipeline_stage_names
+            last = self._last_worker(history)
+            if last is None:
+                return prompt_assembly._join(note, prompt_assembly.orchestrator_first_message(
+                    self._system_text, f"Stage 1 of {len(stages)}: {stages[0]}"))
+            idx = stages.index(last.agent_name) if last.agent_name in stages else -1
+            nxt = (f"Stage {idx + 2} of {len(stages)}: {stages[idx + 1]}" if 0 <= idx < len(stages) - 1
+                   else f"Stage {idx + 1} of {len(stages)} ({last.agent_name}) has run.")
+            return prompt_assembly._join(
+                note, nxt, f"DESIGN_STATE from {last.agent_name}:\n{last.content or last.error or ''}",
+                prompt_assembly.design_json_block())
+        return prompt_assembly._join(note, prompt_assembly.orchestrator_first_message(self._system_text))
+
+    def _verbatim_worker_input(self, task: str, history: list, agent_name: str) -> str:
+        """The orchestrator's task, its stored messages to this agent, the previous agent's DESIGN_STATE in full;
+        outside the staged pipeline also every earlier agent's DESIGN_STATE as a summary line (Jessica, 2026-10-11)."""
+        from src.coordination import prompt_assembly
+
+        last = self._last_worker(history)
+        previous = (last.agent_name, last.content or last.error or "") if last is not None else None
+        earlier = []
+        if previous is not None and self._lifecycle_mode != "per_stage":
+            seen = {last.agent_name}
+            for m in reversed(history[:history.index(last)]):
+                if (isinstance(m, AgentMessage) and m.agent_name != self._orchestrator_name
+                        and m.agent_name not in seen and (m.content or "").strip()):
+                    seen.add(m.agent_name)
+                    earlier.insert(0, (m.agent_name, m.content))
+        inbox = self._context.inbox.pop(agent_name, None) if self._context else None
+        return prompt_assembly.worker_message(task, self._system_text, previous, earlier, inbox)
+
+    def _ask_orchestrator(self, sender: str, message: str) -> None:
+        """An agent called message_orchestrator: the orchestrator gets the message and nothing else.
+
+        It keeps its own earlier turns (reset=False), so it decides from what it already knows, and
+        answers with reply_to_agent; anything it creates or assigns is queued as usual.
+        """
+        orch = self._agents.get(self._orchestrator_name)
+        if orch is None or self._context is None:
+            return
+        thinking = getattr(self._model, "thinking_enabled", None)
+        if thinking is not None:
+            self._model.thinking_enabled = False
+        self._context.in_message_turn = True
+        self._context.message_sender = sender
+        orch.tools[_FINAL_ANSWER_KEY] = self._gated_final_answer
+        try:
+            # The turn is bounded by MESSAGE_TURN_STEPS, which the orchestrator is not told (Jessica, 2026-10-11);
+            # it may message several agents. v2no6: an unbounded turn ran 20 steps, re-queuing assignments.
+            orch.run(f"MESSAGE from {sender}:\n{message}", reset=False, max_steps=MESSAGE_TURN_STEPS)
+        except Exception as exc:   # the asking agent then gets NO_REPLY rather than an error inside its tool call
+            logger.warning("message turn for %s ended with %s", sender, exc)
+        finally:
+            self._context.in_message_turn = False
+            self._context.message_sender = None
+            self._sync_orchestrator_tools()
+            if thinking is not None:
+                self._model.thinking_enabled = thinking
+
     def _stage_tool_hint(self, stage_name: str) -> str:
         """Best-effort: map a pipeline stage name to a tool-list hint
         based on the required_tool_phases dict (defined in the
@@ -1077,6 +1201,8 @@ class OrchestratedStrategy(CoordinationStrategy):
             if prev
             else match['task']
         )
+        if self._verbatim:
+            input_context = self._verbatim_worker_input(match["task"], history, match["agent_name"])
 
         return CoordinationAction(
             action_type="invoke_agent",
@@ -1142,15 +1268,30 @@ class OrchestratedStrategy(CoordinationStrategy):
         # handler the raw user task so its per-state prompts drive flow.
         if self._graph_roles:
             raw_task = current_state.get("task", "") or assignment["task"]
+            metadata = {
+                "phase": "execution",
+                "assignment_index": self._execution_index,
+                "graph_routed_raw_task": True,
+            }
+            if self._verbatim:
+                # The graph runs every state; each state's agent gets the task the orchestrator gave it.
+                raw_task = ""
+                metadata["assigned_tasks"] = {a["agent_name"]: a["task"] for a in assignments}
+                metadata["system_text"] = self._system_text
+                metadata["inbox"] = self._context.inbox          # the same dict: messages stored mid-graph arrive
             return CoordinationAction(
                 action_type="invoke_agent",
                 agent_name=assignment["agent_name"],
                 input_context=raw_task,
-                metadata={
-                    "phase": "execution",
-                    "assignment_index": self._execution_index,
-                    "graph_routed_raw_task": True,
-                },
+                metadata=metadata,
+            )
+
+        if self._verbatim:
+            return CoordinationAction(
+                action_type="invoke_agent",
+                agent_name=assignment["agent_name"],
+                input_context=self._verbatim_worker_input(assignment["task"], history, assignment["agent_name"]),
+                metadata={"phase": "execution", "assignment_index": self._execution_index},
             )
 
         # Build input: task + previous agent output.

@@ -112,6 +112,8 @@ class StagedPipelineHandler(ExecutionHandler):
 
     def __init__(self, config: dict | None = None):
         config = config or {}
+        # "as_given" (orchestrated, verbatim): the strategy already built the agent's whole message.
+        self._worker_input: str = config.get("worker_input", "")
 
         self._context_mode: str = config.get("context_mode", "last_only")
         if self._context_mode not in _CONTEXT_MODES:
@@ -404,7 +406,9 @@ class StagedPipelineHandler(ExecutionHandler):
             # previous stage's DESIGN_STATE -- nothing else (Jessica, 2026-10-04).
             from src.coordination import prompt_assembly
 
-            if prompt_assembly.is_verbatim():
+            if self._worker_input == "as_given":
+                context = assignment.task
+            elif prompt_assembly.is_verbatim():
                 context = prompt_assembly.verbatim_stage_input(
                     getattr(agent, "description", "") or "", previous_outputs,
                     prompt_assembly.read_carry_over(), stage.name if stage else None,

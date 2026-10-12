@@ -163,6 +163,11 @@ class Coordinator:
             result_signals = agents_yaml.get("required_result_signals")
             if result_signals:
                 coord_config["_required_result_signals"] = result_signals
+            # Verbatim prompt assembly (Jessica, 2026-10-10): the orchestrator's system message comes
+            # from <prompt_source>, read by OrchestratedStrategy.initialize.
+            for key in ("prompt_assembly", "prompt_source"):
+                if key in agents_yaml:
+                    coord_config["_" + key] = agents_yaml[key]
 
             # Pass a SkillLoader so the orchestrated strategy can inject
             # task-specific reference content (currently data_flow.md, the
@@ -530,7 +535,8 @@ class Coordinator:
                     metadata={"parallel_cycle": (action.metadata or {}).get("cycle")},
                 )
             try:
-                result = agent.run(task)
+                # A strategy may give each peer its own message (networked verbatim mode).
+                result = agent.run(((action.metadata or {}).get("inputs") or {}).get(peer_name, task))
                 content = str(result) if result is not None else ""
                 return AgentMessage(
                     agent_name=peer_name,
