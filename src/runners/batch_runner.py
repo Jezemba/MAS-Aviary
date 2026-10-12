@@ -19,6 +19,7 @@ import argparse
 import gc
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
@@ -901,6 +902,76 @@ def _regex_extract_metric(
     return None
 
 
+def _mission_metrics_from_kb() -> dict | None:
+    """The mission metrics exactly as the tools returned them, from THIS run's knowledge base (B179).
+
+    Returns None when no knowledge base is configured in this process (then the caller reads the
+    messages' tool outputs). Otherwise a dict with ``flown`` and, when a mission was flown, the five
+    metrics and ``converged``: the LAST successful ``run_simulation`` of this chain link and runner
+    attempt, completed by any later successful ``get_results`` for the same session (reserve fuel and
+    zero-fuel weight are only in get_results). Agent text is never read.
+
+    Why (aipexws8 v2nothink, 2026-10-12): the copies of tool outputs kept on messages are cut at 2000
+    characters; a non-converged run_simulation (failure block + residuals) is longer, its JSON did not
+    parse, and the prose regex took over -- "Gross Mass: 101409 kg" gave gtow_kg 0.0, and a missed
+    fuel line made a flown link "zero fuel": link 1 was thrown away three times with 22,998-23,030 kg
+    burned. The knowledge base keeps the parsed tool result itself.
+    """
+    from src.tools import knowledge_base as kbm
+
+    cfg = kbm._run_config
+    entries: list[dict] = []
+    path = cfg.get("path")
+    if path and os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue
+    else:
+        kb = kbm.get_kb()
+        entries = list(kb.entries) if kb is not None else []
+        if not entries and not path:
+            return None
+    link, attempt = cfg.get("chain_link"), cfg.get("attempt")
+    entries = [e for e in entries
+               if (link is None or e.get("chain_link") == link) and (attempt is None or e.get("attempt") == attempt)]
+
+    def _metrics(outputs: dict) -> dict:
+        found = {}
+        for holder in (outputs.get("summary"), outputs):
+            if isinstance(holder, dict):
+                for k in _METRIC_KEYS:
+                    if k not in found and holder.get(k) is not None:
+                        try:
+                            found[k] = float(holder[k])
+                        except (TypeError, ValueError):
+                            pass
+        return found
+
+    sim_idx = max((i for i, e in enumerate(entries)
+                   if e.get("tool") == "run_simulation" and e.get("status") == "success"
+                   and isinstance(e.get("outputs"), dict)), default=None)
+    if sim_idx is None:
+        return {"flown": False}
+    sim = entries[sim_idx]["outputs"]
+    out = {k: None for k in _METRIC_KEYS}
+    out.update(_metrics(sim))
+    converged = sim.get("converged")
+    session = sim.get("session_id")
+    for e in entries[sim_idx + 1:]:
+        o = e.get("outputs")
+        if e.get("tool") == "get_results" and e.get("status") == "success" and isinstance(o, dict) \
+                and (session is None or o.get("session_id") in (None, session)):
+            out.update(_metrics(o))
+            if o.get("converged") is not None:
+                converged = o.get("converged")
+    out["converged"] = bool(converged) if converged is not None else None
+    out["flown"] = True
+    return out
+
+
 def _extract_aviary_eval_from_messages(messages: list[AgentMessage]) -> dict | None:
     """Extract Aviary optimization results from agent messages.
 
@@ -913,55 +984,29 @@ def _extract_aviary_eval_from_messages(messages: list[AgentMessage]) -> dict | N
     zero_fuel_weight_kg, converged, optimality_gap_pct, verdict — or None if
     no eval data found.
     """
-    # Primary: extract from tool call outputs (ground truth).
-    tool_result = _extract_from_tool_outputs(messages)
+    # B179 (Jessica, 2026-10-12): the metrics are reported straight from the tools, never searched for
+    # in agent text. The source is this run's knowledge base (the parsed tool results); without one
+    # (no runner configured it), the messages' own tool outputs. The prose fallback that used to fill
+    # gaps (B19-gated) is gone: it produced gtow_kg 0.0 and false "zero fuel" links (v2nothink).
+    kb_metrics = _mission_metrics_from_kb()
+    if kb_metrics is not None:
+        if not kb_metrics.get("flown"):
+            return None
+        tool_result = kb_metrics
+    else:
+        tool_result = _extract_from_tool_outputs(messages)
+        if tool_result is None:
+            return None
+    fuel = tool_result.get("fuel_burned_kg")
+    gtow = tool_result.get("gtow_kg")
+    wing = tool_result.get("wing_mass_kg")
+    reserve = tool_result.get("reserve_fuel_kg")
+    zfw = tool_result.get("zero_fuel_weight_kg")
+    converged = tool_result.get("converged")
+    converged = True if converged is None else bool(converged)
 
-    # Start with tool-output values (may have None for truncated fields).
-    fuel = tool_result["fuel_burned_kg"] if tool_result else None
-    gtow = tool_result["gtow_kg"] if tool_result else None
-    wing = tool_result["wing_mass_kg"] if tool_result else None
-    reserve = tool_result["reserve_fuel_kg"] if tool_result else None
-    zfw = tool_result["zero_fuel_weight_kg"] if tool_result else None
-    converged = tool_result["converged"] if tool_result else True
-
-    # The prose fallback exists for a REAL mission whose tool output got
-    # truncated. It must never manufacture metrics for a mission that never ran.
-    # Observed twice (.claude/BUGS.md B19): a run that never called
-    # run_simulation / get_results / set_aircraft_parameters still reported
-    # fuel_burned_kg 24908.495 and gtow_kg 78126.0, because structures_analyst
-    # relabelled mass-mcp's mFuel_kg (structural fuel CAPACITY) and mTOM_kg as
-    # mission results in its prose and _FUEL_RE believed it. The second
-    # occurrence was classified converged=True, so nothing downstream would
-    # have excluded it. Gate the fallback on evidence a mission actually ran.
-    mission_ran = any(
-        tc.tool_name in _MISSION_EXECUTION_TOOLS
-        for msg in messages
-        for tc in msg.tool_calls
-        if tc.error is None
-    )
-
-    # Fallback: regex on agent content for any metric still None.
-    if fuel is None and mission_ran:
-        fuel = _regex_extract_metric(_FUEL_RE, messages)
-    if gtow is None and mission_ran:
-        gtow = _regex_extract_metric(_GTOW_RE, messages)
-    if wing is None and mission_ran:
-        wing = _regex_extract_metric(_WING_MASS_RE, messages)
-    if reserve is None and mission_ran:
-        reserve = _regex_extract_metric(_RESERVE_FUEL_RE, messages)
-    if zfw is None and mission_ran:
-        zfw = _regex_extract_metric(_ZFW_RE, messages)
-
-    # Convergence from agent content (if not found in tool output).
-    if tool_result is None or not tool_result.get("converged", True):
-        for msg in reversed(messages):
-            m = _CONVERGED_RE.search(msg.content)
-            if m:
-                val = m.group(1).lower()
-                converged = val in ("true", "0")
-                break
-
-    # Optimality gap and verdict always from agent content.
+    # Optimality gap and verdict are the integrator's own assessment (no tool returns them), so they
+    # are the only values still read from agent content.
     opt_gap = _regex_extract_metric(_OPT_GAP_RE, messages) or 0.0
     verdict = None
     for msg in reversed(messages):
