@@ -79,6 +79,29 @@ class Recorder:
         self.rows: list[dict] = []
         self._done: set = set()
 
+    # Graph-routed reads each role's tool records; a stub leaves the record its role's success (or the
+    # scripted failure) would leave. --fail ROLE:CODE makes that role's FIRST call fail with that error code.
+    fail: dict = {}
+
+    def _tool_record(self, agent_name: str) -> None:
+        from src.coordination import graph_router as gr
+        from src.tools.knowledge_base import get_kb
+
+        role = "mdo_integrator" if "integrator" in agent_name.lower() else role_of(agent_name)
+        kb, tool = get_kb(), gr.KEY_TOOL.get(role or "")
+        if kb is None or not tool:
+            return
+        code = self.fail.pop(role, None)
+        if code:
+            out = {"error_code": code, "error": f"sandbox-scripted {code}", "summary": {"fuel_burned_kg": 0.0}}
+            kb.entries.append({"tool": tool, "agent": agent_name, "status": "failed", "outputs": out,
+                               "note": f"sandbox-scripted {code}"})
+            return
+        out = {"success": True, "valid": True}
+        if tool == "run_simulation":
+            out = {"success": True, "converged": False, "summary": {"fuel_burned_kg": 22998.6, "gtow_kg": 102187.6}}
+        kb.entries.append({"tool": tool, "agent": agent_name, "status": "success", "outputs": out, "note": ""})
+
     def install(self, agent_name: str, agent) -> None:
         if id(agent) in self._done:
             return
@@ -92,6 +115,8 @@ class Recorder:
             task = args[0] if args else kwargs.get("task", "")
             t0 = time.time()
             result = orig(*args, **kwargs) if real else canned
+            if not real:
+                self._tool_record(agent_name)
             self.rows.append({"agent": agent_name, "real": real, "seconds": round(time.time() - t0, 1),
                               "input": str(task), "output": str(result)})
             return result
@@ -148,6 +173,15 @@ def run_link(combo, config, link_dir: Path, link: int, carried: str, recorder: R
     result = run_combination(combo, task, config, session_id="handoff-sandbox-session",
                              model=_DummyModel() if ALL_STUBS else None)
     rows = recorder.rows[start:]
+    routes = [m.get("metadata", {}).get("graph_route") for m in (getattr(result, "messages", None) or [])
+              if isinstance(m, dict) and m.get("metadata", {}).get("graph_route")]
+    if routes:
+        (link_dir / "graph_route.json").write_text(json.dumps(routes, indent=2))
+        stop = next((m["metadata"].get("graph_stop_reason") for m in reversed(result.messages)
+                     if isinstance(m, dict) and m.get("metadata", {}).get("graph_stop_reason")), None)
+        pre = next((m["metadata"].get("graph_preinit") for m in reversed(result.messages)
+                    if isinstance(m, dict) and m.get("metadata", {}).get("graph_preinit") is not None), None)
+        (link_dir / "graph_summary.json").write_text(json.dumps({"stop": stop, "preinit": pre}, indent=2, default=str))
     status = {k: str(getattr(result, k, None))[:2000] for k in ("status", "error", "success", "termination_reason")}
     (link_dir / "run_status.json").write_text(json.dumps(status, indent=2))
     print(f"    link {link}: {len(rows)} agent calls; {status}", flush=True)
@@ -195,6 +229,13 @@ def assess(combo_name: str, link0_integrator: str, link1_dir: Path) -> list[str]
                 lines.append(f"{r['agent']}: {r['input'][:1500]}")
                 lines.append("-" * 60)
         lines += ["```", "</details>"]
+    for link in ("link0", "link1"):
+        route = link1_dir.parent / link / "graph_route.json"
+        if route.is_file():
+            lines += ["", f"**Graph route, {link}:**", "", "| # | role | level | -> next | rule | reason |", "|---|---|---|---|---|---|"]
+            for i, r in enumerate(json.loads(route.read_text()), 1):
+                lines.append(f"| {i} | {r['node']} | {r['level']} | {r['next']} ({r['next_level']}) | {r['rule']} | "
+                             f"{str(r['reason'])[:140]} |")
     lines.append("")
     return lines
 
@@ -205,6 +246,7 @@ def main() -> int:
     ap.add_argument("--combos", default=",".join(COMBOS))
     ap.add_argument("--config", default="config/mdo_f25_run_qwen32b_2gpu.yaml")
     ap.add_argument("--recorded", type=Path, default=RECORDED, help="recorded link with events.jsonl + design.json")
+    ap.add_argument("--fail", action="append", default=[], help="ROLE:ERROR_CODE -- that stub role's first call fails")
     ap.add_argument("--all-stubs", action="store_true", help="plumbing smoke test: no model, the integrator is stubbed too")
     ap.add_argument("--out", type=Path, default=ROOT / "logs/handoff_sandbox" / time.strftime("%Y%m%d-%H%M%S"))
     args = ap.parse_args()
@@ -216,6 +258,7 @@ def main() -> int:
     config = load_config(args.config)
     by_name = {c.name: c for c in AVIARY_COMBINATIONS}
     recorder = Recorder(recorded_outputs(args.all_stubs))
+    recorder.fail = dict(f.split(":", 1) for f in args.fail)
     patch_runner(recorder)
     args.out.mkdir(parents=True, exist_ok=True)
     report = ["# Hand-off sandbox: recommendation given? passed to the right agent?", "",
