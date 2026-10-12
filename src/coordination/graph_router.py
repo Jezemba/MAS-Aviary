@@ -45,7 +45,8 @@ PARAM_PRODUCER = [(re.compile(r"LIFT_COEFFICIENT|DRAG_COEFF", re.I), AERO),
 # "increase aspect ratio to cut induced drag" is a geometry change, whatever role it was addressed to.
 RECOMMENDATION_WORDS = [
     (GEOMETRY, r"aspect[ _-]?ratio|wing[ _-]?area|\bspan\b|sweep|taper|planform|fuselage|chord|dihedral|"
-               r"Wing1|set_high_level_parameters|\bmorph"),
+               r"Wing1|set_high_level_parameters|\bmorph|geometry|airfoil|aerofoil|thickness|leading[ _-]?edge|"
+               r"\bcamber|\btwist|incidence"),
     (PROPULSION, r"\bBPR\b|bypass|fan[ ._]?PR|\bLPC\b|\bHPC\b|\bT4|Fn_DES|thrust|\bengine\b|\bTSFC\b|\bSFC\b|cycle|pycycle"),
     (MASS, r"\bmass\b|material|structur|\bOEM\b|\bMTOM\b|wing[ _]?weight|composite|aluminium|aluminum"),
     (AERO, r"\bmesh\b|\btrim|\bCFD\b|\bSU2\b|\bAOA\b|angle of attack|\bCL\b|\bCD\b|lift coefficient"),

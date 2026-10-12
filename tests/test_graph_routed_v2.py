@@ -201,3 +201,11 @@ def test_the_budget_stops_the_link(monkeypatch):
 def test_the_retry_cap_also_applies_to_the_simulation():
     d = gr.route_after_node(gr.SIMULATION, [], "", gr.SIMPLE, gr.RETRIES_PER_VISIT - 1)
     assert (d.next_node, d.rule) == (gr.REVIEW, "1-cap")
+
+
+def test_a_wing_shape_recommendation_goes_to_geometry_whatever_it_mentions_about_drag():
+    """gr_flow link 1, step 3: 'Reduce cruise drag ... optimizing wing geometry (leading edge radius and airfoil
+    shape)' went to aero; it is a geometry change."""
+    out = ("RECOMMENDATION_TO: aerodynamics_analyst\nRECOMMENDED_CHANGE: Reduce cruise drag coefficient by optimizing "
+           "wing geometry (particularly leading edge radius and airfoil shape)\nVERDICT: CONTINUE")
+    assert gr.route_after_review(out, gr.SIMPLE).next_node == gr.GEOMETRY

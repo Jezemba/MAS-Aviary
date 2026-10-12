@@ -11,6 +11,9 @@ bottom: the newest entries are last.
 - [2026-10-04] Look up exact names with the discovery tools before using them: get_design_space (aviary), get_design_inputs (pycycle), get_valid_config_options (su2). A guessed name costs a failed call.
 - [2026-10-04] Values coupled between disciplines are passed by the framework: geometry to aviary (wing area, aspect ratio, sweep, taper, fuselage), su2 CL and drag to aviary, wing mass to aviary, mass to pycycle Fn_DES, the mission to su2, mass and pycycle. Do not retype them into parameter dictionaries.
 - [2026-10-04] read_design_json returns the current design as the framework captured it from tool results. Prefer it to values copied from earlier stages' text.
+- [2026-10-12] The design variables are the ones in design.json design_space and the prompt table: the wing planform (area, aspect_ratio, sweep through set_high_level_parameters), the fuselage (length, diameter) and the engine cycle inputs. The airfoil (section shape, thickness-to-chord, camber, leading-edge radius), twist and incidence are NOT variables: no tool changes them, so do not plan or recommend changes to them.
+- [2026-10-12] Values the framework sets from other disciplines replace anything passed for them: Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR (SU2), Aircraft.Wing.MASS_SCALER (mass), Fn_DES and Aircraft.Engine.SCALE_FACTOR (engine sized to drag and mass). To move them, change the design variable that drives them.
+- [2026-10-12] Graph-routed combinations: if the task needs more disciplines re-run, write COMPLEXITY: moderate or COMPLEXITY: complex with the reason in your DESIGN_STATE. Only that field is read.
 
 ## geometry
 
@@ -30,6 +33,9 @@ bottom: the newest entries are last.
 - [2026-10-04] run_su2_solver returns final_coefficients and drag_assessment. Use drag_assessment.cd_reported: on this mesh the raw CD can fall below the induced drag of its lift, even below zero.
 - [2026-10-04] Residuals are log10 values: more negative is better. Drop in orders = row 1 rms[Rho] minus the last row's rms[Rho] (row 0 is the pre-step state). From -10 to -2 is divergence, not an 8-order drop.
 - [2026-10-04] sample_surface_solution needs marker_name="aircraft".
+- [2026-10-12] cruise_mach, cruise_altitude_ft, aspect_ratio and target_cl are arguments of create_su2_session / configure_from_cpacs, not SU2 options. Never put them inside overrides: one invalid option name makes SU2 reject the whole config.
+- [2026-10-12] An 'invalid option name' in config_errors is removed with update_config_entries(updates={NAME: null}); configure_from_cpacs also removes names SU2 rejected in this session. Do not swap in a did_you_mean spelling unless that option is what you meant.
+- [2026-10-12] The solve is trimmed to the cruise lift W/(qS): report the trimmed angle of attack and CL from run_su2_solver, not the starting AOA of 2 deg.
 
 ## structures
 
@@ -43,7 +49,7 @@ bottom: the newest entries are last.
 - [2026-10-04] Input names: splitter.BPR, fan.PR, lpc.PR, hpc.PR, T4_MAX, Fn_DES, fc.alt, fc.MN. There is no top-level BPR or OPR input (OPR = fan.PR x lpc.PR x hpc.PR). get_design_inputs lists them with current values.
 - [2026-10-04] list_variables is very large (about 30K tokens) and omits the promoted names (Fn_DES, T4_MAX); prefer get_design_inputs.
 - [2026-10-04] Output names: perf.TSFC and perf.Fn (not SFC or Fn). Ask run_cycle for those names in outputs_of_interest.
-- [2026-10-04] Fn_DES, fc.alt and fc.MN are set by the framework (from the mass estimate and the mission).
+- [2026-10-04, updated 2026-10-12] Fn_DES, fc.alt and fc.MN are set by the framework: Fn_DES is sized from the mass estimate and the SU2 drag (thrust = drag with a climb margin), fc.alt and fc.MN from the mission.
 - [2026-10-04] run_cycle reports converged; an unconverged cycle is not a result. Measured window: splitter.BPR up to about 10, fan.PR 1.4 to 1.7, T4_MAX 2857 degR and above.
 - [2026-10-04] pycycle computes no engine mass.
 
@@ -55,13 +61,15 @@ bottom: the newest entries are last.
 - [2026-10-04] Do not set Aircraft.Wing.SPAN: it is derived from area and aspect ratio and read-only.
 - [2026-10-04] set_aircraft_parameters validates inline (valid flag). If valid is false, report it; repeating the same values does not fix them.
 - [2026-10-04] An UNCOUPLED_MISSION or missing-coupled-input refusal means upstream data is missing; do not fly the mission on default drag.
-- [2026-10-04] If the climb does not converge on a heavy design, a low Aircraft.Engine.SCALE_FACTOR is a likely cause.
+- [2026-10-04, updated 2026-10-12] Aircraft.Engine.SCALE_FACTOR is set by the framework from pycycle's thrust; a too-small engine is fixed through the engine cycle (or less drag / mass), not by setting the scale factor.
+- [2026-10-12] The lift coefficient is Mission.Design.LIFT_COEFFICIENT (not Aircraft.Wing.LIFT_COEFFICIENT), and it is set by the framework. The fuselage is Aircraft.Fuselage.LENGTH / MAX_HEIGHT / MAX_WIDTH (there is no MAX_DIAMETER). An unknown name fails the whole call.
 
 ## simulation
 
 - [2026-10-04] Call run_simulation once. FUEL_BURNED_KG comes from run_simulation and get_results; the fuel in a set_aircraft_parameters response is a validation evaluation and is always 0.0.
 - [2026-10-04] AVIARY_SETUP_ERROR is permanent for the parameter set: report it, do not retry, and skip get_results and get_trajectory (they return NO_RESULTS).
 - [2026-10-04] exit_code 0 = success, 9 = iteration limit. Do not present unconverged numbers as reliable.
+- [2026-10-12] A mission can fly without the optimiser converging: run_simulation then returns flown=true and a convergence_warning with the remaining residuals. That is a result with a warning; report the numbers and the residuals. 'Did not fly' means no fuel burned (ZERO_FUEL).
 
 ## integrator
 
@@ -70,3 +78,6 @@ bottom: the newest entries are last.
 - [2026-10-04] Constraint ids: C1 range >= 2500 nmi; C2 TOFL <= 2200 m; C3 Vref <= 136 KCAS; C4 wing fuel volume ratio >= 1.1 (no tool checks it); C5 2nd-segment climb >= 2.4 %; C7 rear spar height >= 0.15 m; C8 no flow separation; C9 buckling margin >= 1.0; C10 buffet and flutter (no tool checks it).
 - [2026-10-04] Typical conflicts: aero vs structures (more area or aspect ratio lowers drag but adds wing mass); propulsion vs weight (a smaller engine saves mass but risks the climb); the snowball (higher OEM, higher MTOM, more thrust, heavier engine).
 - [2026-10-04] RECOMMENDED_CHANGE should name an input the next iteration can set (a tigl or pycycle input), not a value the framework derives (AREA, SWEEP, TAPER, fuselage height and width follow the geometry).
+- [2026-10-12] Write the recommendation as fields, RECOMMENDATION_TO: <role> and RECOMMENDED_CHANGE: <one design variable and its direction>. Prose or markdown headings have been missed by the framework.
+- [2026-10-12] Name a design variable (see general): a change no tool can make, such as the airfoil thickness-to-chord, cannot be acted on.
+- [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with RECOMMENDATION_IMPLEMENTED. Use those answers in your verdict.
