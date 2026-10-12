@@ -258,3 +258,40 @@ def test_loader_sets_the_thinking_flag_and_the_template_follows_it(monkeypatch):
     assert m.apply_chat_template_kwargs == {"enable_thinking": False}
     m._thinking_enabled = True
     assert "enable_thinking" not in m.apply_chat_template_kwargs
+
+
+# ---- Granite 4.2 XML tool calls (ibm-granite/granite-4.2-30b chat template, 2026-10-12) ----
+
+def _bare_model():
+    m = ThinkingModel.__new__(ThinkingModel)        # parse_tool_calls only needs the key names
+    m.tool_name_key, m.tool_arguments_key = "name", "arguments"
+    return m
+
+
+def _parse(text):
+    from smolagents.models import ChatMessage, MessageRole
+    return _bare_model().parse_tool_calls(ChatMessage(role=MessageRole.ASSISTANT, content=text)).tool_calls[0].function
+
+
+def test_granite_xml_tool_call_is_parsed():
+    f = _parse("I will set the wing.\n<tool_call>\n<function=set_high_level_parameters>\n"
+               "<parameter=session_id>\nabc-123\n</parameter>\n<parameter=component_uid>\nWing1\n</parameter>\n"
+               '<parameter=updates>\n{"sweep": 25, "area": 130.5}\n</parameter>\n</function>\n</tool_call>')
+    assert f.name == "set_high_level_parameters"
+    assert f.arguments == {"session_id": "abc-123", "component_uid": "Wing1", "updates": {"sweep": 25, "area": 130.5}}
+
+
+def test_granite_xml_values_keep_types_and_multiline_text():
+    f = _parse("<think></think><tool_call>\n<function=final_answer>\n<parameter=answer>\nDESIGN_STATE:\n"
+               "  FUEL_KG: 1\n  VERDICT: CONTINUE\n</parameter>\n</function>\n</tool_call>")
+    assert f.name == "final_answer" and f.arguments == {"answer": "DESIGN_STATE:\n  FUEL_KG: 1\n  VERDICT: CONTINUE"}
+    g = _parse("<tool_call>\n<function=run_simulation>\n<parameter=session_id>\ns1\n</parameter>\n"
+               "<parameter=timeout_seconds>\n300\n</parameter>\n</function>\n</tool_call>")
+    assert g.arguments == {"session_id": "s1", "timeout_seconds": 300}
+
+
+def test_json_tool_calls_are_unchanged():
+    f = _parse('<tool_call>\n{"name": "open_cpacs", "arguments": {"source_type": "path", "source": "/x.xml"}}\n</tool_call>')
+    assert f.name == "open_cpacs" and f.arguments == {"source_type": "path", "source": "/x.xml"}
+    with pytest.raises(ValueError):
+        _parse("no tool call here")
