@@ -58,6 +58,128 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _HARMONY_TOOL_RE = re.compile(r"to\s*=\s*(?:functions?\.)([A-Za-z_][A-Za-z0-9_]*)")
 
 
+_GEMMA_STR = '<|"|>'
+_GEMMA_CALL_RE = re.compile(r"<\|tool_call>\s*call:([^\s{]+)\s*\{", re.DOTALL)
+
+
+def _parse_gemma_value(s: str, i: int) -> tuple[Any, int]:
+    """One value of Gemma 4's tool-call argument syntax, starting at s[i]; returns (value, next index).
+
+    The chat template's format_argument macro writes: strings as <|"|>text<|"|>, objects as {key:value,...}
+    (bare keys in tool-call arguments), lists as [a,b], and true / false / null / numbers verbatim.
+    """
+    while i < len(s) and s[i].isspace():
+        i += 1
+    if s.startswith(_GEMMA_STR, i):
+        end = s.find(_GEMMA_STR, i + len(_GEMMA_STR))
+        if end < 0:
+            raise ValueError("unterminated Gemma string")
+        return s[i + len(_GEMMA_STR):end], end + len(_GEMMA_STR)
+    if i < len(s) and s[i] == "{":
+        return _parse_gemma_object(s, i + 1)
+    if i < len(s) and s[i] == "[":
+        items, i = [], i + 1
+        while True:
+            while i < len(s) and s[i].isspace():
+                i += 1
+            if i < len(s) and s[i] == "]":
+                return items, i + 1
+            value, i = _parse_gemma_value(s, i)
+            items.append(value)
+            while i < len(s) and s[i].isspace():
+                i += 1
+            if i < len(s) and s[i] == ",":
+                i += 1
+    j = i
+    while j < len(s) and s[j] not in ",}]":
+        j += 1
+    token = s[i:j].strip()
+    try:
+        return json.loads(token), j
+    except ValueError:
+        return token, j
+
+
+def _parse_gemma_object(s: str, i: int) -> tuple[dict, int]:
+    """The members of a Gemma 4 {key:value,...} object; s[i] is just after the opening brace."""
+    out: dict[str, Any] = {}
+    while True:
+        while i < len(s) and s[i] in " \t\r\n,":
+            i += 1
+        if i >= len(s):
+            raise ValueError("unterminated Gemma object")
+        if s[i] == "}":
+            return out, i + 1
+        if s.startswith(_GEMMA_STR, i):
+            key, i = _parse_gemma_value(s, i)
+            colon = s.find(":", i)
+        else:
+            colon = s.find(":", i)
+            key = s[i:colon].strip()
+        if colon < 0:
+            raise ValueError("Gemma key without a value")
+        value, i = _parse_gemma_value(s, colon + 1)
+        out[str(key)] = value
+
+
+def _find_gemma_tool_call(text: str, name_key: str = "name", arguments_key: str = "arguments") -> dict | None:
+    """The first Gemma 4 tool call in *text* (``<|tool_call>call:NAME{key:value,...}<tool_call|>``), or None.
+
+    google/gemma-4-31B-it's chat template (2026-07-09) asks for this format; values are decoded by
+    _parse_gemma_value, the inverse of the template's format_argument macro.
+    """
+    m = _GEMMA_CALL_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        arguments, _ = _parse_gemma_object(text, m.end())
+    except ValueError:
+        return None
+    return {name_key: m.group(1).strip(), arguments_key: arguments}
+
+
+# Special tokens that ARE the tool-call syntax for some models: Gemma 4 writes
+# <|tool_call>call:NAME{key:<|"|>text<|"|>}<tool_call|>, all three markers special tokens. smolagents decodes
+# with skip_special_tokens=True, which leaves "call:NAME{key:text}" -- unparseable (measured 2026-10-12,
+# google/gemma-4-31B-it). Kept when present; every other special token is still removed.
+_TOOL_MARKUP_TOKENS = ("<|tool_call>", "<tool_call|>", '<|"|>')
+
+
+def _keep_tool_markup_when_decoding(holder: Any) -> None:
+    """Wrap holder.decode (a tokenizer or processor) so skip_special_tokens keeps the tool-call markup tokens.
+
+    No-op unless the tokenizer has at least one of _TOOL_MARKUP_TOKENS as a special token, so models
+    without such tokens (Qwen, Granite, ...) decode exactly as before.
+    """
+    tok = getattr(holder, "tokenizer", holder)
+    decode = getattr(holder, "decode", None)
+    if decode is None or getattr(decode, "_keeps_tool_markup", False):
+        return
+    try:
+        special = {str(t) for t in getattr(tok, "all_special_tokens", [])}
+        special |= {str(t) for t, v in getattr(tok, "added_tokens_encoder", {}).items()
+                    if getattr(getattr(tok, "added_tokens_decoder", {}).get(v), "special", False)}
+    except Exception:
+        return
+    keep = [t for t in _TOOL_MARKUP_TOKENS if t in special]
+    if not keep:
+        return
+    drop = sorted(special - set(keep), key=len, reverse=True)
+    drop_re = re.compile("|".join(re.escape(t) for t in drop)) if drop else None
+
+    def decode_keeping_markup(ids, *args, skip_special_tokens=False, **kwargs):
+        if not skip_special_tokens:
+            return decode(ids, *args, skip_special_tokens=False, **kwargs)
+        text = decode(ids, *args, skip_special_tokens=False, **kwargs)
+        return drop_re.sub("", text) if drop_re is not None else text
+
+    decode_keeping_markup._keeps_tool_markup = True
+    try:
+        holder.decode = decode_keeping_markup
+    except Exception:
+        pass
+
+
 _XML_CALL_RE = re.compile(r"<function=([^>\s]+)\s*>(.*?)</function>", re.DOTALL)
 _XML_PARAM_RE = re.compile(r"<parameter=([^>\s]+)\s*>(.*?)</parameter>", re.DOTALL)
 
@@ -204,6 +326,9 @@ class ThinkingModel(TransformersModel):
     def __init__(self, *args, reliability: ReliabilityConfig | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._reliability = reliability or ReliabilityConfig()
+        for holder in (getattr(self, "processor", None), getattr(self, "tokenizer", None)):
+            if holder is not None:
+                _keep_tool_markup_when_decoding(holder)
         # Per-call thinking toggle.  When False, ``enable_thinking=False``
         # is injected into apply_chat_template_kwargs for the next
         # generate() call chain.  Strategies set this to False for agents
@@ -526,18 +651,25 @@ class ThinkingModel(TransformersModel):
             # 2. Extract the tool-call JSON using the robust parser. Granite 4.2's chat template asks
             #    for an XML call instead (<function=NAME><parameter=K>V</parameter></function>); it is
             #    read only when the text has one and no JSON call is found, so JSON models are unchanged.
-            try:
-                tool_dict = _find_tool_call_json(
-                    cleaned,
-                    name_key=self.tool_name_key,
-                    arguments_key=self.tool_arguments_key,
-                )
-                if tool_dict.get(self.tool_name_key) is None and "<function=" in cleaned:
-                    tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key) or tool_dict
-            except ValueError:
-                tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key)
-                if tool_dict is None:
-                    raise
+            #    Gemma 4 has its own syntax (<|tool_call>call:NAME{key:value}<tool_call|>), read first
+            #    when its marker is present (its braces are not JSON).
+            gemma = _find_gemma_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key) \
+                if "<|tool_call>" in cleaned else None
+            if gemma is not None:
+                tool_dict = gemma
+            else:
+                try:
+                    tool_dict = _find_tool_call_json(
+                        cleaned,
+                        name_key=self.tool_name_key,
+                        arguments_key=self.tool_arguments_key,
+                    )
+                    if tool_dict.get(self.tool_name_key) is None and "<function=" in cleaned:
+                        tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key) or tool_dict
+                except ValueError:
+                    tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key)
+                    if tool_dict is None:
+                        raise
 
             tool_name = tool_dict.get(self.tool_name_key)
             if tool_name is None:
