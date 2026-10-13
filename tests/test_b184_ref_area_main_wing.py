@@ -1,4 +1,4 @@
-"""B183: the SU2 references (geom.reference_area / geom.mac_length) are the MAIN wing's.
+"""B184: the SU2 references (geom.reference_area / geom.mac_length) are the MAIN wing's.
 
 v2gemma4 links 1-2 (aipexws8, 2026-10-12): the geometry agent re-set Wing1, Wing2H, Wing3V and Fuselage1 in
 that order. Every morph refreshed the references (B99), so the vertical tail's won: SU2 was injected

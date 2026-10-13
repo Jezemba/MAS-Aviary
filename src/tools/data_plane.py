@@ -1668,7 +1668,7 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
     if _design_state is None or not isinstance(data, dict):
         return
     from src.tools import coupling
-    # B183: these are the MAIN wing's references. Gemma 4's geometry agent re-set Wing1, Wing2H and Wing3V in
+    # B184: these are the MAIN wing's references. Gemma 4's geometry agent re-set Wing1, Wing2H and Wing3V in
     # that order, the tail's morph overwrote the wing's, and SU2 was injected ref_area 21.50 / ref_length 3.95
     # (Wing3V) for a 120.26 m^2 wing: CL 5.4-6.4, CD 1.3-4.7, every run_simulation refused AERO_NONPHYSICAL.
     if tool_name == "get_wing_summary":
