@@ -23,6 +23,20 @@ import pytest
 from src.coordination.history import AgentMessage, ToolCallRecord
 from src.runners.batch_runner import _extract_aviary_eval_from_messages
 
+
+@pytest.fixture(autouse=True)
+def _no_leaked_knowledge_base():
+    """B179 reads the configured run's knowledge base first. A test elsewhere in the suite that configures one
+    and does not reset it made these tests read that file instead of their messages (2026-10-12, full suite
+    with the live servers up). Each test here starts with no run configured, as it assumes."""
+    from src.tools import knowledge_base as kbm
+
+    saved = dict(kbm._run_config)
+    kbm._run_config.update(path=None, chain_link=None, attempt=None, seed=None)
+    yield
+    kbm._run_config.clear()
+    kbm._run_config.update(saved)
+
 # Verbatim from the failing run: the structures_analyst's summary.
 FABRICATED_PROSE = (
     "STRUCTURES SUMMARY\n"
