@@ -83,8 +83,8 @@ class ConditionalGraphHandler(ExecutionHandler):
             "GRAPH ROUTING (framework): this iteration's workflow graph starts at SIMPLE -- the framework has "
             "prepared the sessions, CPACS, mesh and discipline results, so the mission is set on them. You decide "
             "the complexity level: call set_complexity(level, reason) to start at moderate (aero, mass and "
-            "propulsion re-run on the same geometry) or complex (the geometry changes); otherwise end your turn "
-            "and the graph starts at simple."))
+            "propulsion re-run on the same geometry) or complex (the geometry changes). Then call final_answer to "
+            "end this turn; without set_complexity the graph starts at simple."))
         if sets:
             return sets[-1]["level"], f"the orchestrator set the level: {sets[-1].get('reason') or 'no reason'}"
         return gr.SIMPLE, ("this iteration starts at SIMPLE: the framework has prepared the sessions, CPACS, mesh "
@@ -98,7 +98,7 @@ class ConditionalGraphHandler(ExecutionHandler):
             f"GRAPH ROUTING (framework): {asked}After {node}, the rule table suggests {decision.next_node} at "
             f"level {decision.level} (rule {decision.rule}: {decision.reason}). The level is {level}. Call "
             "set_complexity(level, reason) to change it; without that call it stays at "
-            f"{level}."))
+            f"{level}. Then call final_answer to end this turn."))
         chosen = max((s["level"] for s in sets), key=gr.LEVELS.index) if sets else level
         if gr.LEVELS.index(chosen) <= gr.LEVELS.index(level):
             # Declined: stay at this level. A step within it stands; one that needs a higher level is replaced
@@ -131,7 +131,8 @@ class ConditionalGraphHandler(ExecutionHandler):
             f"{rec.get('verdict', '(none recorded)')} with the recommendation to {rec.get('recommendation_to')}: "
             f"{rec.get('recommended_change')}. The rule table routes it to {decision.next_node} at level "
             f"{decision.level}. Decide which agent carries it out and give it the recommendation with assign_task; "
-            f"the graph runs that agent next. Change the level with set_complexity if needed (now {level})."))
+            f"the graph runs that agent next. Change the level with set_complexity if needed (now {level}). Then "
+            "call final_answer to end this turn."))
         assigned = (meta.get("assignments") or [])[assigned_before:]
         target = next((a.get("agent_name") for a in reversed(assigned) if a.get("agent_name") in gr.NODES),
                       decision.next_node)

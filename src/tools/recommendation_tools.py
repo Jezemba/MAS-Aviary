@@ -140,6 +140,9 @@ def last_seq() -> int:
 
 # -- tools -------------------------------------------------------------------------------------------
 
+_FINISH = "Recorded once is enough. Finish your work, then give your final answer with your DESIGN_STATE (final_answer)."
+
+
 def _err(message: str) -> str:
     return json.dumps({"error": message, "recorded": False})
 
@@ -180,9 +183,17 @@ class RecordRecommendation(Tool):
                 return _err(f"recommendation_to must be one of {', '.join(ROLES)}; got {recommendation_to!r}.")
             if not change:
                 return _err("recommended_change is empty: name one design variable and the direction.")
+        # Live sandbox 2026-10-14 (Qwen3-32B): with only {"recorded": true} back, the integrator re-called this
+        # 16 times to its step cap and never gave its final answer. The result now says what comes next, and
+        # a repeat of the same record is refused with that instruction.
+        last = latest_recommendation()
+        if last and last.get("agent") == current_agent_name() and (last.get("verdict"), last.get("recommendation_to"),
+                                                                    last.get("recommended_change")) == (v, role, change):
+            return _err(f"Already recorded (seq {last['seq']}); do not call record_recommendation again. "
+                        f"{_FINISH}")
         entry = _record("recommendation", verdict=v, recommendation_to=role, recommended_change=change)
         return json.dumps({"recorded": True, "seq": entry["seq"], "verdict": v, "recommendation_to": role,
-                           "recommended_change": change})
+                           "recommended_change": change, "next": _FINISH})
 
 
 class RespondToRecommendation(Tool):
@@ -201,8 +212,14 @@ class RespondToRecommendation(Tool):
         text = str(how_addressed or "").strip()
         if not text:
             return _err("how_addressed is empty.")
+        from src.tools.agent_context import current_agent_name
+
+        mine = [r for r in signals("response") if r.get("agent") == current_agent_name()]
+        if mine and mine[-1].get("how_addressed") == text:
+            return _err(f"Already recorded (seq {mine[-1]['seq']}); do not call respond_to_recommendation again. "
+                        f"{_FINISH}")
         entry = _record("response", how_addressed=text)
-        return json.dumps({"recorded": True, "seq": entry["seq"]})
+        return json.dumps({"recorded": True, "seq": entry["seq"], "next": _FINISH})
 
 
 class RequestComplexity(Tool):
@@ -223,7 +240,7 @@ class RequestComplexity(Tool):
         if lv not in LEVELS:
             return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
         entry = _record("complexity", level=lv, reason=str(reason or "").strip())
-        return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv})
+        return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv, "next": _FINISH})
 
 
 class SetComplexity(Tool):
@@ -244,8 +261,15 @@ class SetComplexity(Tool):
         lv = str(level or "").strip().lower()
         if lv not in LEVELS:
             return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
+        from src.tools.agent_context import current_agent_name
+
+        mine = [r for r in signals("complexity_set") if r.get("agent") == current_agent_name()]
+        if mine and mine[-1].get("level") == lv and mine[-1].get("seq") == last_seq():
+            return _err(f"Already set to {lv}; do not call set_complexity again. Call final_answer to end this turn.")
         entry = _record("complexity_set", level=lv, reason=str(reason or "").strip())
-        return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv})
+        # Live sandbox 2026-10-14: without the next step the orchestrator re-called this until its turn's cap.
+        return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv,
+                           "next": "the level is set; call final_answer to end this turn"})
 
 
 def levels_set_since(seq: int = 0) -> list[dict]:
