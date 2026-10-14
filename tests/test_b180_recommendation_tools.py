@@ -176,3 +176,20 @@ def test_a_networked_peer_holds_its_role_through_the_board(monkeypatch):
     peer1 = SimpleNamespace(name="agent_1", tools={"respond_to_recommendation": 1})
     with pytest.raises(ac.MissingRecommendationResponse):
         ac.recommendation_response_before_finish("x", None, peer1)
+
+
+def test_a_repeated_record_is_refused_and_every_result_says_what_comes_next():
+    """Live sandbox 2026-10-14: Qwen re-called record_recommendation 16 times when the result only said
+    recorded; it must be told to give its final answer, and a repeat must not be stored again."""
+    with agent_scope("mdo_integrator"):
+        first = json.loads(rt.RecordRecommendation().forward("RETRY", "propulsion_analyst", "Fn_DES 8041 -> 9000"))
+        again = json.loads(rt.RecordRecommendation().forward("RETRY", "propulsion_analyst", "Fn_DES 8041 -> 9000"))
+        changed = json.loads(rt.RecordRecommendation().forward("RETRY", "propulsion_analyst", "Fn_DES 8041 -> 9500"))
+    assert "final_answer" in first["next"]
+    assert not again["recorded"] and "final_answer" in again["error"]
+    assert changed["recorded"]
+    assert len(rt.signals("recommendation")) == 2
+    with agent_scope("propulsion_analyst"):
+        r1 = json.loads(rt.RespondToRecommendation().forward("Fn_DES raised to 9500"))
+        r2 = json.loads(rt.RespondToRecommendation().forward("Fn_DES raised to 9500"))
+    assert "final_answer" in r1["next"] and not r2["recorded"]
