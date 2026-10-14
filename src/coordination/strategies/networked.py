@@ -264,6 +264,7 @@ class NetworkedStrategy(CoordinationStrategy):
         # creates proper instances at spawn time. For now, use the
         # domain tools + template peer tools.
         self._context.all_tools = self._build_tool_list("template_agent")
+        self._context.tool_factory = self._build_tool_list  # B205: a spawned peer's tools carry its own name
 
         # Snapshot each agent's full toolset for phase-gating restore.
         if self._workflow_phases:
@@ -387,6 +388,13 @@ class NetworkedStrategy(CoordinationStrategy):
                 input_context="No agents available",
             )
 
+        # Update agent order to include any spawned agents (B205: before the graph branch too, or a peer
+        # spawned in graph mode was never dispatched). Peers are agent_N; graph mode also puts role-name
+        # aliases of those same agents in the dict, which must not run as extra peers.
+        current_names = [n for n in self._agent_order if n in self._agents]
+        new_names = [n for n in self._agents if n not in current_names and n.startswith("agent_")]
+        self._agent_order = current_names + new_names
+
         # ----- Graph mode -----
         if self._graph is not None:
             # concurrent_blackboard + graph = DAG-executor: the graph
@@ -399,11 +407,6 @@ class NetworkedStrategy(CoordinationStrategy):
                 return self._graph_concurrent_next_step(history, current_state)
             # Otherwise: serial one-state-per-turn graph rotation.
             return self._graph_driven_next_step(history, current_state)
-
-        # Update agent order to include any spawned agents.
-        current_names = [n for n in self._agent_order if n in self._agents]
-        new_names = [n for n in self._agents if n not in current_names and n != "system"]
-        self._agent_order = current_names + new_names
 
         # Selection: concurrent_blackboard fires ALL peers in parallel each
         # turn (the CodeCRDT-style pattern). The Coordinator interprets the
@@ -431,6 +434,7 @@ class NetworkedStrategy(CoordinationStrategy):
             }
             if self._verbatim:
                 metadata["inputs"] = self._peer_messages(metadata["peers"], show_blocking=False)
+                metadata["input_fn"] = lambda p: self._peer_messages([p], show_blocking=False)[p]  # B207 retries
                 return CoordinationAction(action_type="parallel_run", agent_name=None,
                                           input_context="", metadata=metadata)
             return CoordinationAction(
@@ -1291,7 +1295,8 @@ class NetworkedStrategy(CoordinationStrategy):
                 metadata={"peers": peers, "turn": self._total_turns + 1,
                           "cycle": self._concurrent_runs_dispatched,
                           "selection_mode": "concurrent_blackboard", "graph_dag": True,
-                          "inputs": self._peer_messages(peers, show_blocking=True)})
+                          "inputs": self._peer_messages(peers, show_blocking=True),
+                          "input_fn": lambda p: self._peer_messages([p], show_blocking=True)[p]})
         return CoordinationAction(
             action_type="parallel_run",
             agent_name=None,

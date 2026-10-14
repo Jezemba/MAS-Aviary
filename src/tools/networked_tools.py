@@ -12,6 +12,7 @@ state (blackboard, agent pool, model, config) across tool calls.
 
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 from smolagents import Tool, ToolCallingAgent
 from smolagents.models import Model
@@ -51,6 +52,9 @@ class NetworkedContext:
     agent_counter: int = 0  # for auto-naming: agent_1, agent_2, ...
     spawned_agents: list = field(default_factory=list)  # names in spawn order
     config: dict = field(default_factory=dict)  # toggle config for filtering
+    # B205: builds a peer's own tool list (its claims and marks recorded under ITS name). Without it a
+    # spawned peer got all_tools, whose per-agent tools were bound to "template_agent".
+    tool_factory: Any = None
 
 
 class ReadBlackboard(Tool):
@@ -239,9 +243,10 @@ class SpawnPeer(Tool):
         # as every other peer, with no library template around it.
         from src.coordination import prompt_assembly
 
+        tools = list(ctx.tool_factory(new_name)) if ctx.tool_factory is not None else list(ctx.all_tools)
         if prompt_assembly.is_verbatim():
             agent = prompt_assembly.make_agent_class()(
-                tools=prompt_assembly.with_reference_tools(list(ctx.all_tools)),
+                tools=prompt_assembly.with_reference_tools(tools),
                 model=ctx.model,
                 name=new_name,
                 description=f"Peer agent spawned because: {reason}",
@@ -253,7 +258,7 @@ class SpawnPeer(Tool):
             )
         else:
             agent = ToolCallingAgent(
-                tools=list(ctx.all_tools),
+                tools=tools,
                 model=ctx.model,
                 name=new_name,
                 description=f"Peer agent spawned because: {reason}",

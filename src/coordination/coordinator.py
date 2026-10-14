@@ -518,8 +518,31 @@ class Coordinator:
             return []
 
         task = action.input_context
+        meta = action.metadata or {}
+        # B207: networked + iterative_feedback. The handler used to be bypassed here, so the combination
+        # ran exactly like networked without it; now each peer's turn is its own retry loop with feedback.
+        from src.coordination.iterative_feedback_handler import IterativeFeedbackHandler
 
-        def _run_one_peer(peer_name: str) -> AgentMessage:
+        iterative = self.execution_handler if isinstance(self.execution_handler, IterativeFeedbackHandler) else None
+
+        def _run_one_peer(peer_name: str) -> list[AgentMessage]:
+            agent = self.agents.get(peer_name)
+            if iterative is not None and agent is not None:
+                from src.coordination.execution_handler import Assignment
+
+                self._turn_counter += 1
+                input_fn = meta.get("input_fn")
+                handler = iterative.for_peer((lambda: input_fn(peer_name)) if callable(input_fn) else None)
+                msgs = handler.execute(
+                    [Assignment(agent_name=peer_name, task=(meta.get("inputs") or {}).get(peer_name, task),
+                                assigned_at_turn=self._turn_counter)],
+                    {peer_name: agent}, logger=None, turn_offset=self._turn_counter,
+                    action_metadata={"parallel_cycle": meta.get("cycle")})
+                self._turn_counter += max(0, len(msgs) - 1)
+                return msgs
+            return [_run_one_peer_once(peer_name)]
+
+        def _run_one_peer_once(peer_name: str) -> AgentMessage:
             agent = self.agents.get(peer_name)
             self._turn_counter += 1  # rough turn ordering — threads contend
             turn = self._turn_counter
@@ -579,7 +602,7 @@ class Coordinator:
         # first request to arrive waits for its peers instead of firing a batch of one;
         # each peer releases its place as soon as its run ends, so the worker never waits
         # for a peer that has finished.
-        def _run_one_peer_batched(peer_name: str) -> AgentMessage:
+        def _run_one_peer_batched(peer_name: str) -> list[AgentMessage]:
             try:
                 return _run_one_peer(peer_name)
             finally:
@@ -589,7 +612,7 @@ class Coordinator:
 
         with peers_dispatched(len(peer_names)) as _peers:
             with ThreadPoolExecutor(max_workers=len(peer_names)) as ex:
-                messages = list(ex.map(_run_one_peer_batched, peer_names))
+                messages = [m for msgs in ex.map(_run_one_peer_batched, peer_names) for m in msgs]
 
         return messages
 

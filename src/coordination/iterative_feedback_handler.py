@@ -120,6 +120,10 @@ class IterativeFeedbackHandler(ExecutionHandler):
         human_feedback_callback: Callable[[AttemptFeedback], str | None] | None = None,
     ):
         cfg = config or {}
+        self._config = dict(cfg)
+        self._human_callback_arg = human_feedback_callback
+        # B207: a networked peer's retries rebuild its message (the board has moved on since the cycle began).
+        self._task_fn: Callable[[], str] | None = None
         # "as_given" (orchestrated, verbatim): the strategy already built the agent's whole message;
         # the handler adds only its retry feedback.
         self._worker_input: str = cfg.get("worker_input", "")
@@ -161,6 +165,17 @@ class IterativeFeedbackHandler(ExecutionHandler):
         # per call, so the stages' final outputs are kept here: they are the previous stage's DESIGN_STATE
         # and the RECOMMENDATION_IMPLEMENTED responses (prompt_assembly.verbatim_stage_input).
         self._verbatim_outputs: list[tuple[str, str, None]] = []
+
+    def for_peer(self, task_fn: Callable[[], str] | None = None) -> "IterativeFeedbackHandler":
+        """B207: a fresh handler for one networked peer's turn in a concurrent cycle.
+
+        Concurrent peers run in threads, so each gets its own attempt history (no shared state). The
+        networked strategy already built the peer's whole message, so the copy takes it as given and adds
+        only this handler's retry feedback and last-attempt notices; task_fn rebuilds the message for a retry.
+        """
+        peer = IterativeFeedbackHandler(dict(self._config, worker_input="as_given"), self._human_callback_arg)
+        peer._task_fn = task_fn
+        return peer
 
     # ------------------------------------------------------------------
     # Cross-stage error forwarding
@@ -536,6 +551,11 @@ class IterativeFeedbackHandler(ExecutionHandler):
         parts: list[str] = []
 
         if self._worker_input == "as_given":
+            if attempt > 0 and self._task_fn is not None:
+                try:
+                    task = self._task_fn()
+                except Exception:  # pragma: no cover - keep the cycle's message
+                    pass
             return self._as_given_context(task, attempt, max_retries, feedback_history)
         # B175: verbatim mode -- the stage's own prompt + previous DESIGN_STATE (+ carry-over, recommendation
         # and design.json), exactly as the staged pipeline builds it. What this handler adds is only its
