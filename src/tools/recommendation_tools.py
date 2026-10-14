@@ -65,6 +65,31 @@ def _role(value: str | None) -> str | None:
     return next((r for r in ROLES if r == text or r.split("_")[0] in text), None)
 
 
+# Networked peers are named agent_N and hold a role by claiming its TODO on the board (work_claims).
+_TODO_ROLE = {"geometry": "geometry_engineer", "aero": "aerodynamics_analyst", "mass": "structures_analyst",
+              "propulsion": "propulsion_analyst", "mission": "mission_architect",
+              "simulation": "simulation_executor", "evaluation": "mdo_integrator"}
+
+
+def roles_of(agent_name: str | None) -> set[str]:
+    """The roles an agent holds: the one its name says (sequential / orchestrated), or, for a networked peer,
+    the roles of the TODOs it holds on the board."""
+    name = str(agent_name or "")
+    roles = set()
+    if "integrator" in name.lower():
+        roles.add("mdo_integrator")
+    role = _role(name)
+    if role:
+        roles.add(role)
+    try:
+        from src.tools import work_claims
+
+        roles |= {_TODO_ROLE[t] for t in work_claims._held_by(name) if t in _TODO_ROLE}
+    except Exception:  # pragma: no cover - no board (sequential / orchestrated)
+        pass
+    return roles
+
+
 # -- readers -----------------------------------------------------------------------------------------
 
 def signals(kind: str | None = None) -> list[dict]:
@@ -137,7 +162,7 @@ class RecordRecommendation(Tool):
         from src.tools.agent_context import current_agent_name
 
         agent = current_agent_name()
-        if agent != "unknown" and "integrator" not in agent.lower():
+        if agent != "unknown" and "mdo_integrator" not in roles_of(agent):
             return _err(f"Only the mdo_integrator records the recommendation; you are {agent}. To answer one, "
                         "call respond_to_recommendation.")
         v = str(verdict or "").strip().upper()

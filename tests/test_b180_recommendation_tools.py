@@ -151,3 +151,28 @@ def test_her_prompts_ask_for_the_tool_not_the_text_fields():
         assert "RECOMMENDATION_TO: <" not in text and "RECOMMENDED_CHANGE: <" not in text, name
         assert "with the record_recommendation tool." in text, name
         assert text.count("VERDICT: <COMPLETE | CONTINUE | RETRY>") >= 1, name
+
+
+def test_a_networked_peer_holds_its_role_through_the_board(monkeypatch):
+    """Networked peers are agent_N: the peer holding the evaluation TODO is the integrator, the one holding
+    propulsion is the propulsion analyst (record permission and both gates follow the board)."""
+    from types import SimpleNamespace
+
+    from src.tools import artifact_checks as ac
+    from src.tools import work_claims
+
+    held = {"agent_3": ["evaluation"], "agent_1": ["propulsion"]}
+    monkeypatch.setattr(work_claims, "_held_by", lambda a: held.get(a, []))
+    monkeypatch.delenv("MAS_REQUIRE_RECORDED_RECOMMENDATION", raising=False)
+    assert rt.roles_of("agent_3") == {"mdo_integrator"} and rt.roles_of("agent_1") == {"propulsion_analyst"}
+    with agent_scope("agent_1"):
+        assert "Only the mdo_integrator" in rt.RecordRecommendation().forward("CONTINUE", "geometry_engineer", "x")
+    peer3 = SimpleNamespace(name="agent_3", tools={"record_recommendation": 1})
+    with pytest.raises(ac.MissingRecordedRecommendation):
+        ac.recommendation_recorded_before_finish("x", None, peer3)
+    with agent_scope("agent_3"):
+        assert json.loads(rt.RecordRecommendation().forward("CONTINUE", "propulsion_analyst", "BPR 5.1 -> 6.0"))["recorded"]
+    rt.activate("propulsion_analyst", "BPR 5.1 -> 6.0")
+    peer1 = SimpleNamespace(name="agent_1", tools={"respond_to_recommendation": 1})
+    with pytest.raises(ac.MissingRecommendationResponse):
+        ac.recommendation_response_before_finish("x", None, peer1)

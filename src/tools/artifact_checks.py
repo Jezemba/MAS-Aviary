@@ -234,9 +234,12 @@ def recommendation_recorded_before_finish(final_answer: Any, memory: Any, agent:
     """The mdo_integrator must record its verdict (and recommendation) with record_recommendation."""
     tools = getattr(agent, "tools", None) or {}
     name = getattr(agent, "name", None) or ""
-    if not _recommendation_gates_on() or "record_recommendation" not in tools or "integrator" not in name.lower():
+    if not _recommendation_gates_on() or "record_recommendation" not in tools:
         return True
     from src.tools import recommendation_tools as rt
+
+    if "mdo_integrator" not in rt.roles_of(name):
+        return True
 
     since = int(getattr(agent, "_avion_recommendation_since", 0) or 0)
     if any(s["seq"] > since for s in rt.signals("recommendation")):
@@ -262,9 +265,9 @@ def recommendation_response_before_finish(final_answer: Any, memory: Any, agent:
 
     active = rt.active_recommendation()
     name = getattr(agent, "name", None) or ""
-    if not active or rt._role(name) != active.get("recommendation_to"):
+    if not active or active.get("recommendation_to") not in rt.roles_of(name):
         return True
-    if any(r["agent"] == name or rt._role(r["agent"]) == active.get("recommendation_to")
+    if any(r["agent"] == name or active.get("recommendation_to") in rt.roles_of(r["agent"])
            for r in rt.responses_since(active.get("activated_at", 0))):
         return True
     reminded = int(getattr(agent, "_avion_response_reminders", 0) or 0)
