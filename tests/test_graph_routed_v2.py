@@ -209,3 +209,104 @@ def test_a_wing_shape_recommendation_goes_to_geometry_whatever_it_mentions_about
     out = ("RECOMMENDATION_TO: aerodynamics_analyst\nRECOMMENDED_CHANGE: Reduce cruise drag coefficient by optimizing "
            "wing geometry (particularly leading edge radius and airfoil shape)\nVERDICT: CONTINUE")
     assert gr.route_after_review(out, gr.SIMPLE).next_node == gr.GEOMETRY
+
+
+# ---- orchestrated (D8): the orchestrator decides the level ------------------------------------------
+
+def _orchestrated(monkeypatch, agents, kb, answers):
+    """Run the handler with an orchestrator stub: answers[i](message, meta) is its i-th message turn."""
+    from types import SimpleNamespace
+
+    from src.coordination import conditional_graph_handler as h_mod
+    from src.coordination import prompt_assembly
+    from src.coordination.execution_handler import Assignment
+
+    state = SimpleNamespace(data_store={}, sessions={})
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: None)
+    monkeypatch.setattr(prompt_assembly, "read_design_json_text", lambda: None)
+    monkeypatch.setattr("src.tools.knowledge_base.get_kb", lambda: kb)
+    monkeypatch.setattr("src.tools.data_plane.get_design_state", lambda: state)
+    asked: list[str] = []
+    meta = {"assigned_tasks": {n: f"TASK FOR {n}" for n in agents}, "system_text": "", "inbox": {},
+            "assignments": [], "orchestrator_name": "orchestrator"}
+
+    def ask(sender, message):
+        asked.append(message)
+        answer = answers[min(len(asked), len(answers)) - 1]
+        if answer:
+            answer(meta)
+
+    meta["ask_orchestrator"] = ask
+    agents = dict(agents, orchestrator=SimpleNamespace(tools={}))
+    handler = h_mod.ConditionalGraphHandler({"preinit": False, "worker_input": "as_given", "decider": "orchestrator"})
+    msgs = handler.execute([Assignment(agent_name=gr.MISSION, task="")], agents, None, action_metadata=meta)
+    return handler, msgs, asked, agents
+
+
+def _set(level):
+    from src.tools import recommendation_tools as rt
+    from src.tools.agent_context import agent_scope
+
+    def answer(meta):
+        with agent_scope("orchestrator"):
+            rt.SetComplexity().forward(level, "orchestrator's call")
+    return answer
+
+
+def test_d8_the_orchestrator_sets_the_starting_level(monkeypatch):
+    kb = _KB()
+    flown = ([rec("run_simulation", summary={"fuel_burned_kg": 22998.6})], "flew")
+    agents = {gr.AERO: _Agent(gr.AERO, kb, [([rec("run_su2_solver", success=True)], "aero")]),
+              gr.MASS: _Agent(gr.MASS, kb, [([rec("estimate_mass", success=True)], "mass")]),
+              gr.PROPULSION: _Agent(gr.PROPULSION, kb, [([rec("run_cycle", converged=True)], "prop")]),
+              gr.MISSION: _Agent(gr.MISSION, kb, [([rec("set_aircraft_parameters", valid=True)], "mission")]),
+              gr.SIMULATION: _Agent(gr.SIMULATION, kb, [flown]),
+              gr.REVIEW: _Agent(gr.REVIEW, kb, [([], "VERDICT: COMPLETE")])}
+    handler, msgs, asked, agents = _orchestrated(monkeypatch, agents, kb, [_set("moderate")])
+    assert [r["node"] for r in handler.route_log][0] == gr.AERO
+    assert handler.route_log[0]["level"] == gr.MODERATE
+    assert "starts at SIMPLE" in asked[0] and "set_complexity" in agents["orchestrator"].tools
+    # each agent gets the orchestrator's task, as in the other orchestrated combinations
+    assert agents[gr.AERO].calls[0].startswith("TASK FOR aerodynamics_analyst")
+    assert msgs[-1].metadata["graph_orchestrator_turns"] == 1
+
+
+def test_d8_a_declined_escalation_stays_at_the_level(monkeypatch):
+    kb = _KB()
+    zero = ([rec("run_simulation", "failed", error_code="ZERO_FUEL", summary={"fuel_burned_kg": 0.0})], "no fuel")
+    agents = {gr.MISSION: _Agent(gr.MISSION, kb, [([rec("set_aircraft_parameters", valid=True)], "ok")]),
+              gr.SIMULATION: _Agent(gr.SIMULATION, kb, [zero])}
+    handler, _, asked, _ = _orchestrated(monkeypatch, agents, kb, [None])
+    # rule 6 (no aero in the registry) would go to AERO at MODERATE; the orchestrator never set a level
+    sim = next(r for r in handler.route_log if r["node"] == gr.SIMULATION)
+    assert (sim["next"], sim["next_level"], sim["rule"]) == (gr.MISSION, gr.SIMPLE, "orchestrator-kept")
+    assert "the rule table suggests aerodynamics_analyst" in asked[1]
+    assert all(r["level"] == gr.SIMPLE for r in handler.route_log)
+
+
+def test_d8_the_orchestrator_assigns_the_recommendation_and_the_graph_goes_there(monkeypatch):
+    from src.tools import recommendation_tools as rt
+    from src.tools.agent_context import agent_scope
+
+    kb = _KB()
+    flown = ([rec("run_simulation", summary={"fuel_burned_kg": 22998.6})], "flew")
+
+    class _Integrator(_Agent):
+        def run(self, context):
+            if not self.calls:
+                with agent_scope("mdo_integrator"):
+                    rt.RecordRecommendation().forward("CONTINUE", "aerodynamics_analyst", "Wing1 aspect_ratio 9.4 -> 10.5")
+            return super().run(context)
+
+    def assign(meta):
+        meta["assignments"].append({"agent_name": gr.GEOMETRY, "task": "raise the aspect ratio to 10.5"})
+
+    agents = {gr.MISSION: _Agent(gr.MISSION, kb, [([rec("set_aircraft_parameters", valid=True)], "ok")]),
+              gr.SIMULATION: _Agent(gr.SIMULATION, kb, [flown]),
+              gr.REVIEW: _Integrator(gr.REVIEW, kb, [([], "verdict recorded"), ([], "VERDICT: COMPLETE")]),
+              gr.GEOMETRY: _Agent(gr.GEOMETRY, kb, [([rec("generate_volume_mesh", success=True)], "geo")])}
+    handler, _, asked, _ = _orchestrated(monkeypatch, agents, kb, [None, assign])
+    review = next(r for r in handler.route_log if r["node"] == gr.REVIEW)
+    assert (review["next"], review["next_level"]) == (gr.GEOMETRY, gr.COMPLEX)
+    assert "Wing1 aspect_ratio 9.4 -> 10.5" in asked[1]
+    assert agents[gr.GEOMETRY].calls[0].startswith("raise the aspect ratio to 10.5")

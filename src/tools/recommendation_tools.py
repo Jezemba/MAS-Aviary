@@ -224,3 +224,30 @@ class RequestComplexity(Tool):
             return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
         entry = _record("complexity", level=lv, reason=str(reason or "").strip())
         return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv})
+
+
+class SetComplexity(Tool):
+    name = "set_complexity"
+    description = (
+        "Orchestrated graph-routed only, for the orchestrator: set the workflow graph's complexity level. "
+        "simple: the mission is set on the prepared discipline results; moderate: aero, mass and propulsion "
+        "re-run on the same geometry; complex: the geometry changes, so every discipline after it re-runs. "
+        "reason: why. Without this call the level stays where it is."
+    )
+    inputs: dict[str, Any] = {
+        "level": {"type": "string", "description": "simple | moderate | complex"},
+        "reason": {"type": "string", "description": "why the task needs this level"},
+    }
+    output_type = "string"
+
+    def forward(self, level: str, reason: str) -> str:  # noqa: D102
+        lv = str(level or "").strip().lower()
+        if lv not in LEVELS:
+            return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
+        entry = _record("complexity_set", level=lv, reason=str(reason or "").strip())
+        return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv})
+
+
+def levels_set_since(seq: int = 0) -> list[dict]:
+    """The orchestrator's set_complexity calls after this seq."""
+    return [s for s in signals("complexity_set") if s["seq"] > seq]

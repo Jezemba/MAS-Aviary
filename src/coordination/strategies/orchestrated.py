@@ -1279,6 +1279,11 @@ class OrchestratedStrategy(CoordinationStrategy):
                 metadata["assigned_tasks"] = {a["agent_name"]: a["task"] for a in assignments}
                 metadata["system_text"] = self._system_text
                 metadata["inbox"] = self._context.inbox          # the same dict: messages stored mid-graph arrive
+                # D8 (graph-routed v2): the graph asks the orchestrator for every level change, and an in-link
+                # assignment (the integrator's recommendation) is read from the live list.
+                metadata["ask_orchestrator"] = self._ask_orchestrator
+                metadata["orchestrator_name"] = self._orchestrator_name
+                metadata["assignments"] = self._context.assignments
             return CoordinationAction(
                 action_type="invoke_agent",
                 agent_name=assignment["agent_name"],

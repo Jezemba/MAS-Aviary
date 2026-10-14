@@ -307,8 +307,11 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # past TASK_CLASSIFIED. With setup_only the orchestrator
         # builds the team once, exits, and graph_routed runs the
         # team through every state on its own.
+        # Graph-routed v2 (D8, 2026-10-14): the conditional router with the ORCHESTRATOR deciding the level
+        # (src/coordination/conditional_graph_handler.py); the forced "complex" classification is gone.
         strategy_config={"orchestrated": {"lifecycle_mode": "setup_only"}},
-        handler_config={"predefined_graph": "mdo_f25", "worker_input": "as_given"},
+        handler_config={"predefined_graph": "mdo_f25", "worker_input": "as_given", "router": "conditional",
+                        "decider": "orchestrator"},
     ),
     CombinationConfig(
         "mdo_f25_networked_graph_routed",
