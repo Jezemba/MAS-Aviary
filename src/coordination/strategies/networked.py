@@ -225,6 +225,10 @@ class NetworkedStrategy(CoordinationStrategy):
         # Peer tools are created per-agent in _create_peer_agent.
         self._domain_tools = worker_tools
 
+        # Graph-routed v2 on the board (D8): decided before the peers exist, they carry request_complexity.
+        self._board_graph = None
+        self._board_graph_mode = (net_config.get("graph_router") == "board" and config.get("_graph_def") is not None)
+
         # Create initial peer agents.
         self._agent_order = []
         for i in range(1, self._initial_agents + 1):
@@ -296,7 +300,14 @@ class NetworkedStrategy(CoordinationStrategy):
             # seed the TODO board FROM the graph — one TODO per agent-bearing
             # state, with depends_on derived from the success-path edges so a
             # node only becomes claimable once its predecessor is done.
-            if self._selection_mode == "concurrent_blackboard" and self._blackboard is not None:
+            # Graph-routed v2 (D8): the board starts at SIMPLE and the peers change it (board_graph.py).
+            if self._board_graph_mode and self._blackboard is not None:
+                from src.coordination.board_graph import BoardGraph
+
+                self._board_graph = BoardGraph(self._blackboard, preinit=net_config.get("graph_preinit", True))
+                self._max_concurrent_runs = max(self._max_concurrent_runs, net_config.get("graph_max_cycles", 30))
+                self._concurrent_runs_dispatched = 0
+            elif self._selection_mode == "concurrent_blackboard" and self._blackboard is not None:
                 graph_todos = self._derive_graph_todos()
                 if graph_todos:
                     self._blackboard.seed_todos(graph_todos)
@@ -403,6 +414,8 @@ class NetworkedStrategy(CoordinationStrategy):
             # atomically, execute, mark done -> unlocks dependents. The
             # networked layer controls task assignment/claiming; the graph
             # controls which work is exposed when.
+            if getattr(self, "_board_graph", None) is not None:
+                return self._board_graph_next_step(history, current_state)
             if self._selection_mode == "concurrent_blackboard":
                 return self._graph_concurrent_next_step(history, current_state)
             # Otherwise: serial one-state-per-turn graph rotation.
@@ -779,6 +792,10 @@ class NetworkedStrategy(CoordinationStrategy):
             # steps on claims it cannot win (validate10: agent_3, four steps, 1,394 s, no work).
             WaitForBoard(self._context, agent_name=agent_name),
         ]
+        if getattr(self, "_board_graph_mode", False):
+            from src.tools.recommendation_tools import RequestComplexity
+
+            peer_tools.append(RequestComplexity())  # graph-routed v2: any peer may reclassify
         return list(self._domain_tools) + peer_tools
 
     # ------------------------------------------------------------------
@@ -1309,6 +1326,42 @@ class NetworkedStrategy(CoordinationStrategy):
                 "graph_dag": True,
             },
         )
+
+    def _board_graph_next_step(self, history: list, current_state: dict) -> CoordinationAction:
+        """Graph-routed v2 on the board: apply the peers' reclassifications and the integrator's
+        recommendation, then fire one peer per AVAILABLE TODO (board_graph.py)."""
+        from src.coordination import prompt_assembly
+
+        bg, bb = self._board_graph, self._blackboard
+        if not bg.started:
+            bg.start(prompt_assembly.read_carry_over())
+        else:
+            bb.release_claimed_todos()  # a claim still held between cycles was dropped (errored peer)
+            if not bg.step():
+                self._graph_complete = True
+                return CoordinationAction(action_type="terminate", agent_name=None, input_context="",
+                                          metadata={"reason": bg.stop_reason, "graph_route": bg.log,
+                                                    "graph_level": bg.level, "role_runs": bg.role_runs})
+        if self._concurrent_runs_dispatched >= self._max_concurrent_runs:
+            bg.stop_reason = f"{self._max_concurrent_runs} board cycles dispatched"
+            return CoordinationAction(action_type="terminate", agent_name=None, input_context="",
+                                      metadata={"reason": bg.stop_reason, "graph_route": bg.log})
+        available = [t.name for t in bb.read_available_todos()]
+        if not available:
+            bg.stop_reason = "no TODO on the board can be claimed"
+            return CoordinationAction(action_type="terminate", agent_name=None, input_context="",
+                                      metadata={"reason": bg.stop_reason, "graph_route": bg.log})
+        peers = list(self._agent_order)[:max(1, min(len(available), len(self._agent_order)))]
+        self._concurrent_runs_dispatched += 1
+        meta = {"peers": peers, "turn": self._total_turns + 1, "cycle": self._concurrent_runs_dispatched,
+                "selection_mode": "concurrent_blackboard", "graph_dag": True, "graph_level": bg.level}
+        if self._verbatim:
+            meta["inputs"] = self._peer_messages(peers, show_blocking=True)
+            meta["input_fn"] = lambda p: self._peer_messages([p], show_blocking=True)[p]
+            return CoordinationAction(action_type="parallel_run", agent_name=None, input_context="", metadata=meta)
+        return CoordinationAction(action_type="parallel_run", agent_name=None,
+                                  input_context=self._with_board_and_uids(self._task or current_state.get("task", "")),
+                                  metadata=meta)
 
     def _advance_graph_state(self, history: list) -> None:
         """Advance the graph state machine based on the last turn's output."""

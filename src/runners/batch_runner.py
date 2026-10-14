@@ -328,10 +328,14 @@ ALL_COMBINATIONS: list[CombinationConfig] = [
         # disabled — the graph DAG manages ordering. Shares
         # config/mdo_f25_graph.yaml; peers from
         # config/mdo_f25_networked_agents.yaml.
+        # Graph-routed v2 (D8, 2026-10-14): graph_router "board" replaces that fixed DAG. The board starts at
+        # SIMPLE on the framework-prepared design; peers reclassify with request_complexity, the integrator's
+        # recorded recommendation reopens its producer's TODO (src/coordination/board_graph.py).
         strategy_config={
             "networked": {
                 "workflow_phases": [],
                 "selection_mode": "concurrent_blackboard",
+                "graph_router": "board",
             }
         },
         handler_config={"predefined_graph": "mdo_f25"},

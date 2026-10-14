@@ -441,6 +441,31 @@ class Blackboard:
                     released.append(t.name)
             return released
 
+    def reopen_todos(self, names: list[str]) -> list[str]:
+        """Put DONE / FAILED TODOs back to PENDING (graph-routed v2 on the board: a later level or the
+        integrator's recommendation makes the work run again). The last result is kept for the next peer
+        to read. Returns the names reopened."""
+        with self._lock:
+            reopened = []
+            for name in names:
+                t = self._todos.get(name)
+                if t is not None and t.status in (TODO_STATUS_DONE, TODO_STATUS_FAILED):
+                    t.status = TODO_STATUS_PENDING
+                    t.assigned_to = None
+                    t.claimed_at = None
+                    t.completed_at = None
+                    reopened.append(name)
+            return reopened
+
+    def set_todo_depends(self, name: str, depends_on: list[str]) -> bool:
+        """Replace a TODO's prerequisites (a new level adds the disciplines a node now waits on)."""
+        with self._lock:
+            t = self._todos.get(name)
+            if t is None:
+                return False
+            t.depends_on = list(depends_on)
+            return True
+
     def all_todos_done(self) -> bool:
         """True iff the TODO list is non-empty AND every TODO is done."""
         with self._lock:

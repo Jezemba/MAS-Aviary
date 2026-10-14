@@ -68,7 +68,12 @@ def _role(value: str | None) -> str | None:
 # Networked peers are named agent_N and hold a role by claiming its TODO on the board (work_claims).
 _TODO_ROLE = {"geometry": "geometry_engineer", "aero": "aerodynamics_analyst", "mass": "structures_analyst",
               "propulsion": "propulsion_analyst", "mission": "mission_architect",
-              "simulation": "simulation_executor", "evaluation": "mdo_integrator"}
+              "simulation": "simulation_executor", "evaluation": "mdo_integrator",
+              # graph-routed board (networked.md, graph-routed section)
+              "GEOMETRY_SETUP": "geometry_engineer", "AERO_ANALYSIS": "aerodynamics_analyst",
+              "MASS_ESTIMATION": "structures_analyst", "PROPULSION_SIZING": "propulsion_analyst",
+              "MISSION_CONFIG": "mission_architect", "SIMULATION_RUN": "simulation_executor",
+              "RESULTS_REVIEW": "mdo_integrator"}
 
 
 def roles_of(agent_name: str | None) -> set[str]:
