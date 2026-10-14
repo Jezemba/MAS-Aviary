@@ -1706,7 +1706,12 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
     if _design_state is None or not isinstance(data, dict):
         return
     from src.tools import coupling
+    # B184: these are the MAIN wing's references. Gemma 4's geometry agent re-set Wing1, Wing2H and Wing3V in
+    # that order, the tail's morph overwrote the wing's, and SU2 was injected ref_area 21.50 / ref_length 3.95
+    # (Wing3V) for a 120.26 m^2 wing: CL 5.4-6.4, CD 1.3-4.7, every run_simulation refused AERO_NONPHYSICAL.
     if tool_name == "get_wing_summary":
+        if not _is_main_wing(getattr(_call_ctx, "wing_uid", None)):
+            return
         coupling.put_var(_design_state, "geom.mac_length", data.get("mac_length"), source_tool=tool_name)
         coupling.put_var(_design_state, "geom.wing_wetted_area", data.get("wetted_area"), source_tool=tool_name)
         coupling.put_var(_design_state, "geom.reference_area", data.get("reference_area"), source_tool=tool_name)
@@ -1720,6 +1725,9 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
         # overstating CL and CD by at least 63%. The morph reports its own result; record it.
         # Convention: get_wing_summary reports the SEMI-span reference area (61.39 for the baseline) while
         # the morph reports the full area (122.78 before -- exactly twice), so halve it to stay consistent.
+        uid = data.get("component_uid") or (getattr(_call_ctx, "morph", None) or {}).get("uid")
+        if not _is_main_wing(uid):
+            return
         morph = data.get("geometry_morph")
         after = morph.get("after") if isinstance(morph, dict) and morph.get("rebuilt") else None
         if isinstance(after, dict):

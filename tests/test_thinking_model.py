@@ -357,3 +357,47 @@ def test_gpt6_goes_through_the_responses_api_with_the_thinking_switch(monkeypatc
     model_loader._build_model(LLMConfig(model_id="openai/gpt-5", backend="litellm"))
     assert seen["model_id"] == "openai/gpt-5" and "reasoning_effort" not in seen      # gpt-5: unchanged route
     assert model_loader._is_openai_reasoning("openai/responses/gpt-6.1-sol")
+
+
+# ---- Gemma 4 tool calls (google/gemma-4-31B-it chat template, format_argument macro) ----
+
+def test_gemma4_tool_call_is_parsed():
+    s = '<|"|>'
+    f = _parse("<|tool_call>call:set_aircraft_parameters{parameters:{Aircraft.Wing.AREA:122.8,"
+               f"Mission.Design.LIFT_COEFFICIENT:0.559}},session_id:{s}abc-1{s}}}<tool_call|>")
+    assert f.name == "set_aircraft_parameters"
+    assert f.arguments == {"session_id": "abc-1",
+                           "parameters": {"Aircraft.Wing.AREA": 122.8, "Mission.Design.LIFT_COEFFICIENT": 0.559}}
+
+
+def test_gemma4_values_strings_with_punctuation_lists_bools():
+    s = '<|"|>'
+    f = _parse(f"<|tool_call>call:final_answer{{answer:{s}DESIGN_STATE:\n  A: 1, B: {{x}}\n  C: [y]{s}}}<tool_call|>")
+    assert f.name == "final_answer" and f.arguments == {"answer": "DESIGN_STATE:\n  A: 1, B: {x}\n  C: [y]"}
+    g = _parse(f"<|tool_call>call:read_history_csv{{columns:[{s}CL{s},{s}CD{s}],max_rows:20,verbose:true,x:null}}<tool_call|>")
+    assert g.arguments == {"columns": ["CL", "CD"], "max_rows": 20, "verbose": True, "x": None}
+    h = _parse("<|tool_call>call:get_design_state{}<tool_call|>")
+    assert h.name == "get_design_state" and h.arguments == {}
+
+
+def test_decode_keeps_gemma_tool_markup_but_drops_other_special_tokens():
+    from src.llm.thinking_model import _keep_tool_markup_when_decoding
+
+    class _Tok:                                   # Gemma-like: markers are special tokens
+        all_special_tokens = ["<bos>", "<|tool_call>", "<tool_call|>", '<|"|>', "<|tool_response>"]
+        added_tokens_encoder, added_tokens_decoder = {}, {}
+        def decode(self, ids, skip_special_tokens=False):
+            raw = '<bos><|tool_call>call:f{a:<|"|>x<|"|>}<tool_call|><|tool_response>'
+            return raw if not skip_special_tokens else "call:f{a:x}"
+
+    t = _Tok(); _keep_tool_markup_when_decoding(t)
+    assert t.decode([1], skip_special_tokens=True) == '<|tool_call>call:f{a:<|"|>x<|"|>}<tool_call|>'
+    assert t.decode([1]) == '<bos><|tool_call>call:f{a:<|"|>x<|"|>}<tool_call|><|tool_response>'
+
+    class _Plain:                                 # no markup tokens: decode untouched
+        all_special_tokens = ["<|im_end|>"]
+        added_tokens_encoder, added_tokens_decoder = {}, {}
+        def decode(self, ids, skip_special_tokens=False):
+            return "x"
+    p = _Plain(); orig = p.decode; _keep_tool_markup_when_decoding(p)
+    assert p.decode == orig
