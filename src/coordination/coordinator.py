@@ -523,7 +523,8 @@ class Coordinator:
         # ran exactly like networked without it; now each peer's turn is its own retry loop with feedback.
         from src.coordination.iterative_feedback_handler import IterativeFeedbackHandler
 
-        iterative = self.execution_handler if isinstance(self.execution_handler, IterativeFeedbackHandler) else None
+        handler = getattr(self, "execution_handler", None)
+        iterative = handler if isinstance(handler, IterativeFeedbackHandler) else None
 
         def _run_one_peer(peer_name: str) -> list[AgentMessage]:
             agent = self.agents.get(peer_name)
