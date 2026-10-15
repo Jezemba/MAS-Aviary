@@ -168,3 +168,19 @@ def test_all_todos_done_does_not_end_a_board_graph_link():
     action = strategy.next_step([], {"task": "t"})
     assert action.action_type == "parallel_run"                 # the board reopened from geometry
     assert [t.name for t in bb.read_available_todos()] == ["GEOMETRY_SETUP"]
+
+
+def test_a_peer_without_the_review_todo_is_told_to_finish_and_claim_it():
+    import json
+
+    from src.tools import work_claims
+
+    bg, bb = _graph()
+    work_claims.reset()
+    work_claims.register_blackboard(bb)
+    bb.claim_todo("MISSION_CONFIG", "agent_1")
+    with agent_scope("agent_1"):
+        out = json.loads(rt.RecordRecommendation().forward("CONTINUE", "geometry_engineer", "Wing1 AR 9.4 -> 10"))
+    work_claims.reset()
+    assert not out["recorded"]
+    assert "RESULTS_REVIEW" in out["error"] and "mark_todo_done" in out["error"] and "MISSION_CONFIG" in out["error"]
