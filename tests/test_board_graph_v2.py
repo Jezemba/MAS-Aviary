@@ -170,17 +170,13 @@ def test_all_todos_done_does_not_end_a_board_graph_link():
     assert [t.name for t in bb.read_available_todos()] == ["GEOMETRY_SETUP"]
 
 
-def test_a_peer_without_the_review_todo_is_told_to_finish_and_claim_it():
+def test_a_peer_without_the_review_todo_gets_the_bare_refusal_and_the_how_to_is_in_best_practices():
     import json
 
-    from src.tools import work_claims
+    from src.tools.best_practices_tool import read_sections
 
-    bg, bb = _graph()
-    work_claims.reset()
-    work_claims.register_blackboard(bb)
-    bb.claim_todo("MISSION_CONFIG", "agent_1")
     with agent_scope("agent_1"):
         out = json.loads(rt.RecordRecommendation().forward("CONTINUE", "geometry_engineer", "Wing1 AR 9.4 -> 10"))
-    work_claims.reset()
-    assert not out["recorded"]
-    assert "RESULTS_REVIEW" in out["error"] and "mark_todo_done" in out["error"] and "MISSION_CONFIG" in out["error"]
+    assert not out["recorded"] and out["error"] == "Only the mdo_integrator records the recommendation; you are agent_1."
+    notes = read_sections("networked")
+    assert "RESULTS_REVIEW" in notes and "mark_todo_done" in notes and "request_complexity" in notes

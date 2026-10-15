@@ -82,3 +82,9 @@ bottom: the newest entries are last.
 - [2026-10-12] Record your verdict and recommendation with record_recommendation(verdict, recommendation_to, recommended_change): that call is how the framework receives them (your text is not parsed). Also write them in your DESIGN_STATE for the agents to read.
 - [2026-10-12] Name a design variable (see general): a change no tool can make, such as the airfoil thickness-to-chord, cannot be acted on.
 - [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with respond_to_recommendation. Use those answers in your verdict.
+
+## networked
+
+- [2026-10-15] The mdo_integrator is the peer holding the integrator's TODO (RESULTS_REVIEW in graph-routed, evaluation otherwise). Only that peer can call record_recommendation; claim the TODO first.
+- [2026-10-15] Finish a TODO with mark_todo_done and your DESIGN_STATE as the result before taking another. A TODO you still hold blocks the TODOs after it for every peer.
+- [2026-10-15] Graph-routed: the board holds only the current level's TODOs. If more disciplines must re-run, call request_complexity (moderate or complex) and the board gains those TODOs.

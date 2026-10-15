@@ -13,7 +13,8 @@ from typing import Any
 from smolagents import Tool
 
 PATH = Path(__file__).resolve().parents[2] / "config" / "best_practices.md"
-SECTIONS = ("general", "geometry", "aero", "structures", "propulsion", "mission", "simulation", "integrator")
+SECTIONS = ("general", "geometry", "aero", "structures", "propulsion", "mission", "simulation", "integrator",
+            "networked")
 
 
 def read_sections(discipline: str | None = None) -> str:
@@ -34,7 +35,7 @@ class ReadBestPractices(Tool):
         "Returns the best-practice notes for a discipline: tool names that work, settings held fixed "
         "for the study, known pitfalls and how to avoid them. Call it when unsure how to use a tool. "
         "discipline: general | geometry | aero | structures | propulsion | mission | simulation | "
-        "integrator (the general notes are always included); omit it for every section."
+        "integrator | networked (the general notes are always included); omit it for every section."
     )
     inputs: dict[str, Any] = {
         "discipline": {"type": "string", "description": "which section to read", "nullable": True},

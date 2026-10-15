@@ -95,26 +95,6 @@ def roles_of(agent_name: str | None) -> set[str]:
     return roles
 
 
-def _held(agent: str) -> list[str]:
-    try:
-        from src.tools import work_claims
-
-        return list(work_claims._held_by(agent))
-    except Exception:  # pragma: no cover
-        return []
-
-
-def _review_todo() -> str | None:
-    """The integrator's TODO on the networked board (RESULTS_REVIEW or evaluation), if there is a board."""
-    try:
-        from src.tools import work_claims
-
-        names = {t.name for t in work_claims._todos()}
-    except Exception:  # pragma: no cover
-        return None
-    return next((n for n in ("RESULTS_REVIEW", "evaluation") if n in names), None)
-
-
 # -- readers -----------------------------------------------------------------------------------------
 
 def signals(kind: str | None = None) -> list[dict]:
@@ -191,16 +171,8 @@ class RecordRecommendation(Tool):
 
         agent = current_agent_name()
         if agent != "unknown" and "mdo_integrator" not in roles_of(agent):
-            review = _review_todo()
-            if review:
-                # Networked (live 2026-10-15): a peer that flew the mission kept writing the verdict here while
-                # still holding its own TODO, so the review TODO stayed blocked and nobody could record one.
-                held = ", ".join(_held(agent)) or "none"
-                return _err(f"Only the peer holding the integrator's TODO {review} records the recommendation; "
-                            f"you are {agent} (holding: {held}). If you have finished your TODO, mark_todo_done it "
-                            f"with your DESIGN_STATE, then claim {review} when it is available.")
-            return _err(f"Only the mdo_integrator records the recommendation; you are {agent}. To answer one, "
-                        "call respond_to_recommendation.")
+            # The bare fact (Jessica, 2026-10-15): how to get the role is in best_practices.md, not here.
+            return _err(f"Only the mdo_integrator records the recommendation; you are {agent}.")
         v = str(verdict or "").strip().upper()
         if v not in VERDICTS:
             return _err(f"verdict must be one of {', '.join(VERDICTS)}; got {verdict!r}.")
