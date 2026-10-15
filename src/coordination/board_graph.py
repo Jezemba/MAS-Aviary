@@ -52,7 +52,7 @@ class BoardGraph:
         self.started = False
         self.seq_seen = 0          # coordination signals already acted on
         self.kb_seen = 0           # KB entries already read for the rule-table suggestion
-        self.runs_counted: dict[str, float] = {}   # TODO -> completed_at already counted
+        self.base_completions = 0  # board completions before this link
         self.role_runs = 0
         self.stop_reason: str | None = None
         self.log: list[dict] = []
@@ -78,6 +78,7 @@ class BoardGraph:
     def _set_level(self, level: str, reason: str) -> None:
         old = self.level
         self.level = level
+        self._limit()
         new_nodes = [n for n in nodes_at(level) if n not in nodes_at(old)]
         self.board.seed_todos([(TODO_OF_NODE[n], _DESCRIPTION[n], self._deps(n, level)) for n in new_nodes])
         for n in nodes_at(level):
@@ -104,6 +105,8 @@ class BoardGraph:
 
             self.preinit_report = graph_preinit.prepare(carry_over)
         self.seq_seen = rt.last_seq()
+        self.base_completions = self.board.completions
+        self._limit()
         level = self.level
         self.board.seed_todos([(TODO_OF_NODE[n], _DESCRIPTION[n], self._deps(n, level)) for n in nodes_at(level)])
         self._post("graph_level", self._level_text(
@@ -111,10 +114,12 @@ class BoardGraph:
             "results, so the mission is set on them"))
 
     def _count_runs(self) -> None:
-        for t in self.board.read_todos():
-            if t.status == "done" and t.completed_at and self.runs_counted.get(t.name) != t.completed_at:
-                self.runs_counted[t.name] = t.completed_at
-                self.role_runs += 1
+        self.role_runs = self.board.completions - self.base_completions
+
+    def _limit(self) -> None:
+        """The level's budget, enforced by the board itself (it refuses claims once it is spent)."""
+        self.board.set_claim_limit(self.base_completions + gr.BUDGET[self.level],
+                                   f"the budget of {gr.BUDGET[self.level]} role runs at {self.level} is spent")
 
     def _suggest(self) -> None:
         """The rule table's reading of a simulation that did not fly, posted as advice."""

@@ -94,15 +94,24 @@ def test_all_done_without_a_recommendation_stops():
     assert "every TODO is done" in bg.stop_reason
 
 
-def test_budget_counts_role_runs():
+def test_budget_counts_role_runs_and_the_board_refuses_claims_once_spent():
+    bg, bb = _graph()
+    for _ in range(gr.BUDGET[gr.SIMPLE]):
+        _finish(bb, "MISSION_CONFIG")
+        bb.reopen_todos(["MISSION_CONFIG"])
+    ok, msg = bb.claim_todo("MISSION_CONFIG", "agent_2")      # mid-cycle: refused by the board itself
+    assert not ok and "budget of 8 role runs at simple is spent" in msg
+    assert not bg.step() and "budget" in bg.stop_reason
+    assert bg.role_runs == gr.BUDGET[gr.SIMPLE]
+
+
+def test_a_higher_level_raises_the_claim_limit():
     bg, bb = _graph()
     _finish(bb, "MISSION_CONFIG")
-    bg._count_runs()
-    bg._count_runs()                                   # the same completion counts once
-    assert bg.role_runs == 1
-    bg.role_runs = gr.BUDGET[gr.SIMPLE]
-    assert not bg.step()
-    assert "budget" in bg.stop_reason
+    with agent_scope("agent_2"):
+        rt.RequestComplexity().forward("complex", "the wing has to change")
+    assert bg.step() and bg.level == gr.COMPLEX
+    assert bb._claim_limit == bg.base_completions + gr.BUDGET[gr.COMPLEX]
 
 
 def test_board_names_map_to_roles_for_the_gates():

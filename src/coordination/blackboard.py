@@ -101,6 +101,12 @@ class Blackboard:
         self._claim_conflicts: int = 0
         # TODO board for concurrent-blackboard selection mode.
         self._todos: dict[str, TodoEntry] = {}
+        # Graph-routed v2 budget (2026-10-15): TODO completions so far, and the count at which new claims are
+        # refused. Checked inside claim_todo, because peers keep claiming within one cycle (a live link ran
+        # 30 role runs on a budget of 25 and hit the 240 min timeout).
+        self._completions: int = 0
+        self._claim_limit: int | None = None
+        self._claim_limit_reason: str = ""
         # Reentrant lock: methods can call other methods that also lock.
         # All public methods on this class take this lock, so the
         # blackboard is safe to share across peer threads.
@@ -354,6 +360,9 @@ class Blackboard:
             todo = self._todos.get(name)
             if todo is None:
                 return False, f"no such TODO: {name!r}"
+            if self._claim_limit is not None and self._completions >= self._claim_limit:
+                return False, (f"No more TODOs can be claimed: {self._claim_limit_reason}. Post your DESIGN_STATE "
+                               "if you have one and stop (final_answer).")
             if todo.status == TODO_STATUS_DONE:
                 return (
                     False,
@@ -401,6 +410,7 @@ class Blackboard:
             todo.status = TODO_STATUS_DONE
             todo.result = result
             todo.completed_at = time.time()
+            self._completions += 1
             return True, f"{agent!r} marked {name!r} done"
 
     def fail_todo(self, name: str, agent: str, reason: str) -> tuple[bool, str]:
@@ -440,6 +450,16 @@ class Blackboard:
                     t.claimed_at = None
                     released.append(t.name)
             return released
+
+    @property
+    def completions(self) -> int:
+        with self._lock:
+            return self._completions
+
+    def set_claim_limit(self, limit: int | None, reason: str = "") -> None:
+        """Refuse new claims once this many TODOs have been completed (None: no limit)."""
+        with self._lock:
+            self._claim_limit, self._claim_limit_reason = limit, reason
 
     def reopen_todos(self, names: list[str]) -> list[str]:
         """Put DONE / FAILED TODOs back to PENDING (graph-routed v2 on the board: a later level or the
