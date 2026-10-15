@@ -2233,6 +2233,24 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                     )
                 resolved["cpacs_file_path"] = real_path
 
+    # B214 (2026-10-15): export_cpacs must never write into a tests/fixtures/ file. A geometry agent that
+    # exports "back to the file it opened" overwrote the git-tracked D150 baseline with its morphed design
+    # (netval, 4 exports in two networked links), so every later link and combination started from that
+    # design instead of the baseline. The export goes to a per-run file of the same name instead.
+    if tool_name == "export_cpacs" and _design_state is not None:
+        out = resolved.get("output_path") or resolved.get("cpacs_file_path")
+        key = "output_path" if resolved.get("output_path") else "cpacs_file_path"
+        if isinstance(out, str) and "tests/fixtures/" in out.replace("\\", "/"):
+            import tempfile
+
+            redirects = _design_state.data_store.setdefault("_export_redirects", {})
+            dst = redirects.get(out)
+            if not dst:
+                dst = os.path.join(tempfile.mkdtemp(prefix="avion_export_"), os.path.basename(out))
+                redirects[out] = dst
+            logger.warning("B214: export_cpacs to the tracked fixture %s redirected to %s", out, dst)
+            resolved[key] = dst
+
     # B111: the aero solve must be trimmed to the lift this aircraft has to make. After the path
     # injection above (B146), so a weight read from the CPACS comes from the file SU2 will mesh.
     # B149: agents configure SU2 through create_su2_session(cpacs_file_path=...) as often as through
