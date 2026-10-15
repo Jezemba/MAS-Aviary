@@ -126,3 +126,12 @@ def test_strategy_dispatches_the_board_graph(monkeypatch):
     assert action.action_type == "parallel_run"
     assert action.metadata["peers"] == ["agent_1"]            # one TODO available -> one peer
     assert action.metadata["graph_level"] == gr.SIMPLE
+
+
+def test_the_routing_notices_are_in_every_peers_message():
+    from src.coordination import prompt_assembly
+
+    bg, bb = _graph()
+    text = prompt_assembly.board_block(bb, show_blocking=True)
+    assert "complexity level SIMPLE" in text and "request_complexity" in text
+    assert text.index("TODO BOARD") < text.index("GRAPH ROUTING")

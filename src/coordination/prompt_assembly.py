@@ -526,7 +526,16 @@ def board_block(board, show_blocking: bool) -> str:
                 unmet = [d for d in t.depends_on if d not in done]
                 state += f"  [BLOCKED on {', '.join(unmet)}]" if unmet else "  [AVAILABLE]"
         rows.append(f"  - {t.name:{width}s}  {state}")
-    return _join("TODO BOARD:\n" + "\n".join(rows), *posted)
+    # Graph-routed v2 (networked): the framework's routing notices -- level, reopened TODOs, the rule table's
+    # suggestion -- go in every peer's message, as the routing text does for sequential (live run 2026-10-15:
+    # no peer called read_blackboard, so a notice only on the blackboard reached nobody).
+    routing = []
+    try:
+        routing = [e.value for e in board.read_by_author("graph_router")
+                   if e.key in ("graph_level", "graph_route", "graph_suggestion", "graph_stop")]
+    except Exception:  # pragma: no cover - a board without entries
+        pass
+    return _join("TODO BOARD:\n" + "\n".join(rows), *routing, *posted)
 
 
 def peer_message(agent: str, system: str, board, show_blocking: bool) -> str:
