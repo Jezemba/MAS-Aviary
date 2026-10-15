@@ -526,6 +526,13 @@ class NetworkedStrategy(CoordinationStrategy):
         if self._consecutive_errors >= self._max_consecutive_errors:
             return True
 
+        # Graph-routed v2 on the board: the board graph decides when the link ends (COMPLETE, the budget, or
+        # nothing left to act on), between cycles in next_step. "Every TODO done" is not the end here -- at
+        # SIMPLE the board holds three TODOs, and the integrator's CONTINUE reopens it (live 2026-10-15: the
+        # link ended after the first review, before the recommendation could reopen the board).
+        if getattr(self, "_board_graph", None) is not None:
+            return bool(self._graph_complete)
+
         # Check if any agent called mark_task_done (single-signal completion).
         if self._blackboard:
             entry = self._blackboard.get("task_complete")

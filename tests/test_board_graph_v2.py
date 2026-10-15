@@ -144,3 +144,27 @@ def test_the_routing_notices_are_in_every_peers_message():
     text = prompt_assembly.board_block(bb, show_blocking=True)
     assert "complexity level SIMPLE" in text and "request_complexity" in text
     assert text.index("TODO BOARD") < text.index("GRAPH ROUTING")
+
+
+def test_all_todos_done_does_not_end_a_board_graph_link():
+    """The integrator's CONTINUE must get to reopen the board: completion is the board graph's call."""
+    from src.coordination.strategies.networked import NetworkedStrategy
+    from src.tools.mock_tools import EchoTool
+    from tests.test_networked_strategy import _make_config
+
+    config = _make_config({"echo_tool": EchoTool()}, initial_agents=2, selection_mode="concurrent_blackboard",
+                          graph_router="board", graph_preinit=False)
+    config["_graph_def"] = SimpleNamespace(initial_state="MISSION_CONFIG", states={}, terminal_states=[])
+    strategy = NetworkedStrategy()
+    strategy.initialize({}, config)
+    strategy.next_step([], {"task": "t"})                      # starts the board at SIMPLE
+    bb = strategy.blackboard
+    for name in ("MISSION_CONFIG", "SIMULATION_RUN", "RESULTS_REVIEW"):
+        _finish(bb, name)
+    with agent_scope("mdo_integrator"):
+        rt.RecordRecommendation().forward("CONTINUE", "geometry_engineer", "Wing1 aspect_ratio 9.4 -> 10.5")
+    assert bb.all_todos_done()
+    assert not strategy.is_complete([], {"task": "t"})        # not ended on "all done"
+    action = strategy.next_step([], {"task": "t"})
+    assert action.action_type == "parallel_run"                 # the board reopened from geometry
+    assert [t.name for t in bb.read_available_todos()] == ["GEOMETRY_SETUP"]
