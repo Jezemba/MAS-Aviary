@@ -6,6 +6,7 @@ to the InstrumentationLogger, the UI and metrics will continue to work.
 """
 
 import importlib
+import os
 import time
 from typing import Any
 
@@ -593,11 +594,19 @@ class Coordinator:
         from src.llm.batch_generation import configure as _configure_batching
         from src.llm.generation_slots import configure as _configure_slots
 
-        _configure_slots(max_concurrent=max(1, len(peer_names)))
+        # MAS_PEER_BATCH_MAX (opt-in, 2026-10-14): cap the peers' generations per forward pass on a card that
+        # cannot hold all of them (2x RTX 5090 OOMed with 3 networked peers). The peers still run concurrently;
+        # only their model calls queue. Unset = every dispatched peer in one batch (the study default).
+        _cap = len(peer_names)
+        try:
+            _cap = min(_cap, int(os.environ.get("MAS_PEER_BATCH_MAX") or _cap))
+        except ValueError:
+            pass
+        _configure_slots(max_concurrent=max(1, _cap))
         # B83: one batch row per dispatched peer. Concurrent generate() on the sharded
         # model crashes, so the peers' generations are merged into one forward pass
         # instead of running side by side.
-        _configure_batching(max_batch_size=max(1, len(peer_names)))
+        _configure_batching(max_batch_size=max(1, _cap))
 
         # B83: the peers are declared to the batching worker BEFORE they start, so the
         # first request to arrive waits for its peers instead of firing a batch of one;
