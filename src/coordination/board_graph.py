@@ -154,9 +154,13 @@ class BoardGraph:
 
             state = get_design_state()
             if state is not None:
+                self._count_runs()
                 state.data_store["graph_route"] = {"level": self.level, "role_runs": self.role_runs,
                                                    "stop_reason": self.stop_reason, "log": list(self.log),
                                                    "preinit": self.preinit_report}
+                from src.tools.design_json import write_design
+
+                write_design(state)
         except Exception:  # pragma: no cover
             pass
 

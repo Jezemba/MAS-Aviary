@@ -69,6 +69,8 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         # B180: the recommendation, the responses to it and complexity requests, as recorded by the agents'
         # tool calls (src/tools/recommendation_tools.py), in order. Carried to the next link with design.json.
         "coordination_signals": list(store.get("coordination_signals") or []),
+        # Graph-routed v2 on the networked board: level, role runs, how the link ended, the route events.
+        **({"graph_route": store["graph_route"]} if store.get("graph_route") else {}),
     }
 
 

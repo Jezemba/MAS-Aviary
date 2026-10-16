@@ -180,3 +180,16 @@ def test_a_peer_without_the_review_todo_gets_the_bare_refusal_and_the_how_to_is_
     assert not out["recorded"] and out["error"] == "Only the mdo_integrator records the recommendation; you are agent_1."
     notes = read_sections("networked")
     assert "RESULTS_REVIEW" in notes and "mark_todo_done" in notes and "request_complexity" in notes
+
+
+def test_the_route_and_stop_reason_reach_design_json():
+    from src.tools.data_plane import get_design_state
+    from src.tools.design_json import build_design
+
+    bg, bb = _graph()
+    for name in ("MISSION_CONFIG", "SIMULATION_RUN", "RESULTS_REVIEW"):
+        _finish(bb, name)
+    assert not bg.step()
+    state = get_design_state()
+    route = build_design(state.data_store, state.sessions)["graph_route"]
+    assert route["stop_reason"].startswith("every TODO is done") and route["role_runs"] == 3

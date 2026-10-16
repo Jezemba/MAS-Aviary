@@ -512,19 +512,29 @@ class NetworkedStrategy(CoordinationStrategy):
         # Check termination keyword ASSERTED in last message — negated
         # mentions and quoted previous-link feedback do not count.
         # See src/coordination/completion_signal.py and .claude/BUGS.md B2.
+        bg = getattr(self, "_board_graph", None)
+
+        def _end(reason: str) -> bool:
+            # Graph-routed v2: every way a link ends is recorded (live 2026-10-15: a link stopped at MODERATE
+            # with no review and no reason anywhere in its outputs).
+            if bg is not None and not bg.stop_reason:
+                bg.stop_reason = reason
+                bg.record()
+            return True
+
         if history:
             last = history[-1]
             content = last.content if isinstance(last, AgentMessage) else str(last)
             if signals_completion(content, self._termination_keyword):
-                return True
+                return _end(f"{getattr(last, 'agent_name', 'a peer')} wrote {self._termination_keyword}")
 
         # Check max turns.
         if len(history) >= self._max_turns:
-            return True
+            return _end(f"max_turns {self._max_turns} reached")
 
         # Check consecutive errors.
         if self._consecutive_errors >= self._max_consecutive_errors:
-            return True
+            return _end(f"{self._consecutive_errors} cycles in a row ended on an errored peer turn")
 
         # Graph-routed v2 on the board: the board graph decides when the link ends (COMPLETE, the budget, or
         # nothing left to act on), between cycles in next_step. "Every TODO done" is not the end here -- at
