@@ -83,6 +83,8 @@ bottom: the newest entries are last.
 - [2026-10-12] Name a design variable (see general): a change no tool can make, such as the airfoil thickness-to-chord, cannot be acted on.
 - [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with respond_to_recommendation. Use those answers in your verdict.
 
+- [2026-10-15] Networked: the mdo_integrator is the peer holding RESULTS_REVIEW (graph-routed) or evaluation (iterative). Claim that TODO before calling record_recommendation; finish any TODO you hold with mark_todo_done first (see networked).
+
 ## networked
 
 - [2026-10-15] The mdo_integrator is the peer holding the integrator's TODO (RESULTS_REVIEW in graph-routed, evaluation otherwise). Only that peer can call record_recommendation; claim the TODO first.
