@@ -310,3 +310,19 @@ def test_d8_the_orchestrator_assigns_the_recommendation_and_the_graph_goes_there
     assert (review["next"], review["next_level"]) == (gr.GEOMETRY, gr.COMPLEX)
     assert "Wing1 aspect_ratio 9.4 -> 10.5" in asked[1]
     assert agents[gr.GEOMETRY].calls[0].startswith("raise the aspect ratio to 10.5")
+
+
+
+def test_d8_messages_carry_no_live_objects_so_the_result_pickles(monkeypatch):
+    """final3 2026-10-16: the orchestrator callback in message metadata made the run's result unpicklable."""
+    import pickle
+
+    kb = _KB()
+    flown = ([rec("run_simulation", summary={"fuel_burned_kg": 22998.6})], "flew")
+    agents = {gr.MISSION: _Agent(gr.MISSION, kb, [([rec("set_aircraft_parameters", valid=True)], "ok")]),
+              gr.SIMULATION: _Agent(gr.SIMULATION, kb, [flown]),
+              gr.REVIEW: _Agent(gr.REVIEW, kb, [([], "VERDICT: COMPLETE")])}
+    handler, msgs, _, _ = _orchestrated(monkeypatch, agents, kb, [None])
+    for m in msgs:
+        assert not ({"ask_orchestrator", "assignments", "inbox", "assigned_tasks", "system_text"} & set(m.metadata))
+    pickle.dumps([m.metadata for m in msgs])

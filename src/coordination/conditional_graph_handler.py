@@ -45,6 +45,16 @@ class ConditionalGraphHandler(ExecutionHandler):
         self.orchestrator_turns = 0
         self._config = cfg
 
+    # The orchestrated strategy hands the graph its live objects (the orchestrator callback, the assignment
+    # queue, the inbox, the whole system text). They are inputs, not message metadata: the callback holds the
+    # agents dict, which cannot be pickled, and a run whose messages carried it COMPLETED but could not return
+    # its result from the runner's subprocess (final3, 2026-10-16: "Can't get local object _AutoWrapDict").
+    _LIVE_KEYS = frozenset({"ask_orchestrator", "assignments", "inbox", "assigned_tasks", "system_text"})
+
+    @classmethod
+    def _message_meta(cls, action_metadata: dict | None) -> dict:
+        return {k: v for k, v in (action_metadata or {}).items() if k not in cls._LIVE_KEYS and not callable(v)}
+
     def _load_graph(self, state: dict):
         """The predefined graph's definition, for the runner's role discovery (list_graph_roles, aliases)."""
         from src.coordination.graph_routed_handler import GraphRoutedHandler
@@ -250,7 +260,7 @@ class ConditionalGraphHandler(ExecutionHandler):
             msg = AgentMessage(agent_name=node, content=content, turn_number=turn, timestamp=time.time(),
                                duration_seconds=time.monotonic() - t0, error=error,
                                is_retry=decision.next_node == node or retries > 0,
-                               metadata={**(action_metadata or {}), "graph_route": route,
+                               metadata={**self._message_meta(action_metadata), "graph_route": route,
                                          "completion_met": decision.rule in ("flow", "complete")})
             messages.append(msg)
             if inst_logger is not None:
