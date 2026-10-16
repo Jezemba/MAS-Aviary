@@ -193,3 +193,15 @@ def test_the_route_and_stop_reason_reach_design_json():
     state = get_design_state()
     route = build_design(state.data_store, state.sessions)["graph_route"]
     assert route["stop_reason"].startswith("every TODO is done") and route["role_runs"] == 3
+
+
+def test_a_request_for_the_current_level_or_lower_is_refused():
+    import json
+
+    bg, bb = _graph()
+    bg.record()                                              # the board's level is in the design state
+    with agent_scope("agent_2"):
+        same = json.loads(rt.RequestComplexity().forward("simple", "x"))
+        up = json.loads(rt.RequestComplexity().forward("moderate", "thrust short"))
+    assert not same["recorded"] and "already simple" in same["error"]
+    assert up["recorded"]

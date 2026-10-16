@@ -241,6 +241,12 @@ class RequestComplexity(Tool):
             return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
         from src.tools.agent_context import current_agent_name
 
+        # The board's current level (graph-routed v2 records it in the design state). Live final3b: peers asked
+        # for 'complex' 8 times while the board was already at complex.
+        state = _state()
+        current = (((state.data_store or {}).get("graph_route") or {}).get("level") if state is not None else None)
+        if current in LEVELS and LEVELS.index(lv) <= LEVELS.index(current):
+            return _err(f"The level is already {current}; nothing to change. {_FINISH}")
         mine = [r for r in signals("complexity") if r.get("agent") == current_agent_name()]
         if mine and mine[-1].get("level") == lv:
             return _err(f"Already requested {lv} (seq {mine[-1]['seq']}). {_FINISH}")
