@@ -205,3 +205,22 @@ def test_a_request_for_the_current_level_or_lower_is_refused():
         up = json.loads(rt.RequestComplexity().forward("moderate", "thrust short"))
     assert not same["recorded"] and "already simple" in same["error"]
     assert up["recorded"]
+
+
+def test_a_link_with_nothing_claimable_records_why_it_ended():
+    from src.coordination.strategies.networked import NetworkedStrategy
+    from src.tools.data_plane import get_design_state
+    from src.tools.mock_tools import EchoTool
+    from tests.test_networked_strategy import _make_config
+
+    config = _make_config({"echo_tool": EchoTool()}, initial_agents=2, selection_mode="concurrent_blackboard",
+                          graph_router="board", graph_preinit=False)
+    config["_graph_def"] = SimpleNamespace(initial_state="MISSION_CONFIG", states={}, terminal_states=[])
+    strategy = NetworkedStrategy()
+    strategy.initialize({}, config)
+    strategy.next_step([], {"task": "t"})
+    strategy.blackboard.claim_todo("MISSION_CONFIG", "agent_1")    # held by a peer that never finishes ...
+    strategy.blackboard.release_claimed_todos = lambda: []          # ... and is not released
+    action = strategy.next_step([], {"task": "t"})
+    assert action.action_type == "terminate"
+    assert get_design_state().data_store["graph_route"]["stop_reason"] == "no TODO on the board can be claimed"

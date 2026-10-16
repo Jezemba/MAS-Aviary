@@ -1361,11 +1361,13 @@ class NetworkedStrategy(CoordinationStrategy):
                                                     "graph_level": bg.level, "role_runs": bg.role_runs})
         if self._concurrent_runs_dispatched >= self._max_concurrent_runs:
             bg.stop_reason = f"{self._max_concurrent_runs} board cycles dispatched"
+            bg.record()
             return CoordinationAction(action_type="terminate", agent_name=None, input_context="",
                                       metadata={"reason": bg.stop_reason, "graph_route": bg.log})
         available = [t.name for t in bb.read_available_todos()]
         if not available:
             bg.stop_reason = "no TODO on the board can be claimed"
+            bg.record()
             return CoordinationAction(action_type="terminate", agent_name=None, input_context="",
                                       metadata={"reason": bg.stop_reason, "graph_route": bg.log})
         peers = list(self._agent_order)[:max(1, min(len(available), len(self._agent_order)))]
