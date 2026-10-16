@@ -197,3 +197,11 @@ def test_a_repeated_record_is_refused_and_every_result_says_what_comes_next():
         s1 = json.loads(rt.SetComplexity().forward("simple", "start"))
         s2 = json.loads(rt.SetComplexity().forward("simple", "start"))
     assert s1["recorded"] and not s2["recorded"] and "final_answer" in s2["error"]
+
+
+def test_a_repeated_complexity_request_is_refused():
+    with agent_scope("agent_1"):
+        first = json.loads(rt.RequestComplexity().forward("moderate", "thrust short"))
+        again = json.loads(rt.RequestComplexity().forward("moderate", "thrust short"))
+        higher = json.loads(rt.RequestComplexity().forward("complex", "the wing too"))
+    assert first["recorded"] and not again["recorded"] and higher["recorded"]

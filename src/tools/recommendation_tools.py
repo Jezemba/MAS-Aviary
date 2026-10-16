@@ -239,6 +239,11 @@ class RequestComplexity(Tool):
         lv = str(level or "").strip().lower()
         if lv not in LEVELS:
             return _err(f"level must be one of {', '.join(LEVELS)}; got {level!r}.")
+        from src.tools.agent_context import current_agent_name
+
+        mine = [r for r in signals("complexity") if r.get("agent") == current_agent_name()]
+        if mine and mine[-1].get("level") == lv:
+            return _err(f"Already requested {lv} (seq {mine[-1]['seq']}). {_FINISH}")
         entry = _record("complexity", level=lv, reason=str(reason or "").strip())
         return json.dumps({"recorded": True, "seq": entry["seq"], "level": lv, "next": _FINISH})
 
