@@ -88,6 +88,11 @@ def seed_from_design(design: dict) -> list[str]:
         coupling.put_var(ds, "prop.sfc_cruise", prop["sfc_cruise"], source_tool="graph pre-init")
         if prop.get("fn_lbf") is not None:
             coupling.put_var(ds, "prop.fn_lbf", prop["fn_lbf"], source_tool="graph pre-init")
+        # B187: the seeded engine was sized on the seeded mass and drag (seeded above).
+        from src.tools.data_plane import _cycle_sizing_key
+
+        store["prop_cycle_key"] = _cycle_sizing_key()
+        store["cycle_sizing"] = {"session": (ds.sessions or {}).get("pycycle"), "key": store["prop_cycle_key"]}
         seeded.append("propulsion")
     space = design.get("design_space") or {}
     if space.get("geometry"):

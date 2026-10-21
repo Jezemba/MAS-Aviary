@@ -329,6 +329,13 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             duplicate_guard.release(tool.name, _fp)     # nothing ran; drop any in-flight claim
             _kb_record(tool.name, resolved, missing_inputs, status="refused")
             return _json.dumps(missing_inputs)
+        # B188: a mission that already failed, with nothing set since, is the same mission.
+        from src.tools import mission_guard
+        _repeat = mission_guard.check(tool.name, resolved)
+        if _repeat is not None:
+            duplicate_guard.release(tool.name, _fp)
+            _kb_record(tool.name, resolved, _repeat, status="refused")
+            return _json.dumps(_repeat)
         # 3. Call the actual tool, under a deadlock bound (B85). mcpadapt's sync bridge
         #    waits on .result() with no timeout, so a stalled event loop parks the caller
         #    forever -- validate8_net wedged for 48 minutes with every thread asleep. A
@@ -351,6 +358,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         duplicate_guard.release(tool.name, _fp)
         _obs_status = (_entry or {}).get("status", "success")
         duplicate_guard.observe(tool.name, resolved, result, _obs_status, _entry)
+        mission_guard.observe(tool.name, resolved, result, _obs_status)
         from src.tools.data_plane import note_session_closed
         note_session_closed(tool.name, resolved, result)
         # 4a/4b (retired by B84): the aero warning and the optional-mass hint used to be

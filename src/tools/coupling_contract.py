@@ -203,6 +203,12 @@ def status(required: CoupledInput, resolved: dict | None = None) -> str:
 
     if coupling.get_var(get_design_state(), required.var) is None:
         return "missing"
+    if required is CYCLE:
+        # B187: the cycle must be sized on this design's mass and drag, not run on pycycle's defaults.
+        from src.tools.data_plane import engine_is_current
+
+        if not engine_is_current():
+            return "engine_stale"
     captured = _captured_fingerprint(required.producer)
     if captured is None:
         return "ok"          # produced before fingerprints were recorded; not evidence of staleness
@@ -233,7 +239,10 @@ def _refusal(tool_name: str, problems: list[tuple[CoupledInput, str]]) -> dict:
     lines = []
     for required, state in problems:
         name = required.parameter or "(a completed run)"
-        if state == "stale":
+        if state == "engine_stale":
+            head = (f"{name} -- {required.label}: the engine result on record was not sized on this design's "
+                    "current mass and drag. Run run_cycle again")
+        elif state == "stale":
             head = (f"{name} -- {required.label}: the value on record was produced for an EARLIER "
                     "geometry. The design has changed since, so it is not this design's value")
         else:

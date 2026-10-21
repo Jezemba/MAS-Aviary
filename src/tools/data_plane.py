@@ -1548,6 +1548,13 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     store = _design_state.data_store
     # pycycle-mcp feat/convergence-report says whether the design point is solved. An unsolved
     # cycle's numbers are not a result; a get_outputs read after it reads the same unsolved state.
+    # B187: a cycle the framework did not size on this design ran pycycle's defaults (5,900 lbf); its
+    # thrust is not this aircraft's engine and must never set aviary's engine scale (B170).
+    if not cycle_is_sized(getattr(_call_ctx, "cycle_session", None)):
+        store["prop_cycle_unsized_runs"] = int(store.get("prop_cycle_unsized_runs") or 0) + 1
+        logger.warning("[B187] %s on a pycycle session not sized for this design; outputs not captured",
+                       tool_name)
+        return
     if tool_name == "run_cycle" and data.get("converged") is not None:
         store["prop_cycle_converged"] = bool(data["converged"])
     if store.get("prop_cycle_converged") is False:
@@ -1574,6 +1581,9 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
         return          # a cycle that resolved nothing is not a cycle result (pycycle-mcp
                         # returns success: false in that case, and missing_outputs says why)
     _design_state.data_store["prop_cycle_outputs"] = captured
+    # B187: the mass and drag this engine result was sized on; B170 and the mission contract use it
+    # only while they are still the design's.
+    _design_state.data_store["prop_cycle_key"] = _cycle_sizing_key()
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
     logger.info("Captured engine cycle from %s: %s", tool_name, captured)
@@ -2021,6 +2031,31 @@ def _auto_export_morph() -> str | None:
     return path
 
 
+def _reapply_current_engine(resolved: dict) -> None:
+    """B187: before a mission flies, aviary's engine scale must come from the current engine result.
+
+    The scale reaches aviary only through set_aircraft_parameters (B170). After the cycle is re-run, a
+    mission flown straight away would carry the previous engine's scale, so the framework re-applies the
+    design's parameters through the full middleware (which injects the current coupled values, the engine
+    scale included). Nothing to do when the engine result is not current: the mission contract refuses then.
+    """
+    if _design_state is None or not engine_is_current():
+        return
+    store = _design_state.data_store
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    if (store.get("engine_injected_key") or {}).get(sid) == store.get("prop_cycle_key"):
+        return
+    setter = (_registered_tools or {}).get("set_aircraft_parameters")
+    if setter is None:
+        return
+    try:
+        setter.forward(session_id=sid, parameters=dict(store.get("design_params_applied") or {}))
+        logger.info("[B187] re-applied the design to aviary session %s with the current engine before "
+                    "run_simulation", sid)
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[B187] could not re-apply the current engine to %s: %s", sid, exc)
+
+
 def _restore_aviary_session(session_id: str) -> None:
     """Give a replacement aviary session the run's mission and design back (B113).
 
@@ -2198,6 +2233,12 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # read a FILE. Write the morph out now so the injection below hands them the design's geometry.
     if tool_name in _MORPH_FILE_READERS and _design_state:
         _auto_export_morph()
+    if tool_name == "run_simulation" and _design_state and mcp_name == "aviary":
+        _reapply_current_engine(resolved)
+    if tool_name in ("run_cycle", "get_outputs") and _design_state and mcp_name == "pycycle":
+        if tool_name == "run_cycle":
+            _auto_size_cycle(resolved)
+        _call_ctx.cycle_session = resolved.get("session_id") or (_design_state.sessions or {}).get("pycycle")
     # Auto-inject cpacs_file_path for mass-mcp tools. Prefer the MORPHED export (the
     # current design's geometry) so structural mass is geometry-coupled; else fall back
     # to the captured input path. A morphed export ALWAYS wins over a stale/baseline
@@ -2595,6 +2636,65 @@ def _inject_cycle_flight_condition(resolved: dict) -> None:
         logger.info("[B132] pycycle design point from the mission: %s", added)
 
 
+def _cycle_sizing_key() -> list | None:
+    """What the engine is sized on: MTOM and the cruise CL/CD. None until the mass result exists."""
+    if _design_state is None:
+        return None
+    from src.tools import coupling as _cpl
+
+    mtom = _design_state.data_store.get("mass_mtom_kg")
+    if mtom is None:
+        return None
+    cl = _cpl.get_var(_design_state, "aero.cl_cruise")
+    cd = _cpl.get_var(_design_state, "aero.cd_cruise")
+    return [round(float(mtom), 1), None if cl is None else round(float(cl), 5),
+            None if cd is None else round(float(cd), 6)]
+
+
+def engine_is_current() -> bool:
+    """True when the recorded engine result was sized on the design's current mass and drag (B187)."""
+    if _design_state is None:
+        return False
+    key = _cycle_sizing_key()
+    return key is not None and _design_state.data_store.get("prop_cycle_key") == key
+
+
+def cycle_is_sized(session_id: str | None) -> bool:
+    """True when this pycycle session was sized by the framework on the current mass and drag (B187)."""
+    if _design_state is None:
+        return False
+    sizing = _design_state.data_store.get("cycle_sizing") or {}
+    key = _cycle_sizing_key()
+    return key is not None and sizing.get("key") == key and (
+        not session_id or not sizing.get("session") or sizing.get("session") == session_id)
+
+
+def _auto_size_cycle(resolved: dict) -> None:
+    """B187: size the pycycle session before run_cycle when no set_inputs did it on the current design.
+
+    Live 2026-10-21 (aipexws5 networked graph-routed links 2-7, aipexws8 link 1): agents called run_cycle on
+    the framework-opened session without set_inputs, so pycycle ran its built-in defaults (Fn_DES 5,900
+    lbf, 35,000 ft, M0.80); that thrust was captured and B170 set aviary's engine scale to 0.994 -- too
+    small to fly. The sizing is done the same way an agent's set_inputs gets it: a set_inputs call
+    through the full middleware (Fn_DES from mass and drag, the cruise point), recorded in the KB.
+    Without a mass result there is nothing to size on; the coupling contract refuses run_cycle then.
+    """
+    if _design_state is None:
+        return
+    sid = resolved.get("session_id") or (_design_state.sessions or {}).get("pycycle")
+    if _cycle_sizing_key() is None or cycle_is_sized(sid):
+        return
+    tool = (_registered_tools or {}).get("set_inputs")
+    if tool is None or not sid:
+        return
+    try:
+        tool.forward(session_id=sid, values={})
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[B187] could not size pycycle session %s before run_cycle: %s", sid, exc)
+        return
+    logger.info("[B187] sized pycycle session %s before run_cycle (no set_inputs on the current design)", sid)
+
+
 def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     """Merge mass-mcp's MTOM into pycycle's ``set_inputs`` as Fn_DES.
 
@@ -2648,6 +2748,8 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     values["Fn_DES"] = fn_des_lbf
     resolved["values"] = values
     _design_state.data_store["engine_fn_des_basis"] = basis
+    # B187: which session was sized, on which inputs -- run_cycle re-sizes when either changes.
+    _design_state.data_store["cycle_sizing"] = {"session": resolved.get("session_id"), "key": _cycle_sizing_key()}
     logger.info(
         "Phase K-B middleware injected Fn_DES=%.0f lbf "
         "(mass-mcp MTOM=%.1f kg, %s)",
@@ -3090,6 +3192,12 @@ def _inject_engine_scale(resolved: dict) -> None:
     fn_lbf = coupling.get_var(_design_state, "prop.fn_lbf")
     if fn_lbf is None:
         return
+    if not engine_is_current():
+        # B187: a thrust from another mass/drag (or an unsized default) is not this aircraft's engine.
+        # The mission contract refuses run_simulation until the cycle is re-run on the current design.
+        logger.warning("[B170/B187] not injecting SCALE_FACTOR: the engine result is not sized on the "
+                       "current mass and drag")
+        return
     parameters = resolved.get("parameters")
     if isinstance(parameters, str):
         try:
@@ -3104,6 +3212,10 @@ def _inject_engine_scale(resolved: dict) -> None:
     parameters["Aircraft.Engine.SCALE_FACTOR"] = scale
     resolved["parameters"] = parameters
     _design_state.data_store["engine_injected_scale_factor"] = scale
+    # B187: which engine result this scale came from, per aviary session (run_simulation re-applies on change).
+    _design_state.data_store.setdefault("engine_injected_key", {})[
+        str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))] = \
+        _design_state.data_store.get("prop_cycle_key")
     logger.info("[B170] injected Aircraft.Engine.SCALE_FACTOR=%.3f (pycycle Fn=%.0f lbf / bench %.0f lbf)",
                 scale, float(fn_lbf), coupling.BENCH_ENGINE_CRUISE_FN_LBF)
 
