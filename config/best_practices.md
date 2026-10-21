@@ -53,6 +53,7 @@ bottom: the newest entries are last.
 - [2026-10-04, updated 2026-10-12] Fn_DES, fc.alt and fc.MN are set by the framework: Fn_DES is sized from the mass estimate and the SU2 drag (thrust = drag with a climb margin), fc.alt and fc.MN from the mission.
 - [2026-10-04] run_cycle reports converged; an unconverged cycle is not a result. Measured window: splitter.BPR up to about 10, fan.PR 1.4 to 1.7, T4_MAX 2857 degR and above.
 - [2026-10-04] pycycle computes no engine mass.
+- [2026-10-21] The framework sizes the cycle (Fn_DES from the mass and drag, fc.alt / fc.MN at the cruise point) before run_cycle when set_inputs has not done it on the current design. Without a mass result run_cycle is refused.
 
 ## mission
 
@@ -64,6 +65,7 @@ bottom: the newest entries are last.
 - [2026-10-04] An UNCOUPLED_MISSION or missing-coupled-input refusal means upstream data is missing; do not fly the mission on default drag.
 - [2026-10-04, updated 2026-10-12] Aircraft.Engine.SCALE_FACTOR is set by the framework from pycycle's thrust; a too-small engine is fixed through the engine cycle (or less drag / mass), not by setting the scale factor.
 - [2026-10-12] The lift coefficient is Mission.Design.LIFT_COEFFICIENT (not Aircraft.Wing.LIFT_COEFFICIENT), and it is set by the framework. The fuselage is Aircraft.Fuselage.LENGTH / MAX_HEIGHT / MAX_WIDTH (there is no MAX_DIAMETER). An unknown name fails the whole call.
+- [2026-10-21] Aircraft.Engine.SCALE_FACTOR follows the engine cycle sized on the current mass and drag. After a new mass or SU2 result the cycle must be run again (run_cycle); until then run_simulation is refused rather than flown on an old engine.
 
 ## simulation
 
@@ -71,6 +73,7 @@ bottom: the newest entries are last.
 - [2026-10-04] AVIARY_SETUP_ERROR is permanent for the parameter set: report it, do not retry, and skip get_results and get_trajectory (they return NO_RESULTS).
 - [2026-10-04] exit_code 0 = success, 9 = iteration limit. Do not present unconverged numbers as reliable.
 - [2026-10-12] A mission can fly without the optimiser converging: run_simulation then returns flown=true and a convergence_warning with the remaining residuals. That is a result with a warning; report the numbers and the residuals. 'Did not fly' means no fuel burned (ZERO_FUEL).
+- [2026-10-21] NO_CHANGE_SINCE_FAILED_RUN: the last mission on this session did not fly and nothing has been set since; the same mission gives the same result. Change the design (set_aircraft_parameters) or an upstream discipline first, or report the failure.
 
 ## integrator
 
