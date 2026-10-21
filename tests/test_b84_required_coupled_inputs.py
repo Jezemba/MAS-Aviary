@@ -46,6 +46,11 @@ def _mass_ran(wing_kg=8100.0, mtom_kg=72000.0):
 
 
 def _cycle_ran():
+    # B187: only a cycle sized on the current mass and drag is this design's engine (as set_inputs does).
+    state = dp.get_design_state()
+    if coupling.get_var(state, "mass.mtom_kg") is None:
+        coupling.put_var(state, "mass.mtom_kg", 72000.0, source_tool="estimate_mass")
+    state.data_store["cycle_sizing"] = {"session": None, "key": dp._cycle_sizing_key()}
     dp._capture_cycle_outputs("run_cycle", {
         "success": True, "model_ran": True,
         "outputs": {"perf.TSFC": [0.5821], "perf.Fn": 28000.0},

@@ -37,6 +37,14 @@ def _store():
     return dp._design_state.data_store
 
 
+def _sized_cycle():
+    """B187: a cycle result is captured only when the framework sized it on the current mass and drag."""
+    from src.tools import coupling
+
+    coupling.put_var(dp._design_state, "mass.mtom_kg", 78126.0, source_tool="estimate_mass")
+    _store()["cycle_sizing"] = {"session": None, "key": dp._cycle_sizing_key()}
+
+
 # ---- B130: the whole aircraft is always meshed ------------------------------------------------------
 
 def test_a_component_uid_is_dropped_so_the_whole_aircraft_is_meshed():
@@ -70,6 +78,7 @@ def test_a_caller_supplied_reference_area_still_wins():
 # ---- B129: the cycle is captured from get_outputs too ---------------------------------------------
 
 def test_get_outputs_values_are_captured_as_the_engine_cycle():
+    _sized_cycle()
     dp.intercept_response("get_outputs", json.dumps(
         {"values": {"perf.TSFC": 0.5060009245230022, "perf.Fn": 4999.9999999999945}, "missing": []}))
     assert coupling.get_var(dp._design_state, "prop.sfc_cruise") == pytest.approx(0.506, abs=1e-3)
@@ -77,6 +86,7 @@ def test_get_outputs_values_are_captured_as_the_engine_cycle():
 
 
 def test_run_cycle_capture_is_unchanged():
+    _sized_cycle()
     dp.intercept_response("run_cycle", json.dumps(
         {"success": True, "outputs": {"perf.TSFC": 0.5442, "perf.Fn": 6336.0}}))
     assert coupling.get_var(dp._design_state, "prop.sfc_cruise") == pytest.approx(0.5442)
@@ -319,6 +329,7 @@ def test_an_unconverged_cycle_is_not_captured():
 
 
 def test_a_converged_rerun_is_captured():
+    _sized_cycle()
     dp.intercept_response("run_cycle", json.dumps({"success": True, "converged": False,
                                                    "outputs": {"perf.TSFC": 0.49}}))
     dp.intercept_response("run_cycle", json.dumps({"success": True, "converged": True,

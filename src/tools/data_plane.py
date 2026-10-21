@@ -2642,7 +2642,9 @@ def _cycle_sizing_key() -> list | None:
         return None
     from src.tools import coupling as _cpl
 
-    mtom = _design_state.data_store.get("mass_mtom_kg")
+    mtom = _cpl.get_var(_design_state, "mass.mtom_kg")
+    if mtom is None:
+        mtom = _design_state.data_store.get("mass_mtom_kg")
     if mtom is None:
         return None
     cl = _cpl.get_var(_design_state, "aero.cl_cruise")

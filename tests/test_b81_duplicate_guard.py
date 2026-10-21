@@ -37,6 +37,8 @@ def _coupled_inputs_available():
                         ("mass.wing_kg", 8100.0), ("mass.mtom_kg", 72000.0),
                         ("prop.sfc_cruise", 0.58)):
         coupling.put_var(state, name, value, source_tool="test")
+    # B187: the pretend engine was sized on this mass and drag.
+    state.data_store["prop_cycle_key"] = dp._cycle_sizing_key()
     for producer in ("su2", "mass", "pycycle"):
         note_capture(producer)
 SERVERS = {"generate_volume_mesh": "tigl", "set_high_level_parameters": "tigl", "morph_wing": "tigl",
