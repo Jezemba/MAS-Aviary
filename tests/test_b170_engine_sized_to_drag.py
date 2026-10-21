@@ -31,6 +31,10 @@ def _seed(cl=None, cd=None, mtom=78126.0, fn=None):
         coupling.put_var(ds, "aero.cd_cruise", cd)
     if fn is not None:
         coupling.put_var(ds, "prop.fn_lbf", fn)
+        # B187: a cycle result the framework sized on this mass and drag.
+        from src.tools import data_plane as _dp
+
+        ds.data_store["prop_cycle_key"] = _dp._cycle_sizing_key()
     return ds
 
 
