@@ -87,9 +87,10 @@ def main() -> None:
     ap.add_argument("--aviary-dir", required=True, help="folder holding aviary_<sid>_out/")
     ap.add_argument("--su2-root", default=None,
                     help="re-root SU2 workdirs here (for runs copied from another machine)")
+    ap.add_argument("--name", default=None, help="snapshot folder name (default: run dir name)")
     args = ap.parse_args()
 
-    run_name = os.path.basename(os.path.normpath(args.run_dir))
+    run_name = args.name or os.path.basename(os.path.normpath(args.run_dir))
     summary = {}
     for link_dir in sorted(glob.glob(os.path.join(args.run_dir, "repeat_*", "*", ""))):
         repeat, combo = link_dir.rstrip("/").split("/")[-2:]
