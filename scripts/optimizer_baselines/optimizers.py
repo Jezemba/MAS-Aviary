@@ -189,7 +189,9 @@ def slsqp(problem: Problem, max_iter: int = 100, eps: float = 0.02, ftol: float 
         problem.end_iteration(list(pending))
         pending.clear()
 
-    minimize(f, x0, method="SLSQP", jac="2-point", bounds=[(0.0, 1.0)] * len(problem.vs),
+    # jac=None: SLSQP takes forward differences with the absolute step `eps`. (With jac="2-point" scipy
+    # ignores eps and steps ~1e-8, below the cache's rounding and far below SU2's noise: zero gradient.)
+    minimize(f, x0, method="SLSQP", jac=None, bounds=[(0.0, 1.0)] * len(problem.vs),
              constraints=[{"type": "ineq", "fun": g}], callback=callback,
              options={"maxiter": max_iter, "ftol": ftol, "eps": eps})
     if pending:
