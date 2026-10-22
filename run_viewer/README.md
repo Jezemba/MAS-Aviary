@@ -30,6 +30,21 @@ setsid nohup ~/Jessica/Avion/.venv/bin/python -m run_viewer.server.serve \
 To view it from your machine: `ssh -i ~/.ssh/voir_shard -L 5173:127.0.0.1:5173 aipexws8@172.24.49.250`,
 then open http://localhost:5173. Stop the server by its process group: `kill -TERM -<pgid>`.
 
+## Publish (static site, data embedded)
+
+```bash
+(cd run_viewer/web && npm run build:static)
+python -m run_viewer.export_static --catalog ../runs.json --bundles ../bundles \
+    --web run_viewer/web/dist-static --out ../site_release_<date> --commit "<this repo's commit>"
+```
+
+The folder works on GitHub Pages (its own workflow), as a Hugging Face static Space, or on any web
+server. Published 2026-10-22 at github.com/Jezemba/mas-aviary-run-viewer
+(www.jessicaezemba.com/mas-aviary-run-viewer/) and huggingface.co/spaces/JessicaE/mas-aviary-run-viewer.
+To update: export into a new folder, replace the site repo's contents with it, and push. For the Space,
+run `HfApi().upload_folder(repo_id="JessicaE/mas-aviary-run-viewer", repo_type="space", folder_path=...,
+ignore_patterns=[".github/*"])`.
+
 ## Tests
 
 ```bash
