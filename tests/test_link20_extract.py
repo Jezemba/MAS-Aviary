@@ -83,3 +83,17 @@ def test_counted_attempt_is_highest_step_log_and_steps_exclude_summaries(tmp_pat
     assert row["n_assign_task"] == 1 and row["n_record_recommendation"] == 1
     assert row["verdict_continue"] == 1 and row["n_responses"] == 1 and row["last_rec_to"] == "geometry_engineer"
     assert row["inherited_rec_to"] == "mission_architect"
+
+
+def test_b187_split_into_cycle_and_inherited(tmp_path):
+    scale = {"seq": 9, "tool": "set_aircraft_parameters", "status": "success",
+             "inputs": {"parameters": {"Aircraft.Engine.SCALE_FACTOR": 0.99393531}}}
+    cycle = {"seq": 7, "tool": "run_cycle", "status": "success", "outputs": {"outputs": {"perf.Fn": 5900.0}}}
+    d1 = tmp_path / "repeat_000" / "mdo_f25_sequential_graph_routed"
+    _write_link(d1, [scale], result={})
+    r1 = ex.extract_link("t", d1.name, 1, d1, {})
+    assert r1["b187"] and r1["b187_inherited_only"] and not r1["b187_cycle"]
+    d2 = tmp_path / "repeat_001" / "mdo_f25_sequential_graph_routed"
+    _write_link(d2, [cycle, scale], result={})
+    r2 = ex.extract_link("t", d2.name, 2, d2, {})
+    assert r2["b187_cycle"] and not r2["b187_inherited_only"]

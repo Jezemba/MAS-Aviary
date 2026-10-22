@@ -266,6 +266,9 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     # --- checks ---
     b187, b214 = b187_hits(kb), b214_hits(kb)
     row["b187"] = bool(b187)
+    # An unsized run_cycle in this link, versus only re-applying a 0.994 scale inherited from the link before.
+    row["b187_cycle"] = any(h.startswith("run_cycle") for h in b187)
+    row["b187_inherited_only"] = bool(b187) and not row["b187_cycle"]
     row["b187_detail"] = "; ".join(b187[:4])
     row["b214"] = bool(b214)
     row["b214_detail"] = "; ".join(b214[:4])
