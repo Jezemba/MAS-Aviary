@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from design_space import GTOW_LIMIT_KG  # noqa: E402
+from optimizers import _converged  # noqa: E402
 
 LABELS = {"pso": "Particle swarm", "ga": "Genetic algorithm", "slsqp": "SLSQP (gradient)"}
 CHECKPOINTS = (5, 10, 15, 20)
@@ -121,7 +122,9 @@ def main() -> int:
                     w.writerow([run["label"], it, r["evaluations"], r["best_fuel_kg"],
                                 r["best_gtow_kg"], json.dumps(r["best_design"])])
             if last:
-                w.writerow([run["label"], f"converged ({last['iteration']})", last["evaluations"],
+                # "converged" only once the stopping rule holds; a run still going reports its latest iteration
+                state = "converged" if _converged(run["iters"], 10, 1e-3) else "latest"
+                w.writerow([run["label"], f"{state} ({last['iteration']})", last["evaluations"],
                             last["best_fuel_kg"], last["best_gtow_kg"],
                             json.dumps(last["best_design"])])
     print(f"plots and table in {args.out}")

@@ -95,4 +95,4 @@ def test_plots_and_table_are_written(tmp_path):
     for name in ("fuel_vs_iteration.png", "gtow_vs_iteration.png", "pareto_fuel_gtow.png", "best_at_iterations.csv"):
         assert (out / name).stat().st_size > 0
     table = (out / "best_at_iterations.csv").read_text()
-    assert ",5," in table and ",20," in table and "converged" in table
+    assert ",5," in table and ",20," in table and ("converged (" in table or "latest (" in table)
