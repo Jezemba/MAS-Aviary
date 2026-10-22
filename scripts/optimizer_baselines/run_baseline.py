@@ -22,7 +22,16 @@ _EVALUATOR = None
 _VARIABLES = None
 
 
-def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: str, counter, tigl_ports) -> None:
+SERVER_SLOT = {"tigl": 0, "su2": 1, "pycycle": 2, "aviary": 3, "mass": 4}
+
+
+def server_ports_for(base: int, worker: int) -> dict:
+    """Worker k's own MCP server set: base + 10 k + slot (see start_server_sets.sh)."""
+    return {name: base + 10 * worker + slot for name, slot in SERVER_SLOT.items()}
+
+
+def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: str, counter, tigl_ports,
+                 server_base: int = 0) -> None:
     """One coupled evaluator per worker process: its own MCP connections, data plane, knowledge base, and its
     own tigl server when tigl_ports is given."""
     from evaluator import CoupledEvaluator
@@ -34,7 +43,8 @@ def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: s
     _VARIABLES = variables(which)
     _EVALUATOR = CoupledEvaluator(config, Path(out) / "workers" / f"w{index}", coarse_mesh=coarse,
                                   port_offset=port_offset,
-                                  tigl_port=tigl_ports[index % len(tigl_ports)] if tigl_ports else None)
+                                  tigl_port=tigl_ports[index % len(tigl_ports)] if tigl_ports else None,
+                                  server_ports=server_ports_for(server_base, index) if server_base else None)
 
 
 def _evaluate_in_worker(x: list[float]) -> dict:
@@ -54,6 +64,8 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=6, help="designs evaluated in parallel")
     ap.add_argument("--port-offset", type=int, default=0, help="use MCP servers on the config's ports + offset")
     ap.add_argument("--tigl-ports", default="", help="one tigl server per worker, e.g. 9510-9515")
+    ap.add_argument("--server-base", type=int, default=0,
+                    help="one whole MCP server set per worker at base + 10*worker + slot (start_server_sets.sh)")
     args = ap.parse_args()
     tigl_ports = []
     if args.tigl_ports:
@@ -71,7 +83,7 @@ def main() -> int:
     pool = ctx.Pool(
         args.workers, initializer=_init_worker,
         initargs=(args.config, str(args.out), not args.full_mesh, args.port_offset, args.variables, counter,
-                  tigl_ports))
+                  tigl_ports, args.server_base))
     problem = Problem(vs, lambda x: pool.apply(_evaluate_in_worker, (x,)), args.out / "evaluations.jsonl",
                       evaluate_batch=lambda xs: pool.map(_evaluate_in_worker, xs, chunksize=1))
     algo = ALGORITHMS[args.algo]

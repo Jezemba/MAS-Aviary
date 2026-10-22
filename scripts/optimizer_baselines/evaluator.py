@@ -31,7 +31,7 @@ def _json(out: Any) -> dict:
 
 class CoupledEvaluator:
     def __init__(self, config_path: str, out_dir: Path, coarse_mesh: bool = True, port_offset: int = 0,
-                 tigl_port: int | None = None):
+                 tigl_port: int | None = None, server_ports: dict | None = None):
         import os
         import sys
 
@@ -61,6 +61,13 @@ class CoupledEvaluator:
             for server in config.mcp.servers:
                 if server.name == "tigl":
                     server.url = _re.sub(r":(\d+)/", f":{tigl_port}/", server.url, count=1)
+        if server_ports:
+            # A whole server set per worker: tigl blocks while meshing and su2 while solving (run 2, 2026-10-22).
+            import re as _re
+
+            for server in config.mcp.servers:
+                if server.name in server_ports:
+                    server.url = _re.sub(r":(\d+)/", f":{server_ports[server.name]}/", server.url, count=1)
         self.server_urls = [server.url for server in config.mcp.servers]
         self.tools = sbr._load_mcp_tools(config)
         self.n_evaluations = 0
