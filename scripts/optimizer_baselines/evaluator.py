@@ -93,7 +93,10 @@ class CoupledEvaluator:
         rec: dict = {"design": {v.name: float(xi) for v, xi in zip(vs, x)}, "steps": {}}
 
         def step(name: str, out: dict) -> bool:
-            ok = not out.get("error") and out.get("success") is not False and not out.get("error_code")
+            # Tools signal failure differently: an error / error_code field, success: false, or status error|failed
+            # (estimate_mass, run 5: status "error" with every mass 0 -- it must not pass as "ok").
+            ok = (not out.get("error") and out.get("success") is not False and not out.get("error_code")
+                  and str(out.get("status") or "").lower() not in ("error", "failed", "refused"))
             rec["steps"][name] = "ok" if ok else str(out.get("error_code") or out.get("error") or out)[:300]
             return ok
 
