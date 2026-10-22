@@ -46,7 +46,8 @@ class Problem:
         if self.log_path.exists():                       # resume: earlier evaluations are reused
             for line in self.log_path.read_text().splitlines():
                 rec = json.loads(line)
-                if rec.get("kind") == "evaluation":
+                # A tool/connection failure is not the design's result: a resumed run evaluates it again.
+                if rec.get("kind") == "evaluation" and not rec.get("failure"):
                     self.cache[self._key(rec["unit"])] = rec
 
     @staticmethod

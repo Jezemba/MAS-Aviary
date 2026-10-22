@@ -30,7 +30,8 @@ def _json(out: Any) -> dict:
 
 
 class CoupledEvaluator:
-    def __init__(self, config_path: str, out_dir: Path, coarse_mesh: bool = True, port_offset: int = 0):
+    def __init__(self, config_path: str, out_dir: Path, coarse_mesh: bool = True, port_offset: int = 0,
+                 tigl_port: int | None = None):
         import os
         import sys
 
@@ -52,6 +53,14 @@ class CoupledEvaluator:
 
             for server in config.mcp.servers:
                 server.url = _re.sub(r":(\d+)/", lambda m: f":{int(m.group(1)) + port_offset}/", server.url, count=1)
+        if tigl_port:
+            # Meshing blocks a tigl server entirely, so parallel workers each get their own (run 1, 2026-10-22:
+            # the other workers' calls timed out while one meshed).
+            import re as _re
+
+            for server in config.mcp.servers:
+                if server.name == "tigl":
+                    server.url = _re.sub(r":(\d+)/", f":{tigl_port}/", server.url, count=1)
         self.server_urls = [server.url for server in config.mcp.servers]
         self.tools = sbr._load_mcp_tools(config)
         self.n_evaluations = 0

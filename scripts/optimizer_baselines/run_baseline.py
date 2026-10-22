@@ -22,16 +22,19 @@ _EVALUATOR = None
 _VARIABLES = None
 
 
-def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: str) -> None:
-    """One coupled evaluator per worker process: its own MCP connections, data plane and knowledge base."""
-    import os
-
+def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: str, counter, tigl_ports) -> None:
+    """One coupled evaluator per worker process: its own MCP connections, data plane, knowledge base, and its
+    own tigl server when tigl_ports is given."""
     from evaluator import CoupledEvaluator
 
     global _EVALUATOR, _VARIABLES
+    with counter.get_lock():
+        index = counter.value
+        counter.value += 1
     _VARIABLES = variables(which)
-    _EVALUATOR = CoupledEvaluator(config, Path(out) / "workers" / f"w{os.getpid()}", coarse_mesh=coarse,
-                                  port_offset=port_offset)
+    _EVALUATOR = CoupledEvaluator(config, Path(out) / "workers" / f"w{index}", coarse_mesh=coarse,
+                                  port_offset=port_offset,
+                                  tigl_port=tigl_ports[index % len(tigl_ports)] if tigl_ports else None)
 
 
 def _evaluate_in_worker(x: list[float]) -> dict:
@@ -50,7 +53,12 @@ def main() -> int:
     ap.add_argument("--full-mesh", action="store_true", help="the agents' mesh instead of the coarse one")
     ap.add_argument("--workers", type=int, default=6, help="designs evaluated in parallel")
     ap.add_argument("--port-offset", type=int, default=0, help="use MCP servers on the config's ports + offset")
+    ap.add_argument("--tigl-ports", default="", help="one tigl server per worker, e.g. 9510-9515")
     args = ap.parse_args()
+    tigl_ports = []
+    if args.tigl_ports:
+        lo, hi = (int(p) for p in args.tigl_ports.split("-"))
+        tigl_ports = list(range(lo, hi + 1))
 
     import multiprocessing as mp
 
@@ -58,9 +66,12 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "run.json").write_text(json.dumps({**vars(args), "out": str(args.out),
                                                    "variables": [v.__dict__ for v in vs]}, indent=1))
-    pool = mp.get_context("spawn").Pool(
+    ctx = mp.get_context("spawn")
+    counter = ctx.Value("i", 0)
+    pool = ctx.Pool(
         args.workers, initializer=_init_worker,
-        initargs=(args.config, str(args.out), not args.full_mesh, args.port_offset, args.variables))
+        initargs=(args.config, str(args.out), not args.full_mesh, args.port_offset, args.variables, counter,
+                  tigl_ports))
     problem = Problem(vs, lambda x: pool.apply(_evaluate_in_worker, (x,)), args.out / "evaluations.jsonl",
                       evaluate_batch=lambda xs: pool.map(_evaluate_in_worker, xs, chunksize=1))
     algo = ALGORITHMS[args.algo]
