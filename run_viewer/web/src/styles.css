@@ -212,8 +212,10 @@ select:focus-visible, button:focus-visible { outline: 2px solid var(--accent); o
 .kv span { color: var(--ink-2); }
 
 /* parameters */
-.params { overflow: auto; }
-.param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.params { overflow: auto; container-type: inline-size; }
+.param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+/* narrow panel: keep arrow + colour, the % moves to the tooltip */
+@container (max-width: 470px) { .pct { display: none; } }
 .param-card { background: var(--card-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; }
 .side-n1 .param-card { background: #fff; }
 .prow { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 12px; padding: 2px 0; font-variant-numeric: tabular-nums; border-bottom: 1px dotted var(--line-2); }

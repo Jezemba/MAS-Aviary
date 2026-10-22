@@ -265,7 +265,8 @@ export function Params({ link, side }: { link: Link; side: "N" | "N+1" }) {
                 {side === "N" ? (
                   <b className={p.before === null ? "trend-unknown" : ""}>{fmt(p.before, p.unit)}</b>
                 ) : (
-                  <span className={`pval trend-${p.trend}`}>
+                  <span className={`pval trend-${p.trend}`}
+                    title={p.before !== null ? `N: ${fmt(p.before, p.unit)}${pct(p.before, p.value) ? ` (${pct(p.before, p.value)})` : ""}` : "no value at N"}>
                     {ARROW[p.trend] && <span className="arrow" aria-label={p.trend === "up" ? "increased" : "decreased"}>{ARROW[p.trend]}</span>}
                     <b>{fmt(p.value, p.unit)}</b>
                     {pct(p.before, p.value) && <span className="pct">{pct(p.before, p.value)}</span>}
