@@ -47,6 +47,8 @@ B187_SCALE = 0.9939353099730406
 ROLE_ORDER = ["geometry_engineer", "aerodynamics_analyst", "structures_analyst", "propulsion_analyst",
               "mission_architect", "simulation_executor", "mdo_integrator"]
 
+LEVELS = {"simple": 1, "moderate": 2, "complex": 3}
+
 CHAIN_PARAMS = ["Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP",
                 "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                 "Aircraft.Fuselage.MAX_WIDTH", "Aircraft.Engine.SCALE_FACTOR"]
@@ -128,8 +130,10 @@ def error_code(entry: dict) -> str:
     return str(code) if code else "unspecified"
 
 
-def backward_moves(route: list[str]) -> int:
+def backward_moves(route: list[str]) -> int | None:
     idx = [ROLE_ORDER.index(r) for r in route if r in ROLE_ORDER]
+    if not idx:
+        return None
     return sum(1 for a, b in zip(idx, idx[1:]) if b < a)
 
 
@@ -184,6 +188,7 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
         "duration_s": res.get("duration_seconds"), "total_turns": res.get("total_turns"),
         "total_tokens_recorded": res.get("total_tokens"), "output_tokens": sum(out_tok.values()),
         "agent_steps": len(steps), "n_agents_stepping": len({s.get("agent") for s in steps}),
+        "orchestrator_steps": sum(1 for s in steps if s.get("agent") == "orchestrator"),
         "attempt": res.get("attempt") if res else fail.get("attempts"), "step_log_attempts": attempt_k,
         "max_prompt_tokens": res.get("max_prompt_tokens"),
     })
@@ -226,23 +231,35 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     row["stage_count"] = otm.get("stage_count")
     psc = otm.get("per_stage_completion") or []
     row["stages_not_met"] = sum(1 for s in psc if not s.get("met")) if psc else None
-    stage_names = [m.get("stage_name") for m in meta if m.get("stage_name")]
+    # Staged stages run more than once (the orchestrator's own turns are not stages).
+    stage_names = [m.get("stage_name") for m in meta if m.get("stage_name") not in (None, "orchestrator")]
     row["stages_redone"] = len(stage_names) - len(set(stage_names)) if stage_names else None
-    route = otm.get("states_visited") or []
-    row["route_length"] = len(route) if route else None
-    row["backward_moves"] = backward_moves(route) if route else None
     row["graph_stop_reason"] = next((m.get("graph_stop_reason") for m in meta if m.get("graph_stop_reason")), None)
     complexity = [s for s in signals if s.get("kind") in ("complexity", "complexity_set")]
     row["n_complexity_signals"] = len(complexity)
     row["n_complexity_set"] = sum(1 for s in complexity if s.get("kind") == "complexity_set")
+    # Sequential / orchestrated graph-routed: one graph_route record per role run, in message metadata.
+    turns = [m["graph_route"] for m in meta if isinstance(m.get("graph_route"), dict)]
     gr = design.get("graph_route") or {}
-    if gr:
+    if turns:
+        nodes = [t.get("node") for t in turns]
+        row["route_length"] = len(nodes)
+        row["backward_moves"] = backward_moves(nodes)
+        row["graph_level"] = turns[-1].get("next_level") or turns[-1].get("level")
+        row["graph_level_changes"] = sum(1 for t in turns if LEVELS.get(t.get("next_level"), 0) > LEVELS.get(t.get("level"), 0))
+    elif gr:
+        # Networked graph-routed: the router's own record in design.json (peers, not roles, take turns).
         log = gr.get("log") or []
+        row["route_length"] = gr.get("role_runs")
         row["graph_level"] = gr.get("level")
-        row["graph_role_runs"] = gr.get("role_runs")
         row["graph_stop_reason"] = row["graph_stop_reason"] or gr.get("stop_reason")
-        row["graph_level_changes"] = sum(1 for e in log if e.get("event") == "level")
+        row["graph_level_changes"] = sum(1 for e in log if e.get("event") == "level"
+                                         and LEVELS.get(e.get("to"), 0) > LEVELS.get(e.get("from"), 0))
         row["graph_reopens"] = sum(1 for e in log if e.get("event") == "reopen")
+    claims = [o for s in steps for tc in s.get("tool_calls") or [] if tc.get("name") == "claim_todo"
+              for o in re.findall(r'"success":\s*(true|false),\s*"todo_name"', str(s.get("observations")))]
+    row["n_claim_granted"] = claims.count("true")
+    row["n_claim_refused"] = claims.count("false")
     for k in ("orchestrator_turns", "worker_turns", "agents_spawned", "blackboard_reads_total",
               "blackboard_writes_total", "claim_conflicts"):
         row[k] = otm.get(k)

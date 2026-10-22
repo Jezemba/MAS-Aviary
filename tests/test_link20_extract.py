@@ -97,3 +97,29 @@ def test_b187_split_into_cycle_and_inherited(tmp_path):
     _write_link(d2, [cycle, scale], result={})
     r2 = ex.extract_link("t", d2.name, 2, d2, {})
     assert r2["b187_cycle"] and not r2["b187_inherited_only"]
+
+
+def test_graph_route_from_message_metadata(tmp_path):
+    d = tmp_path / "repeat_000" / "mdo_f25_sequential_graph_routed"
+    turns = [{"node": "mission_architect", "level": "simple", "next_level": "simple"},
+             {"node": "simulation_executor", "level": "simple", "next_level": "moderate"},
+             {"node": "structures_analyst", "level": "moderate", "next_level": "complex"},
+             {"node": "mission_architect", "level": "complex", "next_level": "complex"}]
+    msgs = [{"metadata": {"graph_route": t}} for t in turns]
+    msgs[-1]["metadata"]["graph_stop_reason"] = "budget of 25 role runs at complex spent"
+    _write_link(d, [], result={"messages": msgs})
+    row = ex.extract_link("t", d.name, 1, d, {})
+    assert row["route_length"] == 4 and row["backward_moves"] == 1
+    assert row["graph_level"] == "complex" and row["graph_level_changes"] == 2
+    assert row["graph_stop_reason"].startswith("budget")
+
+
+def test_claims_granted_and_refused_from_observations(tmp_path):
+    d = tmp_path / "repeat_000" / "mdo_f25_networked_iterative_feedback"
+    steps = [{"kind": "step", "agent": "agent_1", "tool_calls": [{"name": "claim_todo"}],
+              "observations": '{"success": true, "todo_name": "aero", "attempted_by": "agent_1"}'},
+             {"kind": "step", "agent": "agent_2", "tool_calls": [{"name": "claim_todo"}],
+              "observations": '{"success": false, "todo_name": "aero", "attempted_by": "agent_2"}'}]
+    _write_link(d, [], result={}, steps=steps)
+    row = ex.extract_link("t", d.name, 1, d, {})
+    assert (row["n_claim_granted"], row["n_claim_refused"]) == (1, 1)
