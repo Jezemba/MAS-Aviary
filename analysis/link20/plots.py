@@ -27,6 +27,7 @@ import seaborn as sns  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
+from analysis.link20 import rec_params as rp  # noqa: E402
 from analysis.link20 import recommendations as rec  # noqa: E402
 
 STRUCTURES = ["sequential", "orchestrated", "networked"]
@@ -268,7 +269,7 @@ PARAMS = [  # (column, axis title, baseline source key)
 PARAM_GROUPS = {"geometry": PARAMS[0:7], "engine": PARAMS[7:13], "aero_mass": PARAMS[13:16]}
 
 
-def params_small_multiples(df, refs: dict, variant: str, path: Path) -> None:
+def params_small_multiples(df, refs: dict, variant: str, path: Path, ylims: dict | None = None) -> None:
     fig, axes = plt.subplots(4, 4, figsize=(15, 11.5), sharex=True)
     for ax, (col, lab) in zip(axes.flat, PARAMS):
         for s, h in COMBOS:
@@ -277,6 +278,8 @@ def params_small_multiples(df, refs: dict, variant: str, path: Path) -> None:
         if refs.get(col) is not None:
             ax.axhline(refs[col], **REF_STYLE)
         ax.set_ylabel(lab)
+        if ylims and col in ylims:
+            ax.set_ylim(ylims[col])
         _finish_link_axis(ax)
     for ax in axes[-1]:
         ax.set_xlabel("Link (iteration)")
@@ -327,11 +330,15 @@ def param_change_table(df, refs: dict, s: str, h: str) -> pd.DataFrame:
     return pd.DataFrame(out).T
 
 
-def params_heatmaps(df, refs: dict, out: Path) -> None:
-    tables = {(s, h): param_change_table(df, refs, s, h) for s, h in COMBOS}
-    allv = np.concatenate([t.to_numpy().ravel() for t in tables.values()])
+def heatmap_cap(df, refs: dict) -> float:
+    """Colour limit shared by the actual and recommended change heatmaps: 95th percentile of |actual change|."""
+    allv = np.concatenate([param_change_table(df, refs, s, h).to_numpy().ravel() for s, h in COMBOS])
     allv = np.abs(allv[np.isfinite(allv)])
-    cap = float(np.ceil(np.percentile(allv[allv > 0], 95) / 5) * 5) if (allv > 0).any() else 5.0
+    return float(np.ceil(np.percentile(allv[allv > 0], 95) / 5) * 5) if (allv > 0).any() else 5.0
+
+
+def params_heatmaps(df, refs: dict, out: Path, cap: float) -> None:
+    tables = {(s, h): param_change_table(df, refs, s, h) for s, h in COMBOS}
     for (s, h), t in tables.items():
         fig, ax = plt.subplots(figsize=(9.5, 6.2))
         sns.heatmap(t, ax=ax, cmap="RdBu_r", center=0, vmin=-cap, vmax=cap, linewidths=0.4, linecolor="white",
@@ -340,6 +347,130 @@ def params_heatmaps(df, refs: dict, out: Path) -> None:
         ax.set_xlabel("Link (iteration)")
         ax.set_ylabel("")
         save(fig, out / f"param_change_heatmap_{s}_{h}.png")
+
+
+# ---------------------------------------------------------------- recommended parameter changes
+
+def recommendation_items(df) -> pd.DataFrame:
+    """One row per parsed recommendation item, placed at the link it was handed to (recorded in link k -> k+1).
+
+    Uses the carried-forward recommendation: the last one recorded in the link (what the next link received)."""
+    rows = []
+    for _, r in df.iterrows():
+        if r.link >= 20:
+            continue
+        for it in rp.parse(r.last_rec_change):
+            if not it.get("kind"):
+                continue
+            cur = pd.to_numeric(pd.Series([r.get(it["param"])]), errors="coerce").iloc[0]
+            cur = None if pd.isna(cur) else float(cur)
+            rows.append({"structure": r.structure, "handler": r.handler, "link": int(r.link) + 1,
+                         "param": it["param"], "kind": it["kind"], "direction": it["direction"],
+                         "lo": it["lo"], "hi": it["hi"], "current": cur,
+                         "target": rp.recommended_value(it, cur), "pct": rp.recommended_change_pct(it, cur)})
+    return pd.DataFrame(rows, columns=["structure", "handler", "link", "param", "kind", "direction", "lo", "hi",
+                                       "current", "target", "pct"])
+
+
+def param_ylims(df, refs: dict, items: pd.DataFrame) -> dict:
+    """Per-parameter y-limits covering actual values, baseline and recommended targets (shared by both plots)."""
+    lims = {}
+    for col, _ in PARAMS:
+        v = list(pd.to_numeric(df[col], errors="coerce").dropna())
+        if refs.get(col) is not None:
+            v.append(refs[col])
+        it = items[items.param == col]
+        v += list(it.lo.dropna()) + list(it.hi.dropna()) + list(it.target.dropna())
+        if v:
+            lo, hi = min(v), max(v)
+            pad = 0.06 * (hi - lo) if hi > lo else max(abs(hi) * 0.05, 0.01)
+            lims[col] = (lo - pad, hi + pad)
+    return lims
+
+
+KIND_STYLE = {"value": {"marker": "o"}, "range": {"marker": "o"}, "bound": {"marker": "D", "facecolor": "white"},
+              "pct": {"marker": "s"}}
+
+
+def _rec_scatter(ax, g: pd.DataFrame, color: str, dx: float = 0.0, size: float = 26) -> None:
+    for kind, k in g.groupby("kind"):
+        x = k.link + dx
+        if kind == "direction":
+            for d, mk in ((1, "^"), (-1, "v")):
+                kd = k[(k.direction == d) & k.current.notna()]
+                ax.scatter(kd.link + dx, kd.current, marker=mk, s=size, facecolor="white", edgecolor=color,
+                           linewidth=1.1, zorder=4)
+            continue
+        st = KIND_STYLE[kind]
+        ax.scatter(x, k.target, marker=st["marker"], s=size, facecolor=st.get("facecolor", color),
+                   edgecolor=color, linewidth=1.1, zorder=4)
+        if kind == "range":
+            ax.vlines(x, k.lo, k.hi, color=color, linewidth=1.3, zorder=3)
+
+
+def _rec_legend_handles(color="0.3") -> list:
+    return [Line2D([], [], marker="o", linestyle="", color=color, label="Target value"),
+            Line2D([], [], marker="o", linestyle="-", color=color, label="Target range (bar)"),
+            Line2D([], [], marker="D", linestyle="", markerfacecolor="white", markeredgecolor=color, label="Target bound"),
+            Line2D([], [], marker="s", linestyle="", color=color, label="Relative change (%)"),
+            Line2D([], [], marker="^", linestyle="", markerfacecolor="white", markeredgecolor=color,
+                   label="Direction only, drawn at the value it starts from")]
+
+
+def rec_params_small_multiples(items, refs: dict, ylims: dict, path: Path, combos=None) -> None:
+    combos = combos or COMBOS
+    fig, axes = plt.subplots(4, 4, figsize=(15, 11.5), sharex=True)
+    offs = {c: (i - (len(combos) - 1) / 2) * 0.09 for i, c in enumerate(combos)}
+    for ax, (col, lab) in zip(axes.flat, PARAMS):
+        for s, h in combos:
+            g = items[(items.param == col) & (items.structure == s) & (items.handler == h)]
+            _rec_scatter(ax, g, STRUCT_COLORS[s], dx=offs[(s, h)] if len(combos) > 1 else 0.0)
+        if refs.get(col) is not None:
+            ax.axhline(refs[col], **REF_STYLE)
+        ax.set_ylabel(lab)
+        if col in ylims:
+            ax.set_ylim(ylims[col])
+        _finish_link_axis(ax)
+    for ax in axes[-1]:
+        ax.set_xlabel("Link (iteration)")
+    structs = [s for s in STRUCTURES if any(c[0] == s for c in combos)]
+    handles = [Patch(color=STRUCT_COLORS[s], label=STRUCT_LABELS[s]) for s in structs] if len(combos) > 1 else []
+    handles += _rec_legend_handles()
+    handles.append(Line2D([], [], label="Baseline (unchanged design)", **{k: v for k, v in REF_STYLE.items() if k != "zorder"}))
+    fig.legend(handles=handles, loc="lower center", ncol=5, bbox_to_anchor=(0.5, -0.04))
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    save(fig, path)
+
+
+def rec_params_heatmaps(items, out: Path, cap: float) -> None:
+    labels = dict(PARAMS)
+    for s, h in COMBOS:
+        g = items[(items.structure == s) & (items.handler == h)]
+        mat = pd.DataFrame(np.nan, index=[lab for _, lab in PARAMS], columns=range(1, 21))
+        arrows = []
+        for (col, link), k in g.groupby(["param", "link"]):
+            num = k.pct.dropna()
+            if len(num):
+                mat.loc[labels[col], link] = num.iloc[-1]
+            else:
+                d = k.direction.iloc[-1]
+                if d:
+                    arrows.append((labels[col], link, d))
+        fig, ax = plt.subplots(figsize=(9.5, 6.2))
+        sns.heatmap(mat, ax=ax, cmap="RdBu_r", center=0, vmin=-cap, vmax=cap, linewidths=0.4, linecolor="white",
+                    cbar_kws={"label": "Recommended change from previous link (%)", "extend": "both"})
+        ax.set_facecolor("0.92")
+        rows = list(mat.index)
+        for lab, link, d in arrows:
+            ax.scatter(link - 1 + 0.5, rows.index(lab) + 0.5, marker="^" if d > 0 else "v", s=46,
+                       color="#B2182B" if d > 0 else "#2166AC", zorder=5)
+        ax.set_xlabel("Link (iteration)")
+        ax.set_ylabel("")
+        if arrows:
+            ax.legend(handles=[Line2D([], [], marker="^", linestyle="", color="#B2182B", label="Increase, no amount"),
+                               Line2D([], [], marker="v", linestyle="", color="#2166AC", label="Decrease, no amount")],
+                      loc="upper left", bbox_to_anchor=(1.25, 1.0))
+        save(fig, out / f"rec_change_heatmap_{s}_{h}.png")
 
 
 # ---------------------------------------------------------------- categorical / special plots
@@ -593,10 +724,20 @@ def main() -> None:
     metric_figures(df, Metric("constraint_gtow", "gtow_kg", "Gross take-off weight (kg)", flight=True,
                               refs=[(GTOW_LIMIT_KG, "Limit: GTOW ≤ 90,000 kg", LIMIT_STYLE)]), out / "2_constraints")
     print("3 design parameters")
+    items = recommendation_items(df)
+    items.to_csv(out.parent / "recommended_changes.csv", index=False)
+    ylims = param_ylims(df, refs, items)
+    cap = heatmap_cap(df, refs)
     params_average(df, refs, out / "3_design_parameters" / "params_avg_strip.png")
     for v in ("linestyle", "marker"):
-        params_small_multiples(df, refs, v, out / "3_design_parameters" / f"params_line_{v}.png")
-    params_heatmaps(df, refs, out / "3_design_parameters")
+        params_small_multiples(df, refs, v, out / "3_design_parameters" / f"params_line_{v}.png", ylims)
+    params_heatmaps(df, refs, out / "3_design_parameters", cap)
+    print("3b recommended parameter changes")
+    rec_params_small_multiples(items, refs, ylims, out / "3b_recommended_parameters" / "rec_params_all.png")
+    for c in COMBOS:
+        rec_params_small_multiples(items, refs, ylims, out / "3b_recommended_parameters" / f"rec_params_{c[0]}_{c[1]}.png",
+                                   combos=[c])
+    rec_params_heatmaps(items, out / "3b_recommended_parameters", cap)
     print("4 coordination")
     for m in coordination_metrics():
         metric_figures(df, m, out / "4_coordination")
