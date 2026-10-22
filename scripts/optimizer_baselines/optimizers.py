@@ -99,9 +99,12 @@ class Problem:
         return row
 
 
+MIN_ITER = 20   # Jessica wants the values at iterations 5, 10, 15 and 20: never stop on convergence before 20
+
+
 def _converged(history: list[dict], window: int, rtol: float) -> bool:
-    """No improvement of the best objective by more than rtol over the last `window` iterations."""
-    if len(history) <= window:
+    """No improvement of the best objective by more than rtol over the last `window` iterations (after MIN_ITER)."""
+    if len(history) <= max(window, MIN_ITER):
         return False
     old, new = history[-window - 1]["best_objective"], history[-1]["best_objective"]
     return old is not None and new is not None and (old - new) <= rtol * abs(old)
