@@ -42,3 +42,13 @@ def test_param_change_link1_against_baseline():
     t = pl.param_change_table(df, {"Aircraft.Wing.AREA": 100.0}, "sequential", "staged_pipeline")
     row = t.loc["Wing area (m²)"]
     assert np.isclose(row[1], 10.0) and np.isclose(row[2], 10.0) and np.isnan(row[3])
+
+
+def test_tool_group_mapping():
+    srv = {"run_su2_solver": "su2-mcp", "run_simulation": "aviary"}
+    assert pl.tool_group("run_su2_solver", srv) == "Aerodynamics (SU2 MCP)"
+    assert pl.tool_group("run_simulation", srv) == "Mission (Aviary MCP)"
+    assert pl.tool_group("final_answer", srv) == pl.TIME_GROUPS[0]
+    assert pl.tool_group("claim_todo", srv) == "Board tools (networked)"
+    assert pl.tool_group("assign_task", srv) == "Orchestrator tools"
+    assert pl.tool_group("read_design_json", srv) == "Other framework tools"

@@ -550,6 +550,124 @@ def refused_by_code_plot(df, out: Path) -> None:
     save(fig, out / "refused_by_error_code_avg_bar.png")
 
 
+MODEL_ONLY = {"(no tool call)", "final_answer"}
+BOARD = {"read_todos", "claim_todo", "mark_todo_done", "mark_todo_failed", "release_todo", "wait_for_board",
+         "read_blackboard", "write_blackboard", "spawn_peer", "request_complexity", "mark_task_done", "read_procedure"}
+ORCH = {"create_agent", "assign_task", "message_orchestrator", "reply_to_agent", "set_complexity", "give_tools",
+        "list_graph_roles"}
+SIGNALS = {"record_recommendation", "respond_to_recommendation"}
+SERVER_LABELS = {"tigl": "Geometry (TiGL MCP)", "su2": "Aerodynamics (SU2 MCP)", "mass": "Structures (mass MCP)",
+                 "pycycle": "Propulsion (pyCycle MCP)", "aviary": "Mission (Aviary MCP)"}
+TIME_GROUPS = ["Model only (no tool / final answer)", "Recommendations", "Orchestrator tools", "Board tools (networked)",
+               "Geometry (TiGL MCP)", "Aerodynamics (SU2 MCP)", "Structures (mass MCP)", "Propulsion (pyCycle MCP)",
+               "Mission (Aviary MCP)", "Other framework tools"]
+
+
+def tool_group(tool: str, servers: dict) -> str:
+    if tool in MODEL_ONLY:
+        return TIME_GROUPS[0]
+    if tool in SIGNALS:
+        return "Recommendations"
+    if tool in ORCH:
+        return "Orchestrator tools"
+    if tool in BOARD:
+        return "Board tools (networked)"
+    srv = str(servers.get(tool) or "").lower()
+    for key, lab in SERVER_LABELS.items():
+        if key in srv:
+            return lab
+    return "Other framework tools"
+
+
+def time_tables(df):
+    """(per-link hours by group, per-link hours by tool), both indexed by (structure, handler, link)."""
+    servers = {}
+    for js in df.tool_servers.dropna():
+        servers.update(json.loads(js))
+    g_rows, t_rows = [], []
+    for _, r in df.iterrows():
+        if not isinstance(r.step_time_by_tool, str):
+            continue
+        by_tool = json.loads(r.step_time_by_tool)
+        key = {"structure": r.structure, "handler": r.handler, "link": r.link}
+        groups = {}
+        for t, sec in by_tool.items():
+            groups[tool_group(t, servers)] = groups.get(tool_group(t, servers), 0.0) + sec / 3600
+            t_rows.append({**key, "tool": t, "hours": sec / 3600})
+        g_rows.append({**key, **groups})
+    g = pd.DataFrame(g_rows).fillna(0.0)
+    for c in TIME_GROUPS:
+        if c not in g:
+            g[c] = 0.0
+    return g, pd.DataFrame(t_rows), servers
+
+
+def _group_palette() -> dict:
+    greys = ["#4D4D4D", "#8C8C8C", "#B3B3B3", "#D9D9D9"]
+    tools = sns.color_palette("mako", n_colors=6)
+    return dict(zip(TIME_GROUPS, greys + list(tools)))
+
+
+def time_breakdown_plots(df, out: Path) -> None:
+    g, t, servers = time_tables(df)
+    mean = g.groupby(["structure", "handler"])[TIME_GROUPS].mean()
+    mean = mean.reindex([c for c in COMBOS if c in mean.index])
+    mean = mean.loc[:, mean.sum() > 0]
+    pal = _group_palette()
+    labels = [HANDLER_LABELS[h] for _, h in mean.index]
+    for kind, table, xlabel in (
+            ("hours", mean, "Agent-step time per link, mean (h)"),
+            ("share", mean.div(mean.sum(axis=1), axis=0) * 100, "Share of agent-step time (%)")):
+        fig, ax = plt.subplots(figsize=(10.5, 4.4))
+        left = np.zeros(len(table))
+        for c in table.columns:
+            ax.barh(range(len(table)), table[c], left=left, color=pal[c], edgecolor="white", label=c)
+            left += table[c].to_numpy()
+        ax.set_yticks(range(len(table)))
+        ax.set_yticklabels(labels)
+        for tick, (s, _) in zip(ax.get_yticklabels(), table.index):
+            tick.set_color(STRUCT_COLORS[s])
+        ax.invert_yaxis()
+        ax.set_xlabel(xlabel)
+        if kind == "share":
+            ax.set_xlim(0, 100)
+        handles = ax.get_legend_handles_labels()[0]
+        handles += [Patch(color=STRUCT_COLORS[s], label=f"{STRUCT_LABELS[s]} (label colour)") for s in STRUCTURES]
+        ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+        save(fig, out / f"time_by_tool_group_{kind}.png")
+    # per combination: top tools by mean hours per link
+    n_links = g.groupby(["structure", "handler"]).size()
+    for s, h in COMBOS:
+        tt = t[(t.structure == s) & (t.handler == h)]
+        if tt.empty:
+            continue
+        per = (tt.groupby("tool").hours.sum() / n_links[(s, h)]).sort_values(ascending=False).head(15)
+        fig, ax = plt.subplots(figsize=(6.6, 0.34 * len(per) + 0.9))
+        ax.barh(range(len(per)), per.to_numpy(), color=[pal[tool_group(x, servers)] for x in per.index], height=0.7)
+        ax.set_yticks(range(len(per)))
+        ax.set_yticklabels(per.index)
+        ax.invert_yaxis()
+        ax.set_xlabel("Agent-step time per link, mean (h)")
+        used = list(dict.fromkeys(tool_group(x, servers) for x in per.index))
+        ax.legend(handles=[Patch(color=pal[u], label=u) for u in used], loc="lower right")
+        save(fig, out / f"time_top_tools_{s}_{h}.png")
+
+
+def step_time_vs_tokens(df, out: Path) -> None:
+    fig, ax = plt.subplots(figsize=(6.8, 4.4))
+    for s, h in COMBOS:
+        g = df[(df.structure == s) & (df.handler == h)]
+        ax.scatter(g.output_tokens / 1000, g.step_time_s / 3600, color=STRUCT_COLORS[s], marker=HANDLER_MARKERS[h],
+                   s=30, alpha=0.8, edgecolor="white", linewidth=0.4)
+    ax.set_xlabel("Output tokens per link (thousands)")
+    ax.set_ylabel("Agent-step time per link (h)")
+    handles = [Patch(color=STRUCT_COLORS[s], label=STRUCT_LABELS[s]) for s in STRUCTURES]
+    handles += [Line2D([], [], color="0.3", marker=HANDLER_MARKERS[h], linestyle="", label=HANDLER_LABELS[h])
+                for h in HANDLERS]
+    ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(1.01, 1.0))
+    save(fig, out / "step_time_vs_output_tokens_scatter.png")
+
+
 def efficiency_scatter(df, out: Path) -> None:
     fig, ax = plt.subplots(figsize=(6.8, 4.4))
     for s, h in COMBOS:
@@ -749,6 +867,11 @@ def main() -> None:
               Metric("tokens_per_minute", "tokens_per_min", "Output tokens per minute of run time")):
         metric_figures(df, m, out / "5_general")
     efficiency_scatter(df, out / "5_general")
+    metric_figures(df, Metric("agent_step_time", "step_time_s", "Agent-step time per link, summed over agents (h)",
+                              scale=1 / 3600), out / "5_general")
+    step_time_vs_tokens(df, out / "5_general")
+    print("5b where the time goes")
+    time_breakdown_plots(df, out / "5b_time_breakdown")
     print("6 recommendations")
     recommendation_bars(df, out / "6_recommendations")
     print("7 organisational design")

@@ -197,6 +197,22 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
         "max_prompt_tokens": res.get("max_prompt_tokens"),
     })
 
+    # --- where the time goes ---
+    # Wall time of each agent step (one model generation plus the tool call it makes), credited to the tool the
+    # step called; a step calling several tools is split evenly. Per-tool durations in result.json are all 0 and
+    # no CPU time is recorded, so model and tool time inside a step can't be separated here.
+    by_tool = Counter()
+    for s in steps:
+        if s.get("start_time") is None or s.get("end_time") is None:
+            continue
+        dt = float(s["end_time"]) - float(s["start_time"])
+        names = [tc.get("name") for tc in s.get("tool_calls") or [] if isinstance(tc, dict)] or ["(no tool call)"]
+        for n in names:
+            by_tool[n] += dt / len(names)
+    row["step_time_s"] = sum(by_tool.values())
+    row["step_time_by_tool"] = json.dumps({k: round(v, 3) for k, v in by_tool.items()})
+    row["tool_servers"] = json.dumps({e["tool"]: e.get("server") for e in kb if e.get("server")})
+
     # --- tool calls ---
     row["kb_tool_calls"] = sum(1 for e in kb if e.get("agent") != "framework")
     refused = [e for e in kb if e.get("status") == "refused"]

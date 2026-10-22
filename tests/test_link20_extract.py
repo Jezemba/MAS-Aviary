@@ -140,3 +140,18 @@ def test_od_worker_completion_and_todo_revisits(tmp_path):
              for t in ("geometry", "aero", "geometry")]
     _write_link(n, [], result={}, steps=steps)
     assert ex.extract_link("t", n.name, 1, n, {})["od.todo_revisit_rate"] == 0.5
+
+
+def test_step_time_credited_to_tools(tmp_path):
+    d = tmp_path / "repeat_000" / "mdo_f25_sequential_staged_pipeline"
+    steps = [{"kind": "step", "agent": "a", "start_time": 0.0, "end_time": 10.0, "tool_calls": [{"name": "run_su2_solver"}]},
+             {"kind": "step", "agent": "a", "start_time": 10.0, "end_time": 14.0,
+              "tool_calls": [{"name": "get_results"}, {"name": "check_constraints"}]},
+             {"kind": "step", "agent": "a", "start_time": 14.0, "end_time": 15.0, "tool_calls": []},
+             {"kind": "summary", "agent": "unknown", "start_time": 0.0, "end_time": 99.0}]
+    _write_link(d, [{"seq": 1, "tool": "run_su2_solver", "server": "su2", "status": "success"}], result={}, steps=steps)
+    row = ex.extract_link("t", d.name, 1, d, {})
+    assert row["step_time_s"] == 15.0
+    assert json.loads(row["step_time_by_tool"]) == {"run_su2_solver": 10.0, "get_results": 2.0,
+                                                     "check_constraints": 2.0, "(no tool call)": 1.0}
+    assert json.loads(row["tool_servers"]) == {"run_su2_solver": "su2"}
