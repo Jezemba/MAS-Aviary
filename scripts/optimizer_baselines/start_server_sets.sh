@@ -16,7 +16,10 @@ cd "$AVION"
 for ((w = 0; w < N; w++)); do
   P=$((BASE + 10 * w))
   start tigl $((P + 0)) "$ENVS/tigl-env/bin/tigl-mcp" --transport streamable-http --host 127.0.0.1 --port $((P + 0))
-  start su2 $((P + 1)) env PATH="$ENVS/su2env/bin:$PATH" SU2_MPI_RANKS="${SU2_MPI_RANKS:-auto}" \
+  # Fixed ranks and no core binding: 18 parallel MPI jobs each bind to the SAME first cores by default
+  # (run 4, 2026-10-22: 54 ranks on ~3 cores, 1.7% CPU each, 22 SU2 iterations in 30 min).
+  start su2 $((P + 1)) env PATH="$ENVS/su2env/bin:$PATH" SU2_MPI_RANKS="${SU2_MPI_RANKS:-3}" \
+    SU2_MPIRUN_ARGS="${SU2_MPIRUN_ARGS:---mca osc ^ucx --bind-to none}" \
     "$AVION/su2-mcp/.venv/bin/su2-mcp" --transport streamable-http --host 127.0.0.1 --port $((P + 1))
   start pycycle $((P + 2)) "$AVION/pycycle-mcp/.venv/bin/pycycle-mcp" --transport streamable-http --host 127.0.0.1 --port $((P + 2))
   (cd "$AVION/aviary-mcp" && start aviary $((P + 3)) env AVIARY_MCP_HOST=127.0.0.1 AVIARY_MCP_PORT=$((P + 3)) \
