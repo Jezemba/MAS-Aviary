@@ -514,6 +514,32 @@ def coordination_metrics() -> list[Metric]:
     ]
 
 
+def od_metrics() -> list[Metric]:
+    """Organisational-design metrics (src/logging/org_theory_metrics.py), each for the structure or handler it
+    belongs to. Ratios are unitless (0-1)."""
+    S, O, N = ("sequential",), ("orchestrated",), ("networked",)
+    SP, IF, GR = ("staged_pipeline",), ("iterative_feedback",), ("graph_routed",)
+    myopia = [(0.6, "Joint-myopia threshold (0.6)", LIMIT_STYLE)]
+    return [
+        Metric("routing_accuracy", "od.routing_accuracy", "Routing accuracy, 1 − misroute rate (–)",
+               handlers=GR, structures=S + O),
+        Metric("claim_routing_accuracy", "od.claim_routing_accuracy",
+               "Claim routing accuracy, 1 − TODO revisit rate (–)", structures=N),
+        Metric("ambidexterity", "od.ambidexterity_score", "Ambidexterity score (–)", handlers=IF),
+        Metric("escalation_of_commitment", "od.escalation_length", "Escalation of commitment (turns)", handlers=IF),
+        Metric("completion_rate", "od.completion_rate_workers", "Stage completion rate (–)", handlers=SP),
+        Metric("propagation_time", "od.propagation_time", "Propagation time (min)", structures=S, scale=1 / 60),
+        Metric("stage_independence", "od.stage_independence_score", "Stage independence score (–)", structures=S),
+        Metric("cost_per_agent", "od.cost_per_agent", "Orchestrator time per spawned agent (s)", structures=O),
+        Metric("orchestrator_overhead", "od.orchestrator_overhead_ratio", "Orchestrator overhead ratio (–)",
+               structures=O),
+        Metric("information_ratio", "od.information_ratio", "Orchestrator information ratio (–)", structures=O),
+        Metric("convergence_score", "od.convergence_score", "Convergence score (–)", structures=N, refs=myopia),
+        Metric("blackboard_utilization", "od.blackboard_utilization", "Blackboard utilisation (–)", structures=N),
+        Metric("duplicate_work", "od.duplicate_work_rate", "Duplicate work rate (–)", structures=N),
+    ]
+
+
 def baseline_refs(baseline: dict, df_link1_kb_old: dict) -> dict:
     refs = dict((baseline.get("get_results") or {}).get("design_parameters", {}).get("aircraft_params", {}))
     # Canonical engine inputs (config/mdo_f25_canonical_baseline.yaml -> propulsion; fan.PR is the HBTF default
@@ -549,6 +575,8 @@ def main() -> None:
     df["flew"] = df["flew"].astype(bool)
     df["graph_level_num"] = df["graph_level"].map({"simple": 1, "moderate": 2, "complex": 3})
     df["tokens_per_min"] = df.output_tokens / (df.duration_s / 60.0)
+    df["od.routing_accuracy"] = 1.0 - df["od.misroute_rate"]
+    df["od.claim_routing_accuracy"] = 1.0 - df["od.todo_revisit_rate"]
     baseline = json.loads(args.baseline.read_text())
     summ = baseline["run_simulation"]["summary"]
     defaults = session_defaults_from_kb(args.link1_kb, [p for p, _ in PARAMS[13:16]])
@@ -582,6 +610,9 @@ def main() -> None:
     efficiency_scatter(df, out / "5_general")
     print("6 recommendations")
     recommendation_bars(df, out / "6_recommendations")
+    print("7 organisational design")
+    for m in od_metrics():
+        metric_figures(df, m, out / "7_org_design")
 
 
 if __name__ == "__main__":

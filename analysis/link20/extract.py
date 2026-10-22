@@ -49,6 +49,10 @@ ROLE_ORDER = ["geometry_engineer", "aerodynamics_analyst", "structures_analyst",
 
 LEVELS = {"simple": 1, "moderate": 2, "complex": 3}
 
+OD_METRICS = ["misroute_rate", "ambidexterity_score", "completion_rate", "propagation_time", "cost_per_agent",
+              "convergence_score", "orchestrator_overhead_ratio", "information_ratio", "blackboard_utilization",
+              "duplicate_work_rate", "escalation_length", "stage_independence_score"]
+
 CHAIN_PARAMS = ["Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP",
                 "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                 "Aircraft.Fuselage.MAX_WIDTH", "Aircraft.Engine.SCALE_FACTOR"]
@@ -263,6 +267,21 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     for k in ("orchestrator_turns", "worker_turns", "agents_spawned", "blackboard_reads_total",
               "blackboard_writes_total", "claim_conflicts"):
         row[k] = otm.get(k)
+    # Organisational-design metrics as the run recorded them (src/logging/org_theory_metrics.py; every
+    # definition predates the earliest run, so all combinations share them).
+    for k in OD_METRICS:
+        row[f"od.{k}"] = otm.get(k)
+    # Staged completion over worker stages only: orchestrated staged pipeline also lists the orchestrator's
+    # own turns as stages, scored by a heuristic that always passes.
+    worker_stages = [s for s in psc if s.get("stage") != "orchestrator"]
+    row["od.completion_rate_workers"] = (sum(1 for s in worker_stages if s.get("met")) / len(worker_stages)
+                                         if worker_stages else None)
+    # Networked analogue of the misroute rate: the recorded one counts peers (agent_1, agent_2), not roles.
+    # Here, the share of granted claims that take a TODO already claimed earlier in the link.
+    granted = [n for s in steps for tc in s.get("tool_calls") or [] if tc.get("name") == "claim_todo"
+               for n in re.findall(r'"success":\s*true,\s*"todo_name":\s*"([^"]+)"', str(s.get("observations")))]
+    row["od.todo_revisit_rate"] = (sum(1 for i, n in enumerate(granted) if n in granted[:i]) / (len(granted) - 1)
+                                   if structure == "networked" and len(granted) > 1 else None)
     row["claim_violations_total"] = res.get("claim_violations_total")
 
     # --- design parameters the link left ---

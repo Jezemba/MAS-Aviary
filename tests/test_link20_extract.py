@@ -123,3 +123,20 @@ def test_claims_granted_and_refused_from_observations(tmp_path):
     _write_link(d, [], result={}, steps=steps)
     row = ex.extract_link("t", d.name, 1, d, {})
     assert (row["n_claim_granted"], row["n_claim_refused"]) == (1, 1)
+
+
+def test_od_worker_completion_and_todo_revisits(tmp_path):
+    d = tmp_path / "repeat_000" / "mdo_f25_orchestrated_staged_pipeline"
+    otm = {"misroute_rate": 0.25, "per_stage_completion": [
+        {"stage": "orchestrator", "met": True}, {"stage": "geometry_engineer", "met": False},
+        {"stage": "orchestrator", "met": True}, {"stage": "aerodynamics_analyst", "met": True}]}
+    _write_link(d, [], result={"org_theory_metrics": otm})
+    row = ex.extract_link("t", d.name, 1, d, {})
+    assert row["od.completion_rate_workers"] == 0.5 and row["od.misroute_rate"] == 0.25
+    assert row["od.todo_revisit_rate"] is None
+    n = tmp_path / "repeat_000" / "mdo_f25_networked_iterative_feedback"
+    obs = lambda t: f'{{"success": true, "todo_name": "{t}", "attempted_by": "agent_1"}}'
+    steps = [{"kind": "step", "agent": "agent_1", "tool_calls": [{"name": "claim_todo"}], "observations": obs(t)}
+             for t in ("geometry", "aero", "geometry")]
+    _write_link(n, [], result={}, steps=steps)
+    assert ex.extract_link("t", n.name, 1, n, {})["od.todo_revisit_rate"] == 0.5
