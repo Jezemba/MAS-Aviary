@@ -14,9 +14,16 @@ ENVFILE=${AVION_ENV_FILE:-$HOME/Jessica/avion_env.sh}
 AVION=${AVION:-$HOME/Jessica/Avion}; ENVS=${AVION_CONDA_ENVS:-$HOME/Jessica/avion_envs}
 LOGS=${LOGS:-$AVION/MAS-Aviary-opt/logs/baselines/mcp}; mkdir -p "$LOGS"
 export TMPDIR=${BASELINE_TMPDIR:-$HOME/Jessica/tmp_baselines}; mkdir -p "$TMPDIR"
+# Every server runs in its OWN working folder. aviary (inside mass-mcp, and aviary-mcp) and pycycle write their
+# OpenMDAO output -- including a sqlite recorder -- to <problem>_out folders in the working folder, named by a
+# per-process counter, so servers sharing a folder write the SAME sqlite files (run 6, 2026-10-22: "attempt to
+# write a readonly database", every mass 0). Separate folders also keep them away from the study's servers.
+WORK=${BASELINE_WORKDIR:-$TMPDIR/sets}
 start() { local name=$1 port=$2; shift 2
   if ss -ltn | grep -q ":$port "; then echo "port $port taken; not starting $name" >&2; return; fi
-  setsid nohup env CUDA_VISIBLE_DEVICES="" TMPDIR="$TMPDIR" "$@" > "$LOGS/${name}_${port}.log" 2>&1 < /dev/null &
+  mkdir -p "$WORK/${name}_${port}"
+  (cd "$WORK/${name}_${port}" && setsid nohup env CUDA_VISIBLE_DEVICES="" TMPDIR="$TMPDIR" "$@" \
+     > "$LOGS/${name}_${port}.log" 2>&1 < /dev/null &)
 }
 cd "$AVION"
 for ((w = 0; w < N; w++)); do
@@ -28,8 +35,8 @@ for ((w = 0; w < N; w++)); do
     SU2_MPIRUN_ARGS="${SU2_MPIRUN_ARGS:---mca osc ^ucx --bind-to none}" \
     "$AVION/su2-mcp/.venv/bin/su2-mcp" --transport streamable-http --host 127.0.0.1 --port $((P + 1))
   start pycycle $((P + 2)) "$AVION/pycycle-mcp/.venv/bin/pycycle-mcp" --transport streamable-http --host 127.0.0.1 --port $((P + 2))
-  (cd "$AVION/aviary-mcp" && start aviary $((P + 3)) env AVIARY_MCP_HOST=127.0.0.1 AVIARY_MCP_PORT=$((P + 3)) \
-    "$ENVS/aviary/bin/python" aviary_mcp_server.py)
+  start aviary $((P + 3)) env AVIARY_MCP_HOST=127.0.0.1 AVIARY_MCP_PORT=$((P + 3)) \
+    "$ENVS/aviary/bin/python" "$AVION/aviary-mcp/aviary_mcp_server.py"
   start mass $((P + 4)) "$ENVS/mass-tigl/bin/mass-mcp-server" --transport streamable-http --host 127.0.0.1 --port $((P + 4))
 done
 echo "started $N server sets at base $BASE"
