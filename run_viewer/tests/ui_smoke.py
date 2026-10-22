@@ -59,7 +59,10 @@ def check_controls(page, base: str, run: dict) -> list[str]:
 
 def main(base: str, shots: str) -> int:
     os.makedirs(shots, exist_ok=True)
-    runs = json.load(urllib.request.urlopen(f"{base}/api/runs"))
+    try:
+        runs = json.load(urllib.request.urlopen(f"{base}/api/runs"))
+    except Exception:  # the static site has no API, only data/runs.json
+        runs = json.load(urllib.request.urlopen(f"{base}/data/runs.json"))
     failures = []
     with sync_playwright() as p:
         browser = p.chromium.launch()

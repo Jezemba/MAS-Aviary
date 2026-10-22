@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "build:static": "tsc -b && VITE_STATIC=1 vite build --outDir dist-static",
     "test": "vitest run"
   },
   "dependencies": {

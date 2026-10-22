@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { STATIC, urls } from "./api";
 import { Communication, CurrentAgent, Images, Metrics, Params, Recommendation, Strip } from "./panels";
 import { currentTurnIndex } from "./playback";
 import type { CatalogEntry, Link, Run } from "./types";
@@ -14,7 +15,7 @@ async function getJson<T>(url: string): Promise<T | null> {
 // The link asked for in the URL, read once (the run loader rewrites the URL).
 const INITIAL_LINK = Number(new URLSearchParams(location.search).get("link")) || 1;
 
-const linkUrl = (run: string, n: number) => `/api/runs/${run}/links/${String(n).padStart(3, "0")}.json`;
+const linkUrl = urls.link;
 
 /** The run dropdowns: inputs that a future run would take (combination, model, links...). */
 function useCatalogFilters(catalog: CatalogEntry[]) {
@@ -45,7 +46,7 @@ export default function App() {
   const filters = useCatalogFilters(catalog);
 
   useEffect(() => {
-    getJson<CatalogEntry[]>("/api/runs").then((c) => {
+    getJson<CatalogEntry[]>(urls.catalog()).then((c) => {
       if (!c) return;
       setCatalog(c);
       const fromUrl = new URLSearchParams(location.search).get("run");
@@ -57,7 +58,7 @@ export default function App() {
   useEffect(() => {
     if (!runId) return;
     let stop = false;
-    const load = () => getJson<Run>(`/api/runs/${runId}/run.json`).then((r) => !stop && r && setRun(r));
+    const load = () => getJson<Run>(urls.run(runId)).then((r) => !stop && r && setRun(r));
     setRun(null);
     const first = new URLSearchParams(location.search).get("run") === runId;
     load().then(() => setLinkNo(first ? INITIAL_LINK : 1));
@@ -127,7 +128,7 @@ export default function App() {
     <div className={`app org-${run?.org ?? "none"}`}>
       <header className="topbar">
         <div className="title">
-          <span className="brand">MAS-Aviary · run viewer</span>
+          <span className="brand">MAS-Aviary · run viewer{STATIC ? " · static snapshot" : ""}</span>
           <div className="title-row">
             <h1>{run?.title ?? "Loading…"}</h1>
             {run && <span className="badge">{run.label}</span>}

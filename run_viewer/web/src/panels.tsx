@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LinkChart, Spark, TrajectoryChart } from "./charts";
+import { urls } from "./api";
 import { ShotPair, type Shot } from "./media";
 import {
   agentStepsSoFar, claimTurns, commSoFar, cursorTime, feedbackStrip, firstSuccess, fmt, graphModel, paramDiff, pipelineStrip,
@@ -88,7 +89,7 @@ function shot(run: Run, link: Link | null, kind: "aircraft" | "su2", title: stri
   if (hiddenWhy) return { key: title, title, subtitle, src: null, missing: hiddenWhy };
   return {
     key: title, title, subtitle,
-    src: info.file ? `/api/runs/${run.run_id}/img/${info.file}?v=${info.v ?? 1}` : null,
+    src: info.file ? urls.img(run.run_id, info.file, info.v) : null,
     missing: info.status,
   };
 }
