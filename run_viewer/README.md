@@ -40,7 +40,7 @@ python -m run_viewer.export_static --catalog ../runs.json --bundles ../bundles \
 
 The folder works on GitHub Pages (its own workflow), as a Hugging Face static Space, or on any web
 server. Published 2026-10-22 at github.com/Jezemba/mas-aviary-run-viewer
-(www.jessicaezemba.com/mas-aviary-run-viewer/) and huggingface.co/spaces/JessicaE/mas-aviary-run-viewer.
+(www.jessicaezemba.com/mas-aviary-run-viewer/); the HF Space was deleted the same day.
 To update: export into a new folder, replace the site repo's contents with it, and push. For the Space,
 run `HfApi().upload_folder(repo_id="JessicaE/mas-aviary-run-viewer", repo_type="space", folder_path=...,
 ignore_patterns=[".github/*"])`.
