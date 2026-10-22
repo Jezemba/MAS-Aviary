@@ -23,7 +23,7 @@ TOP_XLIM, TOP_YLIM = (-2.0, 48.0), (-26.0, 26.0)
 FRONT_YLIM, FRONT_ZLIM = (-26.0, 26.0), (-5.0, 10.0)
 CP_RANGE = (-1.2, 1.0)
 # Bump when the look of the images changes, so cached PNGs are re-rendered.
-IMAGE_VERSION = 2
+IMAGE_VERSION = 3
 
 
 def _save(fig, png_path: str) -> None:
@@ -103,13 +103,52 @@ def surface_cp(csv_path: str, config_path: str) -> tuple[np.ndarray, np.ndarray]
     return xyz, (p - p_inf) / (0.5 * rho_inf * v_inf ** 2)
 
 
-def render_su2(csv_path: str, config_path: str, png_path: str, title: str = "") -> dict:
-    """Upper-surface Cp seen from above (points drawn low-z first, so the top skin is visible)."""
-    xyz, cp = surface_cp(csv_path, config_path)
-    order = np.argsort(xyz[:, 2])
+def read_vtu_surface(vtu_path: str) -> tuple[np.ndarray, list[np.ndarray], np.ndarray]:
+    """Points, faces (point index arrays) and SU2's own Pressure_Coefficient from surface_flow.vtu."""
+    import vtk
+    from vtk.util.numpy_support import vtk_to_numpy
+
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(vtu_path)
+    reader.Update()
+    grid = reader.GetOutput()
+    cp_array = grid.GetPointData().GetArray("Pressure_Coefficient")
+    if grid.GetNumberOfPoints() == 0 or cp_array is None:
+        raise ValueError(f"{vtu_path}: no points or no Pressure_Coefficient")
+    pts = vtk_to_numpy(grid.GetPoints().GetData()).astype(float)
+    cells = grid.GetCells()
+    conn = vtk_to_numpy(cells.GetConnectivityArray())
+    offs = vtk_to_numpy(cells.GetOffsetsArray())
+    faces = [conn[offs[k]:offs[k + 1]] for k in range(len(offs) - 1)]
+    return pts, faces, vtk_to_numpy(cp_array).astype(float)
+
+
+def render_su2(csv_path: str | None, config_path: str | None, png_path: str, title: str = "",
+               vtu_path: str | None = None) -> dict:
+    """Upper-surface Cp seen from above.
+
+    From surface_flow.vtu when there is one (SU2's own Cp on the surface cells, drawn low-z
+    first so the top skin is visible); otherwise Cp computed from surface_flow.csv as points.
+    """
     fig, ax = plt.subplots(figsize=(5, 4.6))
-    sc = ax.scatter(xyz[order, 0], xyz[order, 1], c=cp[order], s=3, cmap="coolwarm_r",
-                    vmin=CP_RANGE[0], vmax=CP_RANGE[1], linewidths=0)
+    norm = matplotlib.colors.Normalize(*CP_RANGE)
+    cmap = matplotlib.colormaps["coolwarm_r"]
+    if vtu_path:
+        xyz, faces, cp_pts = read_vtu_surface(vtu_path)
+        polys = [xyz[f] for f in faces if len(f) >= 3]
+        zmean = np.array([p[:, 2].mean() for p in polys])
+        cp_face = np.array([cp_pts[f].mean() for f in faces if len(f) >= 3])
+        order = np.argsort(zmean)
+        ax.add_collection(PolyCollection([polys[k][:, :2] for k in order], facecolors=cmap(norm(cp_face[order])),
+                                         edgecolors="none", linewidths=0, antialiased=True))
+        cp = cp_pts
+        sc = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+        source = "vtu"
+    else:
+        xyz, cp = surface_cp(csv_path, config_path)
+        order = np.argsort(xyz[:, 2])
+        sc = ax.scatter(xyz[order, 0], xyz[order, 1], c=cp[order], s=3, cmap=cmap, norm=norm, linewidths=0)
+        source = "csv"
     # The SU2 mesh is a half model on y >= 0 when it has no negative-y points.
     half = bool((xyz[:, 1] >= -1e-6).all())
     ax.set_xlim(*TOP_XLIM)
@@ -125,4 +164,4 @@ def render_su2(csv_path: str, config_path: str, png_path: str, title: str = "") 
     cb.ax.tick_params(labelsize=6)
     _save(fig, png_path)
     return {"points": int(len(cp)), "cp_min": float(cp.min()), "cp_max": float(cp.max()),
-            "half_model": half}
+            "half_model": half, "source": source}

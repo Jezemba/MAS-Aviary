@@ -19,6 +19,12 @@ import os
 import shutil
 
 SU2_FILES = ("surface_flow.csv", "surface_flow.vtu", "history.csv", "config.cfg")
+# SU2 writes the CSV only when OUTPUT_FILES has SURFACE_CSV; the VTU (SURFACE_PARAVIEW) is the usual one
+SURFACE_FILES = ("surface_flow.vtu", "surface_flow.csv")
+
+
+def has_surface(folder: str) -> bool:
+    return any(os.path.isfile(os.path.join(folder, f)) for f in SURFACE_FILES)
 
 
 def aviary_sessions(link_dir: str) -> list[str]:
@@ -76,7 +82,7 @@ def snapshot_link(link_dir: str, out_dir: str, aviary_dir: str, su2_root: str | 
         name = f"{seq:04d}_{os.path.basename(workdir)}"
         copied = [f for f in SU2_FILES
                   if _copy(os.path.join(local, f), os.path.join(out_dir, "su2", name, f))]
-        (found["su2"] if "surface_flow.csv" in copied else found["su2_missing"]).append(name)
+        (found["su2"] if any(f in copied for f in SURFACE_FILES) else found["su2_missing"]).append(name)
     return found
 
 

@@ -27,7 +27,7 @@ import subprocess
 import time
 
 from run_viewer.extract.build import _load_json, _load_jsonl
-from run_viewer.extract.snapshot import SU2_FILES
+from run_viewer.extract.snapshot import SU2_FILES, has_surface
 
 # tigl tools that do not change the geometry of their session
 TIGL_READ_ONLY = {"open_cpacs", "close_cpacs", "generate_volume_mesh", "export_cpacs", "get_session_info"}
@@ -180,9 +180,8 @@ def replay_su2(plan: dict, out_dir: str, work: str, cfg: dict, ranks: int, log) 
             "mesh_seconds": round(t_mesh, 1), "total_seconds": round(time.time() - t0, 1), "workdir": workdir}
     with open(os.path.join(out_dir, "replay.json"), "w") as f:
         json.dump(note, f, indent=1)
-    ok = "surface_flow.csv" in os.listdir(out_dir)
     log(f"   CL {plan['original']['CL']} -> {coeffs.get('CL')} | CD {plan['original']['CD']} -> {coeffs.get('CD')}")
-    return {"status": "ok" if ok else "solve ran but wrote no surface_flow.csv", **note["replay"]}
+    return {"status": "ok" if has_surface(out_dir) else "solve ran but wrote no surface file", **note["replay"]}
 
 
 def replay_aviary(plan: dict, snap_dir: str, sid: str, work: str, cfg: dict) -> dict:
@@ -247,7 +246,7 @@ def main() -> None:
             name = f"{r['run_id']}/{repeat}"
             if args.only and args.only not in name:
                 continue
-            has_su2 = bool(glob.glob(os.path.join(snap, "su2", "*", "surface_flow.csv")))
+            has_su2 = any(has_surface(d) for d in glob.glob(os.path.join(snap, "su2", "*")))
             if not has_su2:
                 plan = plan_su2(link_dir, path_map, cat.get("fixtures_dir"))
                 if "skip" in plan:

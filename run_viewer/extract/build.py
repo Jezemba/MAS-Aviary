@@ -23,6 +23,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from run_viewer.extract import images
+from run_viewer.extract.snapshot import has_surface
 
 BUNDLE_VERSION = 4
 LLM_TEXT_MAX = 8000
@@ -495,19 +496,20 @@ def su2_image(snapshot_dir: str | None, kb: list[dict], out_png: str, title: str
     solves = [r for r in kb if r.get("tool") == "run_su2_solver" and r.get("status") == "success"]
     if not solves:
         return {"status": "no successful SU2 solve in this link", "file": None}
-    folders = sorted(glob.glob(os.path.join(snapshot_dir or "", "su2", "*", "surface_flow.csv")))
+    folders = sorted(d for d in glob.glob(os.path.join(snapshot_dir or "", "su2", "*")) if has_surface(d))
     if not snapshot_dir or not folders:
         return {"status": f"{len(solves)} SU2 solve(s) ran, but their surface files were not saved", "file": None}
-    folder = os.path.dirname(folders[-1])  # highest kb seq = the link's last solve
+    folder = folders[-1]  # highest kb seq = the link's last solve
     coeffs = (solves[-1].get("outputs") or {}).get("final_coefficients") or {}
-    inputs = [os.path.join(folder, "surface_flow.csv"), os.path.join(folder, "config.cfg")]
+    vtu, csv_path, cfg = (os.path.join(folder, f) for f in ("surface_flow.vtu", "surface_flow.csv", "config.cfg"))
+    inputs = [p for p in (vtu, csv_path, cfg) if os.path.exists(p)]
     meta_path = out_png + ".json"
     meta = _load_json(meta_path) or {}
     if _fresh(out_png, inputs) and _fresh(meta_path, inputs) and meta.get("solve") == os.path.basename(folder) \
             and meta.get("v") == images.IMAGE_VERSION:
         info = meta["info"]
     else:
-        info = images.render_su2(inputs[0], inputs[1], out_png, title)
+        info = images.render_su2(csv_path, cfg, out_png, title, vtu_path=vtu if os.path.exists(vtu) else None)
         with open(meta_path, "w") as f:
             json.dump({"solve": os.path.basename(folder), "info": info, "v": images.IMAGE_VERSION}, f)
     replay = _load_json(os.path.join(folder, "replay.json"))
