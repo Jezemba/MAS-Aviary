@@ -5,6 +5,12 @@
 # study's servers. Usage: start_server_sets.sh <base> <workers>   e.g. start_server_sets.sh 10000 6
 set -euo pipefail
 BASE=$1; N=$2
+# The machine's own environment for the Avion servers (aipexws8: ~/Jessica/avion_env.sh -- PYTHONNOUSERSITE,
+# XDG cache/config dirs, ...). Without it mass-mcp could not build any mass model (run 5, 2026-10-22: sqlite
+# "attempt to write a readonly database", mTOM 0 even for the baseline fixture).
+ENVFILE=${AVION_ENV_FILE:-$HOME/Jessica/avion_env.sh}
+# shellcheck disable=SC1090
+[ -f "$ENVFILE" ] && source "$ENVFILE"
 AVION=${AVION:-$HOME/Jessica/Avion}; ENVS=${AVION_CONDA_ENVS:-$HOME/Jessica/avion_envs}
 LOGS=${LOGS:-$AVION/MAS-Aviary-opt/logs/baselines/mcp}; mkdir -p "$LOGS"
 export TMPDIR=${BASELINE_TMPDIR:-$HOME/Jessica/tmp_baselines}; mkdir -p "$TMPDIR"

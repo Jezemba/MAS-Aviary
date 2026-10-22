@@ -22,6 +22,15 @@ done
 groups=$(echo $groups | tr ' ' '\n' | sort -u)
 for g in $groups; do kill -TERM -- "-$g" 2>/dev/null; done
 echo "stopped $(echo $groups | wc -w) process groups"
+if [ "${1:-}" = "--all-servers" ]; then
+  shift
+  for base in "$@"; do for w in 0 1 2 3 4 5; do for k in 0 1 2 3 4; do
+    port=$((base + 10 * w + k))
+    pid=$(ss -ltnp 2>/dev/null | grep ":$port " | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+    [ -n "$pid" ] && kill -TERM -- "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2>/dev/null
+  done; done; done
+  echo "stopped all baseline servers for bases: $*"
+fi
 if [ "${1:-}" = "--su2-servers" ]; then
   shift
   for base in "$@"; do for w in 0 1 2 3 4 5; do
