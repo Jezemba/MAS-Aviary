@@ -18,6 +18,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from design_space import variables  # noqa: E402
 from optimizers import ALGORITHMS, Problem  # noqa: E402
 
+_EVALUATOR = None
+_VARIABLES = None
+
+
+def _init_worker(config: str, out: str, coarse: bool, port_offset: int, which: str) -> None:
+    """One coupled evaluator per worker process: its own MCP connections, data plane and knowledge base."""
+    import os
+
+    from evaluator import CoupledEvaluator
+
+    global _EVALUATOR, _VARIABLES
+    _VARIABLES = variables(which)
+    _EVALUATOR = CoupledEvaluator(config, Path(out) / "workers" / f"w{os.getpid()}", coarse_mesh=coarse,
+                                  port_offset=port_offset)
+
+
+def _evaluate_in_worker(x: list[float]) -> dict:
+    return _EVALUATOR.evaluate(x, _VARIABLES)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -29,25 +48,31 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--config", default="config/mdo_f25_run_qwen32b_2gpu.yaml")
     ap.add_argument("--full-mesh", action="store_true", help="the agents' mesh instead of the coarse one")
+    ap.add_argument("--workers", type=int, default=6, help="designs evaluated in parallel")
+    ap.add_argument("--port-offset", type=int, default=0, help="use MCP servers on the config's ports + offset")
     args = ap.parse_args()
 
-    from evaluator import CoupledEvaluator
+    import multiprocessing as mp
 
     vs = variables(args.variables)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "run.json").write_text(json.dumps({**vars(args), "out": str(args.out),
                                                    "variables": [v.__dict__ for v in vs]}, indent=1))
-    evaluator = CoupledEvaluator(args.config, args.out, coarse_mesh=not args.full_mesh)
-    problem = Problem(vs, lambda x: evaluator.evaluate(x, vs), args.out / "evaluations.jsonl")
+    pool = mp.get_context("spawn").Pool(
+        args.workers, initializer=_init_worker,
+        initargs=(args.config, str(args.out), not args.full_mesh, args.port_offset, args.variables))
+    problem = Problem(vs, lambda x: pool.apply(_evaluate_in_worker, (x,)), args.out / "evaluations.jsonl",
+                      evaluate_batch=lambda xs: pool.map(_evaluate_in_worker, xs, chunksize=1))
     algo = ALGORITHMS[args.algo]
     if args.algo == "slsqp":
         algo(problem, max_iter=args.max_iter)
     else:
         algo(problem, pop=args.pop, max_iter=args.max_iter, seed=args.seed)
+    pool.close()
+    pool.join()
     last = problem.history[-1] if problem.history else {}
     print(json.dumps({"iterations": len(problem.history), "evaluations": problem.n_evals,
-                      "best_feasible_fuel_kg": last.get("best_feasible_fuel_kg"),
-                      "best_feasible_gtow_kg": last.get("best_feasible_gtow_kg")}))
+                      "best_fuel_kg": last.get("best_fuel_kg"), "best_gtow_kg": last.get("best_gtow_kg")}))
     return 0
 
 

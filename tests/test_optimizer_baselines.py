@@ -31,11 +31,26 @@ def test_unit_box_round_trip_and_defaults():
     assert from_unit([-1.0] * len(VS), VS) == pytest.approx([v.lower for v in VS])
 
 
-def test_penalty_ranks_infeasible_and_unflown_designs_last():
+def test_the_objective_is_fuel_only_and_unflown_designs_rank_last():
     ok = {"flown": True, "fuel_burned_kg": 20000.0, "gtow_kg": 85000.0}
     heavy = {"flown": True, "fuel_burned_kg": 19000.0, "gtow_kg": GTOW_LIMIT_KG + 1000}
-    assert penalised(ok) < penalised(heavy) < NOT_FLOWN_PENALTY == penalised({"flown": False})
-    assert feasible(ok) and not feasible(heavy)
+    assert penalised(heavy) < penalised(ok) < NOT_FLOWN_PENALTY == penalised({"flown": False})
+    assert feasible(ok) and not feasible(heavy)                 # still recorded, not penalised
+
+
+def test_a_batch_is_evaluated_once_per_new_design(tmp_path):
+    batches = []
+
+    def batch(xs):
+        batches.append(len(xs))
+        return [fake(x) for x in xs]
+
+    problem = Problem(VS, fake, tmp_path / "e.jsonl", evaluate_batch=batch)
+    u = to_unit(defaults(VS), VS)
+    recs = problem.evaluate_many([u, u, [0.5] * len(VS)])
+    assert len(recs) == 3 and batches == [2]                    # the duplicate is evaluated once
+    problem.evaluate_many([u])
+    assert batches == [2]                                        # cached
 
 
 @pytest.mark.parametrize("algo", ["pso", "ga", "slsqp"])
@@ -43,7 +58,7 @@ def test_each_algorithm_improves_on_the_default_and_logs_every_iteration(tmp_pat
     problem = Problem(VS, fake, tmp_path / "evaluations.jsonl")
     kwargs = {"max_iter": 25} if algo == "slsqp" else {"pop": 6, "max_iter": 25, "seed": 1}
     history = ALGORITHMS[algo](problem, **kwargs)
-    start, end = history[0]["best_feasible_fuel_kg"], history[-1]["best_feasible_fuel_kg"]
+    start, end = history[0]["best_fuel_kg"], history[-1]["best_fuel_kg"]
     assert end < start
     assert [h["iteration"] for h in history] == list(range(len(history)))
     rows = [json.loads(l) for l in (tmp_path / "evaluations.jsonl").read_text().splitlines()]

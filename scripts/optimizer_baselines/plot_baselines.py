@@ -3,10 +3,10 @@
     ../.venv/bin/python scripts/optimizer_baselines/plot_baselines.py --runs logs/baselines/pso logs/baselines/ga \
         logs/baselines/slsqp --out logs/baselines/plots
 
-fuel_vs_iteration.png   best feasible fuel burn found so far, per optimizer; the default design's fuel as a line
-gtow_vs_iteration.png   the gross take-off weight of that best design; the 90,000 kg limit as a line
+fuel_vs_iteration.png   lowest fuel burn found so far, per optimizer; the default design's fuel as a line
+gtow_vs_iteration.png   the gross take-off weight of that design; the 90,000 kg limit as a line
 pareto_fuel_gtow.png    every design that flew (fuel vs GTOW), each optimizer's non-dominated set joined
-best_at_iterations.csv  the best feasible design at iterations 5, 10, 15, 20 and at convergence
+best_at_iterations.csv  the lowest-fuel design at iterations 5, 10, 15, 20 and at convergence
 """
 from __future__ import annotations
 
@@ -72,8 +72,8 @@ def main() -> int:
         return xs, ys
 
     for key, ylabel, ref, fname in (
-            ("best_feasible_fuel_kg", "Fuel burn (kg)", default and default["fuel_burned_kg"], "fuel_vs_iteration.png"),
-            ("best_feasible_gtow_kg", "Gross take-off weight (kg)", GTOW_LIMIT_KG, "gtow_vs_iteration.png")):
+            ("best_fuel_kg", "Fuel burn (kg)", default and default["fuel_burned_kg"], "fuel_vs_iteration.png"),
+            ("best_gtow_kg", "Gross take-off weight (kg)", GTOW_LIMIT_KG, "gtow_vs_iteration.png")):
         fig, ax = plt.subplots(figsize=(9, 5.5))
         for run in runs:
             xs, ys = series(run, key)
@@ -110,7 +110,7 @@ def main() -> int:
 
     with open(args.out / "best_at_iterations.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["optimizer", "iteration", "evaluations", "best_feasible_fuel_kg", "best_feasible_gtow_kg",
+        w.writerow(["optimizer", "iteration", "evaluations", "best_fuel_kg", "best_gtow_kg",
                     "design"])
         for run in runs:
             rows = {r["iteration"]: r for r in run["iters"]}
@@ -118,12 +118,12 @@ def main() -> int:
             for it in CHECKPOINTS:
                 r = rows.get(it)
                 if r:
-                    w.writerow([run["label"], it, r["evaluations"], r["best_feasible_fuel_kg"],
-                                r["best_feasible_gtow_kg"], json.dumps(r["best_feasible_design"])])
+                    w.writerow([run["label"], it, r["evaluations"], r["best_fuel_kg"],
+                                r["best_gtow_kg"], json.dumps(r["best_design"])])
             if last:
                 w.writerow([run["label"], f"converged ({last['iteration']})", last["evaluations"],
-                            last["best_feasible_fuel_kg"], last["best_feasible_gtow_kg"],
-                            json.dumps(last["best_feasible_design"])])
+                            last["best_fuel_kg"], last["best_gtow_kg"],
+                            json.dumps(last["best_design"])])
     print(f"plots and table in {args.out}")
     return 0
 

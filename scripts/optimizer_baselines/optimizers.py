@@ -1,6 +1,6 @@
 """Traditional optimizer baselines on the coupled pipeline: SLSQP (gradient-based, finite differences), PSO and a
-real-coded GA. All three minimise fuel burn subject to GTOW <= 90,000 kg, in the unit box of the design space,
-starting from the default design.
+real-coded GA. All three minimise fuel burn in the unit box of the design space, starting from the default
+design; GTOW is recorded for every design.
 
 One "iteration" is: a swarm update (PSO), a generation (GA), a major SLSQP iteration. Iteration 0 is the
 starting design / initial population. Every evaluation goes through `Problem.evaluate`, which caches by design,
@@ -17,14 +17,14 @@ from typing import Callable
 from design_space import GTOW_LIMIT_KG, Variable, defaults, from_unit, to_unit
 
 NOT_FLOWN_PENALTY = 1.0e6       # a design that did not fly is worse than any that did
-GTOW_PENALTY_PER_KG = 10.0      # kg of fuel-equivalent per kg over the GTOW limit
 
 
 def penalised(rec: dict) -> float:
+    """The objective: fuel burn (Jessica 2026-10-22, option b: fuel only; GTOW is recorded and plotted against
+    its limit, not penalised -- the default design is already above it)."""
     if not rec.get("flown"):
         return NOT_FLOWN_PENALTY
-    over = max(0.0, (rec.get("gtow_kg") or 0.0) - GTOW_LIMIT_KG)
-    return float(rec["fuel_burned_kg"]) + GTOW_PENALTY_PER_KG * over
+    return float(rec["fuel_burned_kg"])
 
 
 def feasible(rec: dict) -> bool:
@@ -34,8 +34,11 @@ def feasible(rec: dict) -> bool:
 class Problem:
     """The evaluation log, cache and per-iteration history of one optimizer run."""
 
-    def __init__(self, vs: tuple[Variable, ...], evaluate: Callable[[list[float]], dict], log_path: Path):
+    def __init__(self, vs: tuple[Variable, ...], evaluate: Callable[[list[float]], dict], log_path: Path,
+                 evaluate_batch: Callable[[list[list[float]]], list[dict]] | None = None):
         self.vs, self._evaluate, self.log_path = vs, evaluate, Path(log_path)
+        # Parallel workers when given (designs in physical units -> records, in order); else one at a time.
+        self._evaluate_batch = evaluate_batch or (lambda xs: [evaluate(x) for x in xs])
         self.cache: dict[tuple, dict] = {}
         self.history: list[dict] = []
         self.iteration = 0
@@ -56,28 +59,37 @@ class Problem:
             fh.write(json.dumps(rec, default=str) + "\n")
 
     def evaluate(self, u: list[float]) -> dict:
-        u = [min(1.0, max(0.0, float(ui))) for ui in u]
-        key = self._key(u)
-        self.n_evals += 1
-        if key in self.cache:
-            rec = dict(self.cache[key], cached=True)
-        else:
-            rec = self._evaluate(from_unit(u, self.vs))
-            rec.update(kind="evaluation", unit=list(key), objective=penalised(rec))
-            self.cache[key] = rec
-            self._write(rec)
-        rec = dict(rec, iteration=self.iteration, eval_index=self.n_evals)
-        return rec
+        return self.evaluate_many([u])[0]
+
+    def evaluate_many(self, us: list[list[float]]) -> list[dict]:
+        """Evaluate several designs (the new ones in one parallel batch); records in the order given."""
+        us = [[min(1.0, max(0.0, float(ui))) for ui in u] for u in us]
+        keys = [self._key(u) for u in us]
+        todo = []
+        for key in keys:
+            if key not in self.cache and key not in todo:
+                todo.append(key)
+        if todo:
+            for key, rec in zip(todo, self._evaluate_batch([from_unit(list(k), self.vs) for k in todo])):
+                rec.update(kind="evaluation", unit=list(key), objective=penalised(rec), iteration=self.iteration)
+                self.cache[key] = rec
+                self._write(rec)
+        out = []
+        for key in keys:
+            self.n_evals += 1
+            out.append(dict(self.cache[key], eval_index=self.n_evals))
+        return out
 
     def end_iteration(self, evaluated: list[dict]) -> dict:
         """Record the best feasible design found so far after this iteration."""
         seen = [r for r in self.cache.values()]
-        best = min((r for r in seen if feasible(r)), key=lambda r: r["fuel_burned_kg"], default=None)
+        best = min((r for r in seen if r.get("flown")), key=lambda r: r["fuel_burned_kg"], default=None)
         best_any = min(seen, key=lambda r: r["objective"], default=None)
         row = {"kind": "iteration", "iteration": self.iteration, "evaluations": self.n_evals,
-               "best_feasible_fuel_kg": best and best["fuel_burned_kg"],
-               "best_feasible_gtow_kg": best and best["gtow_kg"],
-               "best_feasible_design": best and best["design"],
+               "best_fuel_kg": best and best["fuel_burned_kg"],
+               "best_gtow_kg": best and best["gtow_kg"],
+               "best_design": best and best["design"],
+               "best_within_gtow_limit": bool(best and feasible(best)),
                "best_objective": best_any and best_any["objective"],
                "iteration_fuel_kg": [r.get("fuel_burned_kg") for r in evaluated],
                "iteration_gtow_kg": [r.get("gtow_kg") for r in evaluated]}
@@ -101,7 +113,7 @@ def pso(problem: Problem, pop: int = 6, max_iter: int = 100, seed: int = 0, wind
     n = len(problem.vs)
     x = [to_unit(defaults(problem.vs), problem.vs)] + [[rng.random() for _ in range(n)] for _ in range(pop - 1)]
     v = [[rng.uniform(-vmax, vmax) for _ in range(n)] for _ in range(pop)]
-    recs = [problem.evaluate(xi) for xi in x]
+    recs = problem.evaluate_many(x)
     pbest = [list(xi) for xi in x]
     pbest_f = [r["objective"] for r in recs]
     g = min(range(pop), key=lambda i: pbest_f[i])
@@ -113,7 +125,7 @@ def pso(problem: Problem, pop: int = 6, max_iter: int = 100, seed: int = 0, wind
                            + c2 * rng.random() * (pbest[g][d] - x[i][d]))
                 v[i][d] = max(-vmax, min(vmax, v[i][d]))
                 x[i][d] = max(0.0, min(1.0, x[i][d] + v[i][d]))
-        recs = [problem.evaluate(xi) for xi in x]
+        recs = problem.evaluate_many(x)
         for i, r in enumerate(recs):
             if r["objective"] < pbest_f[i]:
                 pbest[i], pbest_f[i] = list(x[i]), r["objective"]
@@ -128,7 +140,7 @@ def ga(problem: Problem, pop: int = 6, max_iter: int = 100, seed: int = 0, windo
     rng = random.Random(seed)
     n = len(problem.vs)
     popn = [to_unit(defaults(problem.vs), problem.vs)] + [[rng.random() for _ in range(n)] for _ in range(pop - 1)]
-    recs = [problem.evaluate(ind) for ind in popn]
+    recs = problem.evaluate_many(popn)
     fit = [r["objective"] for r in recs]
     problem.end_iteration(recs)
 
@@ -151,37 +163,45 @@ def ga(problem: Problem, pop: int = 6, max_iter: int = 100, seed: int = 0, windo
                 child.append(max(0.0, min(1.0, gene)))
             children.append(child)
         popn = children
-        recs = [problem.evaluate(ind) for ind in popn]
+        recs = problem.evaluate_many(popn)
         fit = [r["objective"] for r in recs]
         problem.end_iteration(recs)
     return problem.history
 
 
 def slsqp(problem: Problem, max_iter: int = 100, eps: float = 0.02, ftol: float = 1e-4) -> list[dict]:
-    """SLSQP with forward-difference gradients (step eps in the unit box). Objective: fuel / 1e4; constraint:
-    (GTOW limit - GTOW) / 1e4 >= 0. A design that did not fly returns the penalty, scaled the same way."""
+    """SLSQP on fuel / 1e4 with forward-difference gradients (absolute step eps in the unit box). The point and its
+    n stepped points are evaluated in one parallel batch. A design that did not fly returns the penalty."""
     from scipy.optimize import minimize
 
+    n = len(problem.vs)
     x0 = to_unit(defaults(problem.vs), problem.vs)
     pending: list[dict] = []
-    memo: dict[tuple, dict] = {}
 
-    def rec_for(u) -> dict:
-        key = Problem._key(list(u))
-        if key not in memo:
-            memo[key] = problem.evaluate(list(u))
-            pending.append(memo[key])
-        return memo[key]
+    def value(r: dict) -> float:
+        return r["objective"] / 1.0e4
+
+    def batch(us):
+        recs = problem.evaluate_many([list(u) for u in us])
+        pending.extend(recs)
+        return recs
 
     def f(u):
-        r = rec_for(u)
-        return (r["fuel_burned_kg"] if r.get("flown") else NOT_FLOWN_PENALTY) / 1.0e4
+        return value(batch([u])[0])
 
-    def g(u):
-        r = rec_for(u)
-        return (GTOW_LIMIT_KG - (r.get("gtow_kg") or 2 * GTOW_LIMIT_KG)) / 1.0e4
+    def jac(u):
+        u = [float(ui) for ui in u]
+        steps = []
+        for d in range(n):
+            h = eps if u[d] + eps <= 1.0 else -eps        # step inward at the upper bound
+            v = list(u)
+            v[d] += h
+            steps.append((v, h))
+        recs = batch([u] + [v for v, _ in steps])
+        f0 = value(recs[0])
+        return [(value(r) - f0) / h for r, (_, h) in zip(recs[1:], steps)]
 
-    rec_for(x0)
+    batch([x0])
     problem.end_iteration(list(pending))
     pending.clear()
 
@@ -189,11 +209,8 @@ def slsqp(problem: Problem, max_iter: int = 100, eps: float = 0.02, ftol: float 
         problem.end_iteration(list(pending))
         pending.clear()
 
-    # jac=None: SLSQP takes forward differences with the absolute step `eps`. (With jac="2-point" scipy
-    # ignores eps and steps ~1e-8, below the cache's rounding and far below SU2's noise: zero gradient.)
-    minimize(f, x0, method="SLSQP", jac=None, bounds=[(0.0, 1.0)] * len(problem.vs),
-             constraints=[{"type": "ineq", "fun": g}], callback=callback,
-             options={"maxiter": max_iter, "ftol": ftol, "eps": eps})
+    minimize(f, x0, method="SLSQP", jac=jac, bounds=[(0.0, 1.0)] * n, callback=callback,
+             options={"maxiter": max_iter, "ftol": ftol})
     if pending:
         problem.end_iteration(list(pending))
     return problem.history

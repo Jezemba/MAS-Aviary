@@ -30,7 +30,7 @@ def _json(out: Any) -> dict:
 
 
 class CoupledEvaluator:
-    def __init__(self, config_path: str, out_dir: Path, coarse_mesh: bool = True):
+    def __init__(self, config_path: str, out_dir: Path, coarse_mesh: bool = True, port_offset: int = 0):
         import os
         import sys
 
@@ -45,7 +45,15 @@ class CoupledEvaluator:
         self.sbr = sbr
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.tools = sbr._load_mcp_tools(load_config(config_path))
+        config = load_config(config_path)
+        if port_offset:
+            # A separate set of MCP servers (e.g. 9500/9200/...), so the baselines never load the study's servers.
+            import re as _re
+
+            for server in config.mcp.servers:
+                server.url = _re.sub(r":(\d+)/", lambda m: f":{int(m.group(1)) + port_offset}/", server.url, count=1)
+        self.server_urls = [server.url for server in config.mcp.servers]
+        self.tools = sbr._load_mcp_tools(config)
         self.n_evaluations = 0
 
     def _call(self, name: str, **kwargs) -> dict:
