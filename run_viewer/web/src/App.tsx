@@ -127,9 +127,13 @@ export default function App() {
     <div className={`app org-${run?.org ?? "none"}`}>
       <header className="topbar">
         <div className="title">
-          <h1>{run?.title ?? "MAS-Aviary run viewer"}</h1>
-          {entry?.live && <span className="live">LIVE</span>}
-          {entry?.note && <span className="note">{entry.note}</span>}
+          <span className="brand">MAS-Aviary · run viewer</span>
+          <div className="title-row">
+            <h1>{run?.title ?? "Loading…"}</h1>
+            {run && <span className="badge">{run.label}</span>}
+            {entry?.live && <span className="live"><span className="dot" />LIVE</span>}
+          </div>
+          {entry?.note && <span className="note">⚠ {entry.note}</span>}
         </div>
         <div className="inputs">
           {(["study", "combination", "model", "links", "thinking"] as const).map((name) => (
@@ -188,16 +192,20 @@ export default function App() {
       {run && !link && <p className="muted pad">This link has no bundle yet.</p>}
 
       {run && link && (
-        <main className={`grid ${hasComm ? "with-comm" : ""}`}>
-          <div className="a-agent"><CurrentAgent run={run} link={link} cursor={cursor} /></div>
-          <div className="a-images"><Images run={run} link={link} prev={prev} cursor={cursor} /></div>
-          <div className="a-metrics"><Metrics run={run} link={link} cursor={cursor} /></div>
-          <div className="a-pn"><Params link={link} side="N" /></div>
-          <div className="a-pn1"><Params link={link} side="N+1" /></div>
-          <div className="a-rec"><Recommendation link={link} cursor={cursor} /></div>
-          {hasComm && <div className="a-comm"><Communication run={run} link={link} cursor={cursor} /></div>}
-          <div className="a-strip"><Strip run={run} link={link} cursor={cursor} currentTurn={currentTurn} /></div>
-        </main>
+        <div className={`shell ${hasComm ? "with-comm" : ""}`}>
+          <main className="main">
+            <div className="a-agent"><CurrentAgent run={run} link={link} cursor={cursor} /></div>
+            <div className="a-images"><Images run={run} link={link} prev={prev} cursor={cursor} /></div>
+            <div className="a-pn"><Params link={link} side="N" /></div>
+            <div className="a-pn1"><Params link={link} side="N+1" /></div>
+            <div className="a-rec"><Recommendation link={link} cursor={cursor} /></div>
+            <div className="a-strip"><Strip run={run} link={link} cursor={cursor} currentTurn={currentTurn} /></div>
+          </main>
+          <aside className="side">
+            <Metrics run={run} link={link} cursor={cursor} />
+            {hasComm && <Communication run={run} link={link} cursor={cursor} />}
+          </aside>
+        </div>
       )}
     </div>
   );

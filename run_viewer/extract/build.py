@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 from run_viewer.extract import images
 
-BUNDLE_VERSION = 2
+BUNDLE_VERSION = 4
 LLM_TEXT_MAX = 8000
 ARG_TEXT_MAX = 2000
 OBS_TEXT_MAX = 4000
@@ -55,24 +55,24 @@ SIGNAL_TOOLS = {"record_recommendation", "respond_to_recommendation", "request_c
 # Parameter groups for the N / N+1 panels: (group, label, unit, where it is read from)
 PARAMS = [
     ("geometry", "Wing area", "m²", ("aviary", "Aircraft.Wing.AREA")),
-    ("geometry", "Wing aspect ratio", "", ("aviary", "Aircraft.Wing.ASPECT_RATIO")),
-    ("geometry", "Wing sweep", "deg", ("aviary", "Aircraft.Wing.SWEEP")),
-    ("geometry", "Wing taper ratio", "", ("aviary", "Aircraft.Wing.TAPER_RATIO")),
-    ("geometry", "Wing span", "m", ("aviary", "Aircraft.Wing.SPAN")),
-    ("geometry", "Fuselage length", "m", ("aviary", "Aircraft.Fuselage.LENGTH")),
-    ("geometry", "Fuselage max height", "m", ("aviary", "Aircraft.Fuselage.MAX_HEIGHT")),
-    ("geometry", "Fuselage max width", "m", ("aviary", "Aircraft.Fuselage.MAX_WIDTH")),
+    ("geometry", "Aspect ratio", "", ("aviary", "Aircraft.Wing.ASPECT_RATIO")),
+    ("geometry", "Sweep", "deg", ("aviary", "Aircraft.Wing.SWEEP")),
+    ("geometry", "Taper ratio", "", ("aviary", "Aircraft.Wing.TAPER_RATIO")),
+    ("geometry", "Span", "m", ("aviary", "Aircraft.Wing.SPAN")),
+    ("geometry", "Fus. length", "m", ("aviary", "Aircraft.Fuselage.LENGTH")),
+    ("geometry", "Fus. height", "m", ("aviary", "Aircraft.Fuselage.MAX_HEIGHT")),
+    ("geometry", "Fus. width", "m", ("aviary", "Aircraft.Fuselage.MAX_WIDTH")),
     ("mission", "Range", "nmi", ("mission", "range_nmi")),
     ("mission", "Passengers", "", ("mission", "num_passengers")),
     ("mission", "Cruise Mach", "", ("mission", "cruise_mach")),
-    ("mission", "Cruise altitude", "ft", ("mission", "cruise_altitude_ft")),
-    ("aero", "CL cruise (SU2)", "", ("aero", "cl_cruise")),
-    ("aero", "CD cruise (SU2)", "", ("aero", "cd_cruise")),
-    ("aero", "Design lift coefficient", "", ("aviary", "Mission.Design.LIFT_COEFFICIENT")),
-    ("aero", "Subsonic drag factor", "", ("aviary", "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR")),
-    ("engine", "Engine scale factor", "", ("aviary", "Aircraft.Engine.SCALE_FACTOR")),
+    ("mission", "Altitude", "ft", ("mission", "cruise_altitude_ft")),
+    ("aero", "CL (SU2)", "", ("aero", "cl_cruise")),
+    ("aero", "CD (SU2)", "", ("aero", "cd_cruise")),
+    ("aero", "Design CL", "", ("aviary", "Mission.Design.LIFT_COEFFICIENT")),
+    ("aero", "Drag factor", "", ("aviary", "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR")),
+    ("engine", "Scale factor", "", ("aviary", "Aircraft.Engine.SCALE_FACTOR")),
     ("engine", "T4 max", "°R", ("engine", "T4_MAX")),
-    ("engine", "Bypass ratio", "", ("engine", "splitter.BPR")),
+    ("engine", "BPR", "", ("engine", "splitter.BPR")),
     ("engine", "Fan PR", "", ("engine", "fan.PR")),
     ("engine", "LPC PR", "", ("engine", "lpc.PR")),
     ("engine", "HPC PR", "", ("engine", "hpc.PR")),
@@ -468,22 +468,27 @@ class ImageEnv:
         self.helpers = os.path.join(os.path.dirname(__file__), "helpers")
 
 
-def trajectory_for(snapshot_dir: str | None, design: dict | None, env: ImageEnv, cache: str) -> dict:
+def trajectory_for(snapshot_dir: str | None, design: dict | None, env: ImageEnv, cache: str,
+                   kb: list[dict] | None = None) -> dict:
     sid = ((design or {}).get("sessions") or {}).get("aviary")
     if not sid:
         return {"status": "no aviary session recorded for this link", "data": None}
     db = os.path.join(snapshot_dir or "", "aviary", f"{sid}.db")
     if not snapshot_dir or not os.path.exists(db):
+        if kb is not None and not any(r.get("tool") == "run_simulation" and r.get("status") == "success" for r in kb):
+            return {"status": "no mission simulation succeeded in this link", "data": None}
         return {"status": "aviary recorder not saved for this session", "data": None}
+    replay = _load_json(os.path.join(snapshot_dir, "aviary", f"{sid}.replay.json"))
+    extra = {"replayed": replay} if replay else {}
     if _fresh(cache, [db]):
-        return {"status": "ok", "session": sid, "data": _load_json(cache)}
+        return {"status": "ok", "session": sid, "data": _load_json(cache), **extra}
     if not env.aviary_python:
         return {"status": "aviary env not configured", "data": None}
     proc = subprocess.run([env.aviary_python, "-I", os.path.join(env.helpers, "aviary_trajectory.py"),
                            db, cache], capture_output=True, text=True, timeout=300)
     if proc.returncode != 0:
         return {"status": "trajectory extraction failed: " + proc.stderr.strip()[-300:], "data": None}
-    return {"status": "ok", "session": sid, "data": _load_json(cache)}
+    return {"status": "ok", "session": sid, "data": _load_json(cache), **extra}
 
 
 def su2_image(snapshot_dir: str | None, kb: list[dict], out_png: str, title: str) -> dict:
@@ -497,14 +502,19 @@ def su2_image(snapshot_dir: str | None, kb: list[dict], out_png: str, title: str
     coeffs = (solves[-1].get("outputs") or {}).get("final_coefficients") or {}
     inputs = [os.path.join(folder, "surface_flow.csv"), os.path.join(folder, "config.cfg")]
     meta_path = out_png + ".json"
-    if _fresh(out_png, inputs) and _fresh(meta_path, inputs) and (_load_json(meta_path) or {}).get("solve") \
-            == os.path.basename(folder):
-        info = _load_json(meta_path)["info"]
+    meta = _load_json(meta_path) or {}
+    if _fresh(out_png, inputs) and _fresh(meta_path, inputs) and meta.get("solve") == os.path.basename(folder) \
+            and meta.get("v") == images.IMAGE_VERSION:
+        info = meta["info"]
     else:
         info = images.render_su2(inputs[0], inputs[1], out_png, title)
         with open(meta_path, "w") as f:
-            json.dump({"solve": os.path.basename(folder), "info": info}, f)
-    return {"status": "ok", "file": os.path.basename(out_png), "solve": os.path.basename(folder),
+            json.dump({"solve": os.path.basename(folder), "info": info, "v": images.IMAGE_VERSION}, f)
+    replay = _load_json(os.path.join(folder, "replay.json"))
+    extra = {"replayed": {k: replay.get(k) for k in ("geometry_source", "original", "replay", "replayed_utc")}} \
+        if replay else {}
+    return {"status": "ok", "file": os.path.basename(out_png), "v": images.IMAGE_VERSION, **extra,
+            "solve": os.path.basename(folder),
             "solves_in_link": len(solves), "CL": coeffs.get("CL"), "CD": coeffs.get("CD"), **info}
 
 
@@ -512,8 +522,9 @@ def aircraft_image(cpacs: str | None, out_png: str, title: str, env: ImageEnv) -
     if not cpacs or not os.path.exists(cpacs):
         return {"status": "no CPACS file for this geometry", "file": None}
     meta_path = out_png + ".json"
-    if _fresh(out_png, [cpacs]) and (_load_json(meta_path) or {}).get("cpacs") == cpacs:
-        return {"status": "ok", "file": os.path.basename(out_png), **_load_json(meta_path)["info"]}
+    meta = _load_json(meta_path) or {}
+    if _fresh(out_png, [cpacs]) and meta.get("cpacs") == cpacs and meta.get("v") == images.IMAGE_VERSION:
+        return {"status": "ok", "file": os.path.basename(out_png), "v": images.IMAGE_VERSION, **meta["info"]}
     if not env.tigl_python:
         return {"status": "tigl env not configured", "file": None}
     with tempfile.NamedTemporaryFile(suffix=".stl") as tmp:
@@ -523,8 +534,8 @@ def aircraft_image(cpacs: str | None, out_png: str, title: str, env: ImageEnv) -
             return {"status": "TiGL export failed: " + proc.stderr.strip()[-300:], "file": None}
         info = images.render_aircraft(tmp.name, out_png, title)
     with open(meta_path, "w") as f:
-        json.dump({"cpacs": cpacs, "info": info}, f)
-    return {"status": "ok", "file": os.path.basename(out_png), **info}
+        json.dump({"cpacs": cpacs, "info": info, "v": images.IMAGE_VERSION}, f)
+    return {"status": "ok", "file": os.path.basename(out_png), "v": images.IMAGE_VERSION, **info}
 
 
 # ---------------------------------------------------------------------------- run
@@ -600,7 +611,7 @@ class RunBuilder:
             aircraft["note"] = "geometry not changed in this link; baseline CPACS"
             cpacs_used = base
         su2 = su2_image(snap, kb, os.path.join(self.bundle_dir, "img", f"{n}_su2.png"), f"Link {link_no} SU2 Cp")
-        traj = trajectory_for(snap, design, self.env, os.path.join(self.bundle_dir, "img", f"{n}_traj.json"))
+        traj = trajectory_for(snap, design, self.env, os.path.join(self.bundle_dir, "img", f"{n}_traj.json"), kb)
 
         # N = state at the link's start = the previous link's end where we have it.
         if prev and prev.get("_design") is not None:

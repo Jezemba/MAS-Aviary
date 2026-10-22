@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LinkChart, Spark, TrajectoryChart } from "./charts";
+import { ShotPair, type Shot } from "./media";
 import {
   agentStepsSoFar, claimTurns, commSoFar, cursorTime, feedbackStrip, firstSuccess, fmt, graphModel, paramDiff, pipelineStrip,
-  signalsSoFar, type GraphModel,
+  signalsSoFar, trend, type GraphModel,
 } from "./playback";
-import type { Link, MetricDef, Run, Step } from "./types";
+import type { Link, MetricDef, Run, Step, TrajPhase } from "./types";
 
 const pretty = (a: string | null | undefined) => (a ?? "—").replace(/_/g, " ");
 
@@ -23,8 +24,9 @@ export function CurrentAgent({ run, link, cursor }: { run: Run; link: Link; curs
   return (
     <section className="panel agent">
       <div className="agent-head">
+        <span className="eyebrow">Current agent</span>
         <h2>{pretty(step.agent)}</h2>
-        <span className="muted">step {step.agent_step ?? "?"} of this agent · link step {cursor + 1}/{link.steps.length}</span>
+        <span className="hint">step {step.agent_step ?? "?"} of this agent · link step {cursor + 1} of {link.steps.length}</span>
       </div>
       <label className="field">
         <span>Tools called</span>
@@ -69,19 +71,45 @@ export function CurrentAgent({ run, link, cursor }: { run: Run; link: Link; curs
 
 // ---------------------------------------------------------------- images
 
-function Img({ run, link, kind, label }: { run: Run; link: Link | null; kind: "aircraft" | "su2"; label: string }) {
-  if (!link) return <figure className="img-cell"><figcaption>{label}</figcaption><div className="img-missing">no link</div></figure>;
+function shot(run: Run, link: Link | null, kind: "aircraft" | "su2", title: string, hiddenWhy?: string): Shot {
+  if (!link) return { key: title, title, src: null, missing: "link 1 has no previous link" };
   const info = link.images[kind];
+  const rep = info.replayed as { replay?: { CL?: number; CD?: number } } | undefined;
+  const subtitle =
+    kind === "su2" && rep ? (
+      <>
+        CL {fmt(info.CL as number)} · CD {fmt(info.CD as number)}
+        <span className="tag" title="SU2 files were not saved during the run; this surface is from an offline re-solve of the same recorded mesh and config inputs">
+          re-solved: CL {fmt(rep.replay?.CL ?? null)} · CD {fmt(rep.replay?.CD ?? null)}
+        </span>
+      </>
+    ) : kind === "su2" && info.CL != null ? `CL ${fmt(info.CL as number)} · CD ${fmt(info.CD as number)}`
+      : kind === "aircraft" && info.changed_this_link === false ? "geometry unchanged" : undefined;
+  if (hiddenWhy) return { key: title, title, subtitle, src: null, missing: hiddenWhy };
+  return {
+    key: title, title, subtitle,
+    src: info.file ? `/api/runs/${run.run_id}/img/${info.file}?v=${info.v ?? 1}` : null,
+    missing: info.status,
+  };
+}
+
+function Stat({ label, before, now, unit }: { label: string; before: number | null; now: number | null; unit?: string }) {
+  const t = trend(before, now);
   return (
-    <figure className="img-cell">
-      <figcaption>
-        {label}
-        {kind === "su2" && info.CL != null && <span className="muted"> · CL {fmt(info.CL as number)} CD {fmt(info.CD as number)}</span>}
-        {kind === "aircraft" && info.changed_this_link === false && <span className="muted"> · unchanged</span>}
-      </figcaption>
-      {info.file ? <img src={`/api/runs/${run.run_id}/img/${info.file}`} alt={`${kind} link ${link.link}`} /> : <div className="img-missing">{info.status}</div>}
-    </figure>
+    <div className="stat">
+      <span className="stat-label">{label}</span>
+      <span className="stat-val">
+        <span className="muted">{fmt(before)}</span> → <b className={`trend-${t}`}>{fmt(now)}</b>
+        {unit && <span className="muted"> {unit}</span>}
+      </span>
+    </div>
   );
+}
+
+function trajEnd(phases: TrajPhase[] | undefined, key: keyof TrajPhase, mode: "last" | "max"): number | null {
+  const vals = (phases ?? []).flatMap((p) => (p[key] as number[] | undefined) ?? []);
+  if (!vals.length) return null;
+  return mode === "max" ? Math.max(...vals) : vals[vals.length - 1];
 }
 
 // A link that did not fly leaves its failed attempt in aviary's recorder: not a mission, not plotted.
@@ -97,31 +125,39 @@ export function Images({ run, link, prev, cursor }: { run: Run; link: Link; prev
   const su2Shown = link.complete || (su2At !== null && t >= su2At);
   const simShown = link.complete || (simAt !== null && t >= simAt);
   const [y, setY] = useState("altitude");
-  const pending = (what: string) => <div className="img-missing">{what} not run yet at this step</div>;
+  const nPrev = prev ? `Link ${prev.link} · N-1` : "N-1";
+  const nNow = `Link ${link.link} · N`;
+  const su2Hidden = !su2Shown && link.images.su2.file ? "SU2 not run yet at this step" : undefined;
+  const now = simShown ? flownPhases(link) : undefined;
+  const before = flownPhases(prev);
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
   return (
     <>
       <section className="panel images">
-        <h2>Aircraft (TiGL) <span className="muted">N vs N-1</span></h2>
-        <div className="pair">
-          <Img run={run} link={prev} kind="aircraft" label={prev ? `Link ${prev.link} (N-1)` : "N-1"} />
-          <Img run={run} link={link} kind="aircraft" label={`Link ${link.link} (N, end)`} />
-        </div>
-        <h2>Simulation (SU2 surface Cp) <span className="muted">N vs N-1</span></h2>
-        <div className="pair">
-          <Img run={run} link={prev} kind="su2" label={prev ? `Link ${prev.link} (N-1)` : "N-1"} />
-          {su2Shown ? <Img run={run} link={link} kind="su2" label={`Link ${link.link} (N)`} /> : <figure className="img-cell"><figcaption>Link {link.link} (N)</figcaption>{link.images.su2.file ? pending("SU2") : <div className="img-missing">{link.images.su2.status}</div>}</figure>}
-        </div>
+        <div className="panel-head"><h2>Aircraft</h2><span className="hint">TiGL · N-1 vs N · click to enlarge</span></div>
+        <ShotPair group="Aircraft (TiGL)" shots={[shot(run, prev, "aircraft", nPrev), shot(run, link, "aircraft", `${nNow} (end)`)]} />
+        <div className="panel-head"><h2>Simulation</h2><span className="hint">SU2 surface Cp · N-1 vs N</span></div>
+        <ShotPair group="SU2 surface pressure coefficient" shots={[shot(run, prev, "su2", nPrev), shot(run, link, "su2", nNow, su2Hidden)]} />
       </section>
       <section className="panel traj-panel">
-        <h2>Mission flown <span className="muted">N (solid) vs N-1 (dashed)</span></h2>
-        <select value={y} onChange={(e) => setY(e.target.value)}>
-          <option value="altitude">altitude</option><option value="mach">Mach</option><option value="mass">mass</option><option value="throttle">throttle</option>
-        </select>
-        <TrajectoryChart now={simShown ? flownPhases(link) : undefined} prev={flownPhases(prev)} yName={y} />
-        <div className="muted small">
-          N: {simShown ? trajStatus(link) : "mission not flown yet at this step"} · N-1: {trajStatus(prev)}
+        <div className="panel-head">
+          <h2>Mission flown</h2>
+          <select value={y} onChange={(e) => setY(e.target.value)} aria-label="trajectory quantity">
+            <option value="altitude">Altitude</option><option value="mach">Mach</option><option value="mass">Mass</option><option value="throttle">Throttle</option>
+          </select>
         </div>
-        <div className="muted small">From aviary's recorder (last simulation of the session). Fuel at N: {fmt(link.summary.fuel_burned_kg as number, "kg")}{link.summary.flown === false ? " (did not fly)" : ""}</div>
+        <div className="legend"><span className="lg-now" /> N (link {link.link}) <span className="lg-prev" /> N-1{prev ? ` (link ${prev.link})` : ""}</div>
+        <TrajectoryChart now={now} prev={before} yName={y} />
+        <div className="stats">
+          <Stat label="Fuel burned" before={num(prev?.summary.fuel_burned_kg)} now={simShown ? num(link.summary.fuel_burned_kg) : null} unit="kg" />
+          <Stat label="GTOW" before={num(prev?.summary.gtow_kg)} now={simShown ? num(link.summary.gtow_kg) : null} unit="kg" />
+          <Stat label="Flight time" before={trajEnd(before, "time_s", "last") && trajEnd(before, "time_s", "last")! / 3600} now={trajEnd(now, "time_s", "last") && trajEnd(now, "time_s", "last")! / 3600} unit="h" />
+          <Stat label="Max altitude" before={trajEnd(before, "altitude_ft", "max")} now={trajEnd(now, "altitude_ft", "max")} unit="ft" />
+        </div>
+        <p className="foot">
+          N: {simShown ? trajStatus(link) : "mission not flown yet at this step"} · N-1: {trajStatus(prev)}.
+          From aviary's recorder (the session's last simulation).
+        </p>
       </section>
     </>
   );
@@ -162,25 +198,36 @@ export function Metrics({ run, link, cursor }: { run: Run; link: Link; cursor: n
   const m = link.step_metrics[cursor] ?? {};
   return (
     <section className="panel metrics">
-      <h2>Metrics <span className="muted">links N-1, N, N+1 shaded</span></h2>
-      <h3>Physics</h3>
-      <MetricBlock run={run} defs={run.metric_defs.physics} current={cur} link={link} cursor={cursor}
-        pick={(r, k) => (r[k] as number | null) ?? null} stepKey={(k) => k === "fuel_burned_kg" && stepKeys.has(k)} />
-      <h3>Coordination ({run.label})</h3>
-      {run.metric_defs.step.length > 0 && (
-        <div className="step-metrics">
-          {run.metric_defs.step.map((d) => (
-            <div key={d.key} className="kv"><span>{d.label}</span><b>{fmt(m[d.key] as number)}</b></div>
-          ))}
-          <div className="muted small">running values at this step, from the step log</div>
-        </div>
-      )}
-      <MetricBlock run={run} defs={run.metric_defs.coordination} current={cur} link={link} cursor={cursor}
-        pick={(r, k) => r.coordination?.[k] ?? null} />
-      <div className="muted small">per link, from result.json org_theory_metrics</div>
-      <h3>General</h3>
-      <MetricBlock run={run} defs={run.metric_defs.general} current={cur} link={link} cursor={cursor}
-        pick={(r, k) => (r[k] as number | null) ?? null} stepKey={(k) => stepKeys.has(k)} />
+      <div className="panel-head">
+        <h2>Metrics</h2>
+        <span className="hint">N-1 → <b>N = link {cur}</b> → N+1 · window shaded</span>
+      </div>
+      <div className="metrics-scroll">
+        <details open className="mgroup">
+          <summary>Physics</summary>
+          <MetricBlock run={run} defs={run.metric_defs.physics} current={cur} link={link} cursor={cursor}
+            pick={(r, k) => (r[k] as number | null) ?? null} stepKey={(k) => k === "fuel_burned_kg" && stepKeys.has(k)} />
+        </details>
+        <details open className="mgroup">
+          <summary>Coordination · {run.label}</summary>
+          {run.metric_defs.step.length > 0 && (
+            <div className="step-metrics">
+              <div className="step-metrics-title">At this step</div>
+              {run.metric_defs.step.map((d) => (
+                <div key={d.key} className="kv"><span>{d.label}</span><b>{fmt(m[d.key] as number)}</b></div>
+              ))}
+            </div>
+          )}
+          <MetricBlock run={run} defs={run.metric_defs.coordination} current={cur} link={link} cursor={cursor}
+            pick={(r, k) => r.coordination?.[k] ?? null} />
+          <p className="foot">Per link from result.json org_theory_metrics; "at this step" recomputed from the step log.</p>
+        </details>
+        <details open className="mgroup">
+          <summary>General</summary>
+          <MetricBlock run={run} defs={run.metric_defs.general} current={cur} link={link} cursor={cursor}
+            pick={(r, k) => (r[k] as number | null) ?? null} stepKey={(k) => stepKeys.has(k)} />
+        </details>
+      </div>
     </section>
   );
 }
@@ -189,20 +236,41 @@ export function Metrics({ run, link, cursor }: { run: Run; link: Link; cursor: n
 
 const GROUP_TITLES: Record<string, string> = { geometry: "Geometry", mission: "Mission", aero: "Aero", engine: "Engine" };
 
+const ARROW: Record<string, string> = { up: "▲", down: "▼", same: "", unknown: "" };
+
+function pct(before: number | null, after: number | null): string {
+  if (before === null || after === null || before === 0 || after === before) return "";
+  const p = ((after - before) / Math.abs(before)) * 100;
+  return `${p > 0 ? "+" : ""}${Math.abs(p) >= 10 ? p.toFixed(0) : p.toFixed(1)}%`;
+}
+
 export function Params({ link, side }: { link: Link; side: "N" | "N+1" }) {
   const diff = paramDiff(link.params_start, link.params_end);
+  const changed = Object.values(diff).flat().filter((p) => p.trend === "up" || p.trend === "down").length;
   return (
-    <section className="panel params">
-      <h2>Parameters at {side === "N" ? `start of link ${link.link} (N)` : `end of link ${link.link} (N+1)`}</h2>
-      {side === "N+1" && !link.params_end && <p className="muted">Link not finished; no end state yet.</p>}
+    <section className={`panel params side-${side === "N" ? "n" : "n1"}`}>
+      <div className="panel-head">
+        <h2>Parameters · {side}</h2>
+        <span className="hint">
+          {side === "N" ? `start of link ${link.link}` : link.params_end ? `end of link ${link.link} · ${changed} changed` : "link not finished"}
+        </span>
+      </div>
       <div className="param-grid">
         {Object.entries(diff).map(([g, rows]) => (
           <div className="param-card" key={g}>
             <h4>{GROUP_TITLES[g]}</h4>
             {rows.map((p) => (
-              <div className="kv" key={p.key}>
-                <span>{p.label}</span>
-                {side === "N" ? <b>{fmt(p.before, p.unit)}</b> : <b className={`trend-${p.trend}`}>{fmt(p.value, p.unit)}</b>}
+              <div className="prow" key={p.key}>
+                <span className="plabel">{p.label}</span>
+                {side === "N" ? (
+                  <b className={p.before === null ? "trend-unknown" : ""}>{fmt(p.before, p.unit)}</b>
+                ) : (
+                  <span className={`pval trend-${p.trend}`}>
+                    {ARROW[p.trend] && <span className="arrow" aria-label={p.trend === "up" ? "increased" : "decreased"}>{ARROW[p.trend]}</span>}
+                    <b>{fmt(p.value, p.unit)}</b>
+                    {pct(p.before, p.value) && <span className="pct">{pct(p.before, p.value)}</span>}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -291,8 +359,8 @@ export function Communication({ run, link, cursor }: { run: Run; link: Link; cur
 
 function GraphView({ g, target }: { g: GraphModel; target: string | null }) {
   const w = Math.max(640, g.nodes.length * 150);
-  const h = 190;
-  const mid = 95;
+  const h = 170;
+  const mid = 85;
   const x = (n: string) => 70 + g.nodes.indexOf(n) * ((w - 140) / Math.max(g.nodes.length - 1, 1));
   return (
     <svg className="graph" viewBox={`0 0 ${w} ${h}`} style={{ minWidth: w }}>

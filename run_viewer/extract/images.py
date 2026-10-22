@@ -22,6 +22,15 @@ R_AIR = 287.058
 TOP_XLIM, TOP_YLIM = (-2.0, 48.0), (-26.0, 26.0)
 FRONT_YLIM, FRONT_ZLIM = (-26.0, 26.0), (-5.0, 10.0)
 CP_RANGE = (-1.2, 1.0)
+# Bump when the look of the images changes, so cached PNGs are re-rendered.
+IMAGE_VERSION = 2
+
+
+def _save(fig, png_path: str) -> None:
+    """Tight crop, high enough resolution for the enlarged view in the viewer."""
+    fig.tight_layout()
+    fig.savefig(png_path, dpi=170, bbox_inches="tight", pad_inches=0.04, facecolor="white")
+    plt.close(fig)
 
 
 def read_stl(path: str) -> np.ndarray:
@@ -59,9 +68,7 @@ def render_aircraft(stl_path: str, png_path: str, title: str = "") -> dict:
     ax_front.set_ylabel("z [m]", fontsize=7)
     for ax in (ax_top, ax_front):
         ax.tick_params(labelsize=6)
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=130)
-    plt.close(fig)
+    _save(fig, png_path)
     lo, hi = tris.reshape(-1, 3).min(0), tris.reshape(-1, 3).max(0)
     return {"length_m": float(hi[0] - lo[0]), "span_m": float(hi[1] - lo[1]),
             "height_m": float(hi[2] - lo[2]), "triangles": int(len(tris))}
@@ -116,8 +123,6 @@ def render_su2(csv_path: str, config_path: str, png_path: str, title: str = "") 
     cb = fig.colorbar(sc, ax=ax, shrink=0.8)
     cb.set_label("Cp", fontsize=7)
     cb.ax.tick_params(labelsize=6)
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=130)
-    plt.close(fig)
+    _save(fig, png_path)
     return {"points": int(len(cp)), "cp_min": float(cp.min()), "cp_max": float(cp.max()),
             "half_model": half}

@@ -45,6 +45,14 @@ def check_controls(page, base: str, run: dict) -> list[str]:
     page.wait_for_timeout(800)
     if page.locator(".controls select >> nth=0").input_value() != "2":
         bad.append("previous link did not go back to link 2")
+    if page.locator(".shot-btn").count():
+        page.locator(".shot-btn").first.click()
+        if page.locator(".lightbox").count() != 1:
+            bad.append("clicking an image did not open the lightbox")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+        if page.locator(".lightbox").count() != 0:
+            bad.append("Esc did not close the lightbox")
     print("controls:", "ok" if not bad else bad, flush=True)
     return [f"controls: {b}" for b in bad]
 
