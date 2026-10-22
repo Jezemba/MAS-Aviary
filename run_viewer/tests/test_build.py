@@ -155,7 +155,7 @@ def test_build_run_end_to_end(run_dir, tmp_path):
     assert [lk["fuel_burned_kg"] for lk in run["links"]] == [20000.0, None]
     link1 = json.load(open(out / "links" / "001.json"))
     assert link1["step_metrics"][-1]["mcp_refusals"] == 1
-    assert link1["params_start"]["geometry"][0]["value"] == 120.0  # chain anchor
+    assert link1["params_start"]["geometry"][0]["value"] == 120.0  # chain anchor (no initial_params)
     assert link1["images"]["trajectory"]["status"] == "aviary recorder not saved for this session"
     assert link1["images"]["su2"]["status"] == "no successful SU2 solve in this link"
     link2 = json.load(open(out / "links" / "002.json"))
@@ -167,6 +167,12 @@ def test_build_run_end_to_end(run_dir, tmp_path):
     mtime = os.path.getmtime(out / "links" / "002.json")
     build.RunBuilder(str(root), combo, str(out), None, env, "test__N_GR").build()
     assert os.path.getmtime(out / "links" / "002.json") == mtime
+
+
+def test_link1_start_prefers_exact_initial_params_over_rounded_anchor():
+    result = {"initial_params": {"Aircraft.Wing.AREA": 122.8287}}
+    start = build.param_state(None, result, end=False, anchor={"anchor_params": {"Aircraft.Wing.AREA": 122.78}})
+    assert start["geometry"][0]["value"] == 122.8287
 
 
 def test_live_link_without_result_is_running(run_dir, tmp_path):

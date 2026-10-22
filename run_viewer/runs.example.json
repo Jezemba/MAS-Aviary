@@ -1,0 +1,24 @@
+{
+  "aviary_python": "/home/aipexws8/Jessica/avion_envs/aviary/bin/python",
+  "tigl_python": "/home/aipexws8/Jessica/avion_envs/tigl-env/bin/python",
+  "fixtures_dir": "/home/aipexws8/Jessica/Avion/mass-mcp/tests/fixtures",
+  "runs": [
+    {
+      "run_id": "v2full__S_SP",
+      "label": "5-combination study (aipexws8)",
+      "note": "Earlier pin; not yet checked for B187 / B214.",
+      "run_dir": "/home/aipexws8/Jessica/Avion/MAS-Aviary/logs/stat_results/v2full_qwen_nothink_aipexws8",
+      "combination": "mdo_f25_sequential_staged_pipeline",
+      "snapshot": "/home/aipexws8/Jessica/run_viewer_work/snapshots/v2full_qwen_nothink_aipexws8"
+    },
+    {
+      "run_id": "v4net__N_GR",
+      "label": "Networked graph-routed, 20 links (running)",
+      "live": true,
+      "run_dir": "/home/aipexws8/Jessica/Avion/MAS-Aviary/logs/stat_results/v4net_graph_qwen_nothink_aipexws8",
+      "combination": "mdo_f25_networked_graph_routed",
+      "snapshot": "/home/aipexws8/Jessica/run_viewer_work/snapshots/v4net_graph_qwen_nothink_aipexws8",
+      "aviary_dir": "/home/aipexws8/Jessica/Avion/aviary-mcp"
+    }
+  ]
+}

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 from run_viewer.extract import images
 
-BUNDLE_VERSION = 1
+BUNDLE_VERSION = 2
 LLM_TEXT_MAX = 8000
 ARG_TEXT_MAX = 2000
 OBS_TEXT_MAX = 4000
@@ -288,9 +288,11 @@ def network_route_events(design: dict | None) -> list[dict]:
 def _aviary_params(design: dict | None, result: dict | None, end: bool) -> dict:
     """Aviary parameter values: what was applied to the mission, else the chain record."""
     vals = dict((design or {}).get("mission_applied") or {})
-    chain = (result or {}).get("chain_end_params" if end else "chain_start_params") or {}
-    for k, v in chain.items():
-        vals.setdefault(k, v)
+    # initial_params: the exact values the link started from (the chain anchor is rounded)
+    keys = ("chain_end_params",) if end else ("chain_start_params", "initial_params")
+    for key in keys:
+        for k, v in ((result or {}).get(key) or {}).items():
+            vals.setdefault(k, v)
     return vals
 
 
