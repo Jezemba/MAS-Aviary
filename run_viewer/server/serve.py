@@ -81,11 +81,17 @@ class Catalog:
         return out
 
 
-def live_loop(catalog: Catalog, interval: float) -> None:
+def live_loop(catalog: Catalog, interval: float, all_interval: float) -> None:
+    """Rebuild live runs every `interval` s, and every run every `all_interval` s (incremental:
+    picks up files added later, e.g. by replay.py)."""
+    last_all = time.time()
     while True:
+        everything = all_interval > 0 and time.time() - last_all >= all_interval
         for run_id, r in catalog.runs.items():
-            if r.get("live"):
+            if r.get("live") or everything:
                 catalog.build(run_id)
+        if everything:
+            last_all = time.time()
         time.sleep(interval)
 
 
@@ -148,14 +154,15 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=5173)
     ap.add_argument("--build", action="store_true", help="(re)build every run before serving")
     ap.add_argument("--live-interval", type=float, default=15.0)
+    ap.add_argument("--all-interval", type=float, default=600.0, help="rebuild every run this often (0 = never)")
     args = ap.parse_args()
     catalog = Catalog(args.catalog, args.bundles)
     if args.build:
         for run_id in catalog.runs:
             print(f"[build] {run_id}", flush=True)
             catalog.build(run_id)
-    if any(r.get("live") for r in catalog.runs.values()):
-        threading.Thread(target=live_loop, args=(catalog, args.live_interval), daemon=True).start()
+    if args.all_interval > 0 or any(r.get("live") for r in catalog.runs.values()):
+        threading.Thread(target=live_loop, args=(catalog, args.live_interval, args.all_interval), daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(catalog))
     print(f"run viewer on http://127.0.0.1:{args.port}", flush=True)
     server.serve_forever()
