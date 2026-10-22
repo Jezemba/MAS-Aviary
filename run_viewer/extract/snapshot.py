@@ -24,6 +24,9 @@ SURFACE_FILES = ("surface_flow.vtu", "surface_flow.csv")
 
 
 def has_surface(folder: str) -> bool:
+    """A usable SU2 surface: a surface file, and no invalid.json marker (a replay found to be wrong)."""
+    if os.path.isfile(os.path.join(folder, "invalid.json")):
+        return False
     return any(os.path.isfile(os.path.join(folder, f)) for f in SURFACE_FILES)
 
 

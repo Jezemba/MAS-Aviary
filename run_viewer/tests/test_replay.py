@@ -74,6 +74,26 @@ def test_skip_when_the_geometry_of_the_moment_was_not_saved(tmp_path):
     assert plan["skip"] == "the geometry at the time of the mesh was not saved"
 
 
+def test_scratch_mesh_for_other_inputs_is_never_reused(tmp_path):
+    """2026-10-22 bug: links sharing a solve seq shared a scratch folder and reused one mesh."""
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "mesh.su2").write_text("NDIME= 3")
+    (scratch / "mesh_meta.json").write_text(json.dumps({"geometry": "/other.xml", "mesh_params": {}}))
+    plan = {"geometry": "/this.xml", "mesh_params": {"mesh_size_min": 0.33}}
+    out = replay.replay_su2(plan, str(tmp_path / "out"), str(scratch), {}, 8, print)
+    assert out["status"].startswith("scratch holds a mesh for other inputs")
+    assert (scratch / "mesh.su2").read_text() == "NDIME= 3"  # left as it was
+
+
+def test_invalid_marker_hides_a_surface(tmp_path):
+    from run_viewer.extract.snapshot import has_surface
+    (tmp_path / "surface_flow.vtu").write_text("x")
+    assert has_surface(str(tmp_path))
+    (tmp_path / "invalid.json").write_text("{}")
+    assert not has_surface(str(tmp_path))
+
+
 def test_aviary_plan_needs_recorded_inputs(tmp_path):
     rows = [{"seq": 1, "tool": "run_simulation", "status": "success", "outputs": {"summary": {"fuel_burned_kg": 9.0}}}]
     (tmp_path / "a").mkdir()

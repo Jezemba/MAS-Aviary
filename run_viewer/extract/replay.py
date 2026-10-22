@@ -138,18 +138,25 @@ def _nice(cmd: list[str]) -> list[str]:
     return ["nice", "-n", "19"] + cmd
 
 
-def replay_su2(plan: dict, out_dir: str, work: str, cfg: dict, ranks: int, log) -> dict:
-    tag = os.path.basename(out_dir.rstrip("/"))
-    scratch = os.path.join(work, "replay", "scratch", tag)
+def replay_su2(plan: dict, out_dir: str, scratch: str, cfg: dict, ranks: int, log) -> dict:
+    """scratch must be unique per link (2026-10-22: a scratch named by solve seq alone was shared
+    between links, and later links silently reused the first link's mesh)."""
     os.makedirs(scratch, exist_ok=True)
     mesh = os.path.join(scratch, "mesh.su2")
+    mesh_meta_path = os.path.join(scratch, "mesh_meta.json")
+    mesh_key = {"geometry": plan["geometry"], "mesh_params": plan["mesh_params"]}
     t0 = time.time()
-    if not os.path.exists(mesh):
+    if not (os.path.exists(mesh) and _load_json(mesh_meta_path) == mesh_key):
+        if os.path.exists(mesh):
+            return {"status": "scratch holds a mesh for other inputs; refusing to reuse or overwrite it",
+                    "scratch": scratch}
         proc = subprocess.run(_nice([cfg["tigl_python"], "-I", os.path.join(cfg["helpers"], "replay_mesh.py"),
                                      plan["geometry"], json.dumps(plan["mesh_params"]), mesh]),
                               capture_output=True, text=True, timeout=7200)
         if proc.returncode != 0:
             return {"status": "mesh failed", "error": proc.stderr[-1500:]}
+        with open(mesh_meta_path, "w") as f:
+            json.dump(mesh_key, f)
     t_mesh = time.time() - t0
     plan_path = os.path.join(scratch, "plan.json")
     with open(plan_path, "w") as f:
@@ -255,8 +262,10 @@ def main() -> None:
                         log(f"{name} su2 SKIP: {plan['skip']}")
                 else:
                     log(f"{name} su2 replay seq {plan['solve_seq']} ({plan['geometry_source']})")
+                    tag = f"{plan['solve_seq']:04d}_replay_v2"
                     out = {"status": "planned"} if args.dry_run else replay_su2(
-                        plan, os.path.join(snap, "su2", f"{plan['solve_seq']:04d}_replayed"), args.work, cfg, args.ranks, log)
+                        plan, os.path.join(snap, "su2", tag),
+                        os.path.join(args.work, "replay", "scratch_v2", r["run_id"], repeat, tag), cfg, args.ranks, log)
                     report.append({"link": name, "kind": "su2", **out})
                     log(f"{name} su2 -> {out['status']}")
             sid = ((_load_json(os.path.join(link_dir, "design.json")) or {}).get("sessions") or {}).get("aviary")
