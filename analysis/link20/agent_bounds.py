@@ -1,7 +1,8 @@
 """Min/max of every agent-settable variable over every value the agents produced in the 20-link study.
 
 Writes out/agent_bounds.json, the optimizer baselines' search boxes (MAS-Aviary feat/optimizer-baselines-constrained,
-scripts/optimizer_baselines/agent_bounds.json). Run on aipexws8 from ~/Jessica/avion_analysis: python -m ... or as a script.
+scripts/optimizer_baselines/agent_bounds.json). Run on aipexws8 from ~/Jessica/avion_analysis, where code/ holds
+this package: ~/Jessica/Avion/.venv/bin/python code/analysis/link20/agent_bounds.py
 """
 import json, sys
 sys.path.insert(0, "code")
