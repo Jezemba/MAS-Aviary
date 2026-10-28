@@ -71,8 +71,10 @@ B187, no B214.
 - Kept every link (Jessica, 2026-10-22): contamination is part of what is measured; reports flag it and give
   sensitivity checks where it matters (01: excluding contaminated links moves the pooled mean fuel from 27,232.9 kg,
   n = 140, to 27,299.7 kg, n = 119).
-- Not in the set: a fixed-code re-run of networked iterative feedback (`v4net_iter_qwen_nothink_aipexws8`) is running
-  on ws8 (11 of 20 links on 2026-10-28). N_IF here is the complete v3combos run.
+- N_IF = the finished v3combos run (Jessica, 2026-10-28: use it; it may be swapped later for the fixed-code re-run
+  `v4net_iter_qwen_nothink_aipexws8`, running on ws8, 11 of 20 links on 2026-10-28). To swap: point the
+  `mdo_f25_networked_iterative_feedback` entry of `SOURCES` in `extract.py` at that folder, then re-run `extract`,
+  the plots and the report scripts.
 
 ## Caveats that apply to every report
 
