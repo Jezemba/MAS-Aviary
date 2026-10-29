@@ -1,0 +1,9 @@
+pairs,group,metric,n,mean,median,improved
+all pairs (both flew),followed,fuel,51,-380.5,-948.6,27
+all pairs (both flew),followed,GTOW,51,-785.2,-134.3,26
+all pairs (both flew),not followed,fuel,31,164.8,10.7,8
+all pairs (both flew),not followed,GTOW,31,307.4,0.0,11
+converged-only pairs,followed,fuel,5,-7510.0,-9821.4,4
+converged-only pairs,followed,GTOW,5,-10710.0,-13127.2,4
+converged-only pairs,not followed,fuel,6,-94.9,5.4,2
+converged-only pairs,not followed,GTOW,6,-140.0,7.8,2

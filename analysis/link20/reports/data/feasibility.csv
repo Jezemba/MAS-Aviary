@@ -1,0 +1,5 @@
+actionable,feasibility,followed,opposite,unchanged
+False,no agent range (not actionable),6,5,16
+True,inside,29,1,4
+True,no target (direction only),22,1,7
+True,outside,0,1,0

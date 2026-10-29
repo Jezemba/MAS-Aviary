@@ -17,6 +17,7 @@ Every number in these reports was printed by those scripts; their tables (CSV) a
 | [05_recommendations.md](05_recommendations.md) | integrator verdicts, recommendations, carry-over, follow-through |
 | [06_tools_reliability.md](06_tools_reliability.md) | MCP calls by server / tool, refusals and failures, where the chain breaks, run reliability, B187 |
 | [07_methods_answers.md](07_methods_answers.md) | Methods questionnaire for the paper: roles, coupling, mass-mcp, prompts, handlers, model settings, hardware, carry-over, baseline, recommendation scoring |
+| [08_iterations_and_ladder.md](08_iterations_and_ladder.md) | per-iteration table (CSV + LaTeX rows) for all 8 combinations; recommendation ladder (actionable, feasible, effective) |
 
 Abbreviations: S / O / N = sequential / orchestrated / networked; SP / IF / GR = staged pipeline / iterative
 feedback / graph-routed. There is no networked staged pipeline.
