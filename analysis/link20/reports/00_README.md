@@ -16,6 +16,7 @@ Every number in these reports was printed by those scripts; their tables (CSV) a
 | [04_coordination_org.md](04_coordination_org.md) | structure / handler behaviour, orchestrator and board activity, org-theory metrics |
 | [05_recommendations.md](05_recommendations.md) | integrator verdicts, recommendations, carry-over, follow-through |
 | [06_tools_reliability.md](06_tools_reliability.md) | MCP calls by server / tool, refusals and failures, where the chain breaks, run reliability, B187 |
+| [07_methods_answers.md](07_methods_answers.md) | Methods questionnaire for the paper: roles, coupling, mass-mcp, prompts, handlers, model settings, hardware, carry-over, baseline, recommendation scoring |
 
 Abbreviations: S / O / N = sequential / orchestrated / networked; SP / IF / GR = staged pipeline / iterative
 feedback / graph-routed. There is no networked staged pipeline.
