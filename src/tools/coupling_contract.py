@@ -52,11 +52,11 @@ STALE COUNTS AS MISSING. A result produced for an earlier geometry is not this d
 result, so each capture records the design it was produced for (the B81 geometry epoch) and
 a later morph makes it stale.
 
-PROPULSION IS RECORDED, NEVER CLAIMED AS COUPLED (B3). There is no aviary parameter that
-carries SFC into fuel burn -- the bench aircraft burns a tabulated engine deck and the FLOPS
-scalers do not land (measured, deltafuel = 0.0000 kg). So the cycle is required as a RUN and
-recorded with ``propulsion_coupled: False``. The real fix is a pyCycle-backed ``EngineModel``
-builder (NASA's own TTBW model does this, and Aviary 0.9.10 has the API): separate work.
+PROPULSION (B3, 2026-10-31). There is no aviary parameter that carries SFC into fuel burn (the FLOPS
+scalers do not land, measured deltafuel = 0.0000 kg), so the designed cycle reaches the mission as its own
+engine deck: pycycle's off-design table of the converged cycle, flown by aviary in place of the bench
+table. run_simulation requires that deck on its session (ENGINE_DECK); propulsion_coupled is True only
+when the mission reports it flew it. AVION_ENGINE_DECK=0 restores the bench engine (regression runs).
 """
 from __future__ import annotations
 
@@ -110,9 +110,18 @@ CYCLE = CoupledInput(
     var="prop.sfc_cruise", parameter="",
     label="engine cycle run (pycycle TSFC / thrust)", producer="pycycle",
     produced_by="create_cycle_model -> set_inputs -> run_cycle",
-    note="Required as a RUN, not a value: aviary burns a tabulated engine deck, so the cycle "
-         "result is recorded for this design but does not feed fuel burn (B3).")
+    note="Required as a RUN: the converged cycle is what the framework turns into the mission's "
+         "engine deck (B3), so its thrust and fuel flow fly the mission.")
 
+ENGINE_DECK = CoupledInput(
+    var="prop.engine_deck", parameter="",
+    label="engine deck of the designed cycle (pycycle off-design table)", producer="pycycle",
+    produced_by="create_cycle_model -> set_inputs -> run_cycle on a cycle that converges; the framework then "
+                "makes the deck (pycycle generate_engine_deck) and puts it on the aviary session "
+                "(set_engine_deck) before run_simulation",
+    note="aviary flies this engine's thrust and fuel flow over the whole mission, so the cycle you design "
+         "(BPR, pressure ratios, T4) is what burns the fuel (B3). A new cycle takes tens of minutes the first "
+         "time; an unchanged cycle is reused.")
 # The whole rule, in one table: tool -> the coupled variables that call consumes.
 #
 # B85 (Jessica, 2026-09-16): set_aircraft_parameters was REMOVED from this table. It is not
@@ -123,7 +132,7 @@ CYCLE = CoupledInput(
 # max_steps having produced nothing. run_simulation is the call that actually burns aviary's
 # default drag polar, so that is where the requirement belongs.
 REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
-    "run_simulation": (AERO_CL, AERO_CD, WING_MASS, CYCLE),
+    "run_simulation": (AERO_CL, AERO_CD, WING_MASS, CYCLE, ENGINE_DECK),
     "run_cycle": (MTOM,),
 }
 
@@ -200,6 +209,15 @@ def status(required: CoupledInput, resolved: dict | None = None) -> str:
     # Passed by hand on this very call: the contract is about what reaches the solver.
     if required.parameter and resolved is not None and required.parameter in _values_of(resolved):
         return "ok"
+    if required is ENGINE_DECK:
+        # B3: the deck exists only for an engine sized on this design (CYCLE says so when it is not);
+        # AVION_ENGINE_DECK=0 is the explicit bench-engine switch for regression runs.
+        from src.tools.data_plane import engine_deck_current, engine_deck_enabled, engine_is_current
+
+        if not engine_deck_enabled() or not engine_is_current():
+            return "ok"
+        sid = (resolved or {}).get("session_id")
+        return "ok" if engine_deck_current(sid) else "deck_missing"
 
     if coupling.get_var(get_design_state(), required.var) is None:
         return "missing"
@@ -242,6 +260,13 @@ def _refusal(tool_name: str, problems: list[tuple[CoupledInput, str]]) -> dict:
         if state == "engine_stale":
             head = (f"{name} -- {required.label}: the engine result on record was not sized on this design's "
                     "current mass and drag. Run run_cycle again")
+        elif state == "deck_missing":
+            from src.tools.data_plane import get_design_state
+
+            why = ((get_design_state().data_store if get_design_state() is not None else {})
+                   .get("engine_deck_error") or "not produced")
+            head = (f"{name} -- {required.label}: the designed engine is not on this aviary session "
+                    f"({why})")
         elif state == "stale":
             head = (f"{name} -- {required.label}: the value on record was produced for an EARLIER "
                     "geometry. The design has changed since, so it is not this design's value")
@@ -355,8 +380,17 @@ def coupling_status() -> dict:
         "engine_sizing_status": status(MTOM),
     }
     out["propulsion_ran"] = out["propulsion_status"] == "ok"
-    # B3: aviary burns a tabulated engine deck, so a pycycle run is recorded, never coupled.
-    out["propulsion_coupled"] = False
+    # B3: coupled only when the mission itself reports flying the designed engine's deck (aviary-mcp's
+    # run_simulation `engine` block), not when the framework merely intended to attach it.
+    from src.tools.data_plane import engine_deck_enabled, get_design_state
+
+    store = get_design_state().data_store if get_design_state() is not None else {}
+    engine = store.get("mission_engine") or {}
+    out["engine_deck_status"] = status(ENGINE_DECK)
+    out["mission_engine"] = {k: engine.get(k) for k in ("deck", "deck_key", "designed_deck", "scale_factor",
+                                                        "scaled_sls_thrust_lbf", "engine_mass_kg")} if engine else None
+    out["propulsion_coupled"] = bool(engine_deck_enabled() and out["propulsion_ran"]
+                                     and engine.get("designed_deck"))
     out["mission_coupled"] = out["aero_status"] == "ok" and out["mass_status"] == "ok"
     out["design_fingerprint"] = current_design_fingerprint()
     return out

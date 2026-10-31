@@ -49,7 +49,8 @@ CANONICAL_VARS: dict[str, VarSpec] = {
     "mass.mtom_kg": VarSpec("mass.mtom_kg", "mass", "kg", ("pycycle",),
                             "mass-mcp maximum take-off mass (sizes engine thrust)."),
     "prop.sfc_cruise": VarSpec("prop.sfc_cruise", "pycycle", "lb/hr/lbf", ("aviary",),
-                               "pycycle cruise TSFC (diagnostic; aviary uses its deck)."),
+                               "pycycle design-point TSFC. Coupled through the engine deck (B3): aviary flies "
+                               "the off-design table of this cycle, not a single TSFC value."),
     "prop.fn_lbf": VarSpec("prop.fn_lbf", "pycycle", "lbf", (),
                            "pycycle net thrust at design point (diagnostic)."),
     # Geometry reference data — feeds the physics-based drag build-up (Reynolds + Swet/Sref).
@@ -213,9 +214,13 @@ def fn_des_from_drag(mtom_kg: float, cl: float, cd_total: float) -> float:
     return max(2000.0, min(fn, 25000.0))
 
 
-def fn_to_aviary_engine_scale(fn_lbf: float) -> float:
-    """aviary ``Aircraft.Engine.SCALE_FACTOR`` that gives the bench engine pycycle's design thrust."""
-    return float(fn_lbf) / BENCH_ENGINE_CRUISE_FN_LBF
+def fn_to_aviary_engine_scale(fn_lbf: float, reference_fn_lbf: float = BENCH_ENGINE_CRUISE_FN_LBF) -> float:
+    """aviary ``Aircraft.Engine.SCALE_FACTOR`` that gives the flown engine pycycle's design thrust.
+
+    The reference is the thrust the flown deck represents at SCALE_FACTOR 1.0: the bench deck's max
+    cruise thrust (B170), or, with the designed engine's deck (B3), the Fn_DES it was generated at.
+    """
+    return float(fn_lbf) / float(reference_fn_lbf)
 
 
 # ---------------------------------------------------------------------------

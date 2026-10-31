@@ -520,6 +520,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_component_uids(tool_name, data)
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
+                _capture_mission_engine(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 _capture_geometry_wing(tool_name, data)
                 _capture_geometry_fuselage(tool_name, data)
@@ -554,6 +555,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_component_uids(tool_name, response)
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
+        _capture_mission_engine(tool_name, response)
         _capture_param_bounds(tool_name, response)
         _capture_geometry_wing(tool_name, response)
         _capture_geometry_fuselage(tool_name, response)
@@ -1584,9 +1586,26 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     # B187: the mass and drag this engine result was sized on; B170 and the mission contract use it
     # only while they are still the design's.
     _design_state.data_store["prop_cycle_key"] = _cycle_sizing_key()
+    # B3: the session whose cycle becomes the mission engine (generate_engine_deck reads it).
+    _design_state.data_store["prop_cycle_session"] = getattr(_call_ctx, "cycle_session", None)
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
     logger.info("Captured engine cycle from %s: %s", tool_name, captured)
+
+
+def _capture_mission_engine(tool_name: str, data: dict) -> None:
+    """B3: record which engine a mission actually flew (aviary-mcp's run_simulation ``engine`` block).
+
+    ``propulsion_coupled`` is set from this -- what the mission says it flew -- not from what the
+    framework intended to attach.
+    """
+    if _design_state is None or tool_name != "run_simulation" or not isinstance(data.get("engine"), dict):
+        return
+    engine = dict(data["engine"])
+    deck = _design_state.data_store.get("engine_deck") or {}
+    engine["designed_deck"] = bool(engine.get("external_deck")) and engine.get("deck") == deck.get("file")
+    engine["deck_key"] = deck.get("key") if engine["designed_deck"] else None
+    _design_state.data_store["mission_engine"] = engine
 
 
 def _capture_component_uids(tool_name: str, data: dict) -> None:
@@ -2043,7 +2062,7 @@ def _reapply_current_engine(resolved: dict) -> None:
         return
     store = _design_state.data_store
     sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
-    if (store.get("engine_injected_key") or {}).get(sid) == store.get("prop_cycle_key"):
+    if (store.get("engine_injected_key") or {}).get(sid) == _engine_scale_key(sid):
         return
     setter = (_registered_tools or {}).get("set_aircraft_parameters")
     if setter is None:
@@ -2054,6 +2073,94 @@ def _reapply_current_engine(resolved: dict) -> None:
                     "run_simulation", sid)
     except Exception as exc:  # pragma: no cover - never break a run on this
         logger.warning("[B187] could not re-apply the current engine to %s: %s", sid, exc)
+
+
+# B3: the framework, not an agent, turns the designed cycle into the mission's engine. These tools are
+# registered for the data plane even when no agent's allowed_tools lists them (tool_loader).
+ENGINE_DECK_TOOLS = ("generate_engine_deck", "set_engine_deck")
+
+
+def engine_deck_enabled() -> bool:
+    """B3 coupling on (default). AVION_ENGINE_DECK=0 restores the bench engine for regression runs."""
+    return os.environ.get("AVION_ENGINE_DECK", "1") != "0"
+
+
+def _as_dict(result) -> dict:
+    if isinstance(result, dict):
+        return result
+    try:
+        out = json.loads(result)
+    except (TypeError, ValueError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def _ensure_engine_deck(resolved: dict) -> None:
+    """B3: before a mission flies, aviary's engine must be the designed cycle's engine.
+
+    aviary burned its bench table (turbofan_28k.deck) whatever pycycle designed, so BPR, pressure
+    ratios and T4 changed only TSFC and never fuel burn (2026-10-27: identical 19,019.6 kg). The
+    designed cycle's off-design table comes from pycycle-mcp (generate_engine_deck, cached per cycle,
+    so an unchanged cycle costs nothing) and is attached to the aviary session (set_engine_deck).
+    Only an engine sized on the current mass and drag gets a deck; otherwise the contract refuses.
+    A failure is recorded, not hidden: the mission contract then refuses with the reason (no silent
+    fallback to the bench engine).
+    """
+    if _design_state is None or not engine_deck_enabled() or not engine_is_current():
+        return
+    store = _design_state.data_store
+    tools = _registered_tools or {}
+    gen, attach = tools.get("generate_engine_deck"), tools.get("set_engine_deck")
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    cyc = store.get("prop_cycle_session") or (_design_state.sessions or {}).get("pycycle")
+    if gen is None or attach is None or not cyc:
+        store["engine_deck_error"] = ("generate_engine_deck / set_engine_deck are not loaded"
+                                      if gen is None or attach is None else "no pycycle session")
+        return
+    try:
+        out = _as_dict(gen.forward(session_id=cyc))
+    except Exception as exc:  # pragma: no cover - surfaced through the contract
+        out = {"error": {"type": type(exc).__name__, "message": str(exc)}}
+    if not out.get("success") or not out.get("deck_file"):
+        err = out.get("error") or {}
+        store["engine_deck_error"] = f"{err.get('type', 'error')}: {err.get('message', out)}"
+        store.pop("engine_deck", None)
+        logger.warning("[B3] no engine deck for pycycle session %s: %s", cyc, store["engine_deck_error"])
+        return
+    store["engine_deck"] = {
+        "file": out["deck_file"], "key": out.get("design_key"),
+        "reference_fn_des_lbf": float(out["reference_fn_des_lbf"]),
+        "design_tsfc": out.get("design_tsfc"), "sls_net_thrust_lbf": out.get("sls_net_thrust_lbf"),
+        "envelope_holes": out.get("envelope_holes") or [], "cached": out.get("cached"),
+        "pycycle_session": cyc, "cycle_key": store.get("prop_cycle_key"),
+    }
+    attached = store.setdefault("engine_deck_attached", {})
+    if attached.get(sid) != out["deck_file"]:
+        try:
+            r = _as_dict(attach.forward(session_id=sid, deck_file=out["deck_file"]))
+        except Exception as exc:  # pragma: no cover
+            r = {"error": {"type": type(exc).__name__, "message": str(exc)}}
+        if not r.get("success"):
+            err = r.get("error") or {}
+            store["engine_deck_error"] = f"set_engine_deck: {err.get('message', err) or r}"
+            attached.pop(sid, None)
+            logger.warning("[B3] aviary session %s refused the engine deck: %s", sid, store["engine_deck_error"])
+            return
+        attached[sid] = out["deck_file"]
+        logger.info("[B3] aviary session %s flies engine deck %s (design TSFC %s)", sid, out["deck_file"],
+                    out.get("design_tsfc"))
+    store.pop("engine_deck_error", None)
+
+
+def engine_deck_current(session_id: str | None = None) -> bool:
+    """True when the aviary session carries the deck of the engine sized on the current design (B3)."""
+    if _design_state is None:
+        return False
+    store = _design_state.data_store
+    deck = store.get("engine_deck") or {}
+    sid = str(session_id or (_design_state.sessions or {}).get("aviary"))
+    return (bool(deck) and engine_is_current() and deck.get("cycle_key") == store.get("prop_cycle_key")
+            and (store.get("engine_deck_attached") or {}).get(sid) == deck.get("file"))
 
 
 def _restore_aviary_session(session_id: str) -> None:
@@ -2234,6 +2341,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name in _MORPH_FILE_READERS and _design_state:
         _auto_export_morph()
     if tool_name == "run_simulation" and _design_state and mcp_name == "aviary":
+        _ensure_engine_deck(resolved)          # B3: the designed cycle becomes the mission engine
         _reapply_current_engine(resolved)
     if tool_name in ("run_cycle", "get_outputs") and _design_state and mcp_name == "pycycle":
         if tool_name == "run_cycle":
@@ -3208,18 +3316,32 @@ def _inject_engine_scale(resolved: dict) -> None:
             return
     if not isinstance(parameters, dict):
         return
-    scale = coupling.fn_to_aviary_engine_scale(fn_lbf)
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    # B3: with the designed engine's deck on this session the reference is the thrust the deck was made
+    # at (5,900 lbf for a size-invariant cycle); the bench deck's reference is its M0.78/FL330 max thrust.
+    deck = _design_state.data_store.get("engine_deck") or {}
+    if engine_deck_enabled() and engine_deck_current(sid):
+        reference, basis = float(deck["reference_fn_des_lbf"]), f"engine deck {deck.get('key')}"
+    else:
+        reference, basis = coupling.BENCH_ENGINE_CRUISE_FN_LBF, "bench deck"
+    scale = coupling.fn_to_aviary_engine_scale(fn_lbf, reference)
     if "Aircraft.Engine.SCALE_FACTOR" in parameters:
         _note_coupled_override("Aircraft.Engine.SCALE_FACTOR", parameters["Aircraft.Engine.SCALE_FACTOR"], scale)
     parameters["Aircraft.Engine.SCALE_FACTOR"] = scale
     resolved["parameters"] = parameters
     _design_state.data_store["engine_injected_scale_factor"] = scale
-    # B187: which engine result this scale came from, per aviary session (run_simulation re-applies on change).
-    _design_state.data_store.setdefault("engine_injected_key", {})[
-        str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))] = \
-        _design_state.data_store.get("prop_cycle_key")
-    logger.info("[B170] injected Aircraft.Engine.SCALE_FACTOR=%.3f (pycycle Fn=%.0f lbf / bench %.0f lbf)",
-                scale, float(fn_lbf), coupling.BENCH_ENGINE_CRUISE_FN_LBF)
+    _design_state.data_store["engine_scale_basis"] = basis
+    # B187/B3: which engine result and deck this scale came from, per aviary session (run_simulation
+    # re-applies when either changes).
+    _design_state.data_store.setdefault("engine_injected_key", {})[sid] = _engine_scale_key(sid)
+    logger.info("[B170] injected Aircraft.Engine.SCALE_FACTOR=%.3f (pycycle Fn=%.0f lbf / %.0f lbf, %s)",
+                scale, float(fn_lbf), reference, basis)
+
+
+def _engine_scale_key(session_id: str) -> list:
+    """What an injected engine scale depends on: the sizing (B187) and the deck on this session (B3)."""
+    store = _design_state.data_store if _design_state is not None else {}
+    return [store.get("prop_cycle_key"), (store.get("engine_deck_attached") or {}).get(str(session_id))]
 
 
 def _fix_su2_markers(updates: dict, wall: str, far: str) -> None:

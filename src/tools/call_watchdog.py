@@ -51,6 +51,8 @@ _TOOL_TIMEOUTS: dict[str, float] = {
     "generate_volume_mesh": 1800.0,
     "export_component_mesh": 1800.0,
     "run_cycle": 1200.0,
+    # B3: a new cycle's off-design deck took 32-51 min on 12 workers (ws8, 2026-10-31); cached ones return at once.
+    "generate_engine_deck": 7200.0,
 }
 
 _lock = threading.Lock()

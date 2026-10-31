@@ -84,7 +84,7 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
     _init_data_plane_if_needed(connector)
 
     if not tool_names:
-        return apply_coercion_to_tools(_with_design_state(all_tools))
+        return _register_framework_tools(all_tools, apply_coercion_to_tools(_with_design_state(all_tools)))
 
     # Resolve tool names, supporting server-scoped patterns.
     has_server_patterns = any("." in name for name in tool_names)
@@ -98,7 +98,7 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
                 if t.name not in seen:
                     result.append(t)
                     seen.add(t.name)
-        return apply_coercion_to_tools(_with_design_state(result))
+        return _register_framework_tools(all_tools, apply_coercion_to_tools(_with_design_state(result)))
 
     # Simple name-based lookup (backward compatible).
     tool_map = {t.name: t for t in all_tools}
@@ -109,7 +109,25 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
         elif name in MOCK_TOOLS:
             result.append(create_mock_tool(name))
 
-    return apply_coercion_to_tools(result)
+    return _register_framework_tools(all_tools, apply_coercion_to_tools(result))
+
+
+def _register_framework_tools(all_tools: list[Tool], selected: list[Tool]) -> list[Tool]:
+    """The data plane's own tools: registered for it, kept out of every agent's toolset (B3).
+
+    generate_engine_deck / set_engine_deck turn the designed cycle into the mission engine before
+    run_simulation. The data plane only knows tools that were loaded for some agent, so they are wrapped
+    (full middleware: knowledge base, watchdog) and registered here. They are not handed to agents: an
+    agent attaching a deck by hand would bypass the framework's record of which engine a session flies.
+    A tool already wrapped in ``selected`` is registered as it is, not wrapped twice.
+    """
+    from src.tools.data_plane import ENGINE_DECK_TOOLS, register_tools
+
+    have = {t.name for t in selected if getattr(t, "name", None) in ENGINE_DECK_TOOLS}
+    extra = [t for t in all_tools if getattr(t, "name", None) in ENGINE_DECK_TOOLS and t.name not in have]
+    if extra:
+        register_tools(apply_coercion_to_tools(extra))
+    return [t for t in selected if getattr(t, "name", None) not in ENGINE_DECK_TOOLS]
 
 
 def _init_data_plane_if_needed(connector) -> None:
