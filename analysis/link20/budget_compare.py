@@ -118,6 +118,64 @@ def at_budget(series: pd.DataFrame) -> pd.DataFrame:
     return agg.reset_index().sort_values(["method", "best_conv_fuel_mean"])
 
 
+def where_best(series: pd.DataFrame) -> pd.DataFrame:
+    """Within the first BUDGET flights: the flight (and MAS link) that gave the best fuel, any flight and converged."""
+    rows = []
+    for (method, name, seed), d in series[series.flight <= BUDGET].groupby(["method", "name", "seed"]):
+        row = {"method": method, "name": name, "seed": seed, "flights": int(d.flight.max()),
+               "converged_flights": int(d.converged.sum())}
+        for tag, sub in (("any", d), ("conv", d[d.converged])):
+            b = sub.loc[sub.fuel.idxmin()] if not sub.empty else None
+            row[f"best_fuel_{tag}"] = None if b is None else b.fuel
+            row[f"gtow_{tag}"] = None if b is None else b.gtow
+            row[f"flight_{tag}"] = None if b is None else int(b.flight)
+            row[f"link_{tag}"] = None if b is None or pd.isna(b.get("link")) else int(b.link)
+            row[f"attempt_{tag}"] = None if b is None or pd.isna(b.get("attempt")) else int(b.attempt)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def scatter(series: pd.DataFrame, path: Path, method: str, ncols: int) -> None:
+    """Fuel of every flown aircraft by flight number, one panel per combination / optimizer: filled = the mission
+    converged, hollow = it did not. MAS panels show every flight of the 20-link chain, the budget (flight 20) dashed;
+    optimizer panels show the seeds in different colours."""
+    d_all = series[series.method == method]
+    names = sorted(d_all.name.unique(), key=lambda n: OPTIMIZERS.index(n) if n in OPTIMIZERS else n)
+    ncols = min(ncols, len(names))
+    nrows = -(-len(names) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.8 * nrows), facecolor="white", sharey=True,
+                             squeeze=False)
+    seed_colours = ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e")
+    for ax, name in zip(axes.flat, names):
+        d = d_all[d_all.name == name]
+        for seed, ds in d.groupby("seed"):
+            c = "black" if method == "mas" else seed_colours[int(seed) % len(seed_colours)]
+            for conv, face in ((True, c), (False, "none")):
+                p = ds[ds.converged == conv]
+                ax.scatter(p.flight, p.fuel, s=14, facecolors=face, edgecolors=c, linewidths=0.8)
+        if method == "mas":
+            ax.axvline(BUDGET + 0.5, color="0.5", lw=0.8, ls="--")
+        ax.set_title(name.upper() if method != "mas" else name, fontsize=10)
+        ax.set_xlabel("Flight", fontsize=8)
+        ax.tick_params(labelsize=8)
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Fuel burned (kg)", fontsize=8)
+    # the same fuel axis in the MAS and the optimizer figures
+    top = series.fuel.max() * 1.05
+    axes[0, 0].set_ylim(0, top)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([], [], marker="o", ls="", color="0.2", label="Converged"),
+               Line2D([], [], marker="o", ls="", markerfacecolor="none", color="0.2", label="Not converged")]
+    if method != "mas":
+        handles += [Line2D([], [], marker="o", ls="", color=seed_colours[k], label=f"Seed {k}")
+                    for k in sorted(d_all.seed.unique())]
+    axes[0, -1].legend(handles=handles, frameon=False, fontsize=7, loc="upper right")
+    for ax in list(axes.flat)[len(names):]:
+        ax.set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor="white")
+
+
 def plot(series: pd.DataFrame, path: Path) -> None:
     """Minimal: two panels, optimizers = seed mean (solid, coloured), MAS combinations = thin grey, labelled. The loss
     is left to the table: every flight so far carries the 1e6 GTOW penalty, so a loss axis only shows that offset."""
@@ -164,6 +222,10 @@ def main() -> int:
     table.to_csv(args.out / "budget_compare_at_20_flights.csv", index=False)
     aero.to_csv(args.out / "optimizer_aero_not_injected.csv", index=False)
     plot(series, args.out / "budget_compare.png")
+    where = where_best(series)
+    where.to_csv(args.out / "where_best_fuel_first_20_flights.csv", index=False)
+    scatter(series, args.out / "fuel_per_flight_mas.png", "mas", ncols=4)
+    scatter(series, args.out / "fuel_per_flight_optimizers.png", "optimizer", ncols=len(OPTIMIZERS))
     cols = ["method", "name", "seeds", "flights", "best_conv_fuel_mean", "best_conv_fuel_min", "best_conv_fuel_max",
             "best_loss_mean", "min_conv_gtow_mean", "min_conv_gtow_min"]
     with pd.option_context("display.width", 220, "display.max_columns", 30):

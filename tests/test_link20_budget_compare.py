@@ -26,3 +26,16 @@ def test_mas_flights_reads_successful_runs_above_the_floor():
           {"tool": "get_results", "status": "success",
            "outputs": {"converged": True, "fuel_burned_kg": 18000.0, "gtow_kg": 95000.0}}]
     assert mas_flights(kb) == [{"fuel": 23077.0, "gtow": 102314.0, "converged": False}]
+
+
+def test_where_best_reports_flight_and_link_for_any_and_converged():
+    import pandas as pd
+    from analysis.link20.budget_compare import where_best
+
+    rows = running([{"fuel": 19000.0, "gtow": 97000.0, "converged": True, "link": 1},
+                    {"fuel": 4760.0, "gtow": 84900.0, "converged": False, "link": 3},
+                    {"fuel": 18000.0, "gtow": 98000.0, "converged": True, "link": 7}])
+    w = where_best(pd.DataFrame([{"method": "mas", "name": "S_SP", "seed": 0, **r} for r in rows])).iloc[0]
+    assert (w.best_fuel_any, w.flight_any, w.link_any) == (4760.0, 2, 3)
+    assert (w.best_fuel_conv, w.flight_conv, w.link_conv) == (18000.0, 3, 7)
+    assert w.converged_flights == 2
