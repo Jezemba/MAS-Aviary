@@ -41,6 +41,12 @@ def _coupled_inputs_available():
     state.data_store["prop_cycle_key"] = dp._cycle_sizing_key()
     for producer in ("su2", "mass", "pycycle"):
         note_capture(producer)
+    # B3: and its deck is on the aviary session these tests fly (as the framework attaches it).
+    state.data_store["engine_deck"] = {"file": "/decks/d.deck", "key": "d", "reference_fn_des_lbf": 5900.0,
+                                     "cycle_key": state.data_store["prop_cycle_key"]}
+    state.data_store["engine_deck_attached"] = {"a": "/decks/d.deck"}
+
+
 SERVERS = {"generate_volume_mesh": "tigl", "set_high_level_parameters": "tigl", "morph_wing": "tigl",
            "open_cpacs": "tigl", "close_cpacs": "tigl", "run_su2_solver": "su2", "create_su2_session": "su2",
            "set_mesh": "su2", "update_config_entries": "su2", "create_cycle_model": "pycycle",

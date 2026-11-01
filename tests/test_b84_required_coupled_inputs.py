@@ -55,6 +55,15 @@ def _cycle_ran():
         "success": True, "model_ran": True,
         "outputs": {"perf.TSFC": [0.5821], "perf.Fn": 28000.0},
     })
+    _deck_attached()
+
+
+def _deck_attached(session_id="s1"):
+    """B3: what the framework does before run_simulation -- the designed engine's deck on the session."""
+    store = dp.get_design_state().data_store
+    store["engine_deck"] = {"file": "/decks/deck_k.deck", "key": "k", "reference_fn_des_lbf": 5900.0,
+                            "cycle_key": store.get("prop_cycle_key")}
+    store.setdefault("engine_deck_attached", {})[session_id] = "/decks/deck_k.deck"
 
 
 def _everything_ran():
@@ -186,12 +195,14 @@ def test_a_cycle_that_resolved_nothing_is_not_a_cycle_result():
     assert cc.coupling_status()["propulsion_ran"] is False
 
 
-def test_propulsion_is_never_reported_as_coupled():
+def test_propulsion_is_coupled_only_when_the_mission_flew_the_designed_deck():
     _everything_ran()
     status = cc.coupling_status()
     assert status["propulsion_ran"] is True
-    assert status["propulsion_coupled"] is False        # B3: aviary burns a tabulated deck
-    assert status["mission_coupled"] is True            # aero + mass are the real couplings
+    assert status["propulsion_coupled"] is False        # B3: no mission has reported flying the deck yet
+    assert status["mission_coupled"] is True
+    dp._capture_mission_engine("run_simulation", {"engine": {"deck": "/decks/deck_k.deck", "external_deck": True}})
+    assert cc.coupling_status()["propulsion_coupled"] is True
 
 
 # ---- the agent is told BEFORE it calls ----------------------------------------------------------------

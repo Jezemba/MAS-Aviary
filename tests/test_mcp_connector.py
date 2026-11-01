@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from src.config.loader import AppConfig, MCPConfig, MCPServerConfig
-from src.tools.mcp_connector import MCPConnector
+from src.tools.mcp_connector import MCPConnector, _sse_read_timeout
 
 # ---- Helpers ---------------------------------------------------------------
 
@@ -66,7 +66,8 @@ class TestMCPConnector:
         assert tools[0].name == "tool_a"
         assert tools[1].name == "tool_b"
         mock_from_mcp.assert_called_once_with(
-            {"url": "http://server1/mcp", "transport": "streamable-http", "sse_read_timeout": 3600.0},
+            {"url": "http://server1/mcp", "transport": "streamable-http",
+             "sse_read_timeout": _sse_read_timeout()},   # the longest tool budget (B110; B3 deck 7,200 s)
             trust_remote_code=True,
         )
 
