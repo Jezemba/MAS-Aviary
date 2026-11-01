@@ -813,6 +813,9 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
     for item in applied:
         if isinstance(item, dict) and item.get("name") is not None and "new_value" in item:
             current[str(item["name"])] = item["new_value"]
+            if item.get("derived"):     # aviary computes it (SPAN from AREA and AR); not settable
+                derived = set(_design_state.data_store.get("design_params_derived") or ())
+                _design_state.data_store["design_params_derived"] = sorted(derived | {str(item["name"])})
     if current:
         _design_state.data_store["design_params_applied"] = current
 
@@ -1605,6 +1608,9 @@ def _capture_mission_engine(tool_name: str, data: dict) -> None:
     deck = _design_state.data_store.get("engine_deck") or {}
     engine["designed_deck"] = bool(engine.get("external_deck")) and engine.get("deck") == deck.get("file")
     engine["deck_key"] = deck.get("key") if engine["designed_deck"] else None
+    # Coupled = flew the designed deck of an engine sized on the design AT THAT MOMENT. Judged here, not at
+    # link end, where closed sessions make every capture read as stale (B3 smoke test 2026-11-01).
+    engine["engine_current_at_flight"] = engine_is_current()
     _design_state.data_store["mission_engine"] = engine
 
 
@@ -2068,7 +2074,11 @@ def _reapply_current_engine(resolved: dict) -> None:
     if setter is None:
         return
     try:
-        setter.forward(session_id=sid, parameters=dict(store.get("design_params_applied") or {}))
+        # Only settable parameters go back: aviary refuses a whole call that names a derived one (READ_ONLY_PARAMETER),
+        # and the mission then flew the previous engine scale (B3 smoke test 2026-11-01: 1.6589 flown, 1.6690 meant).
+        derived = set(store.get("design_params_derived") or ())
+        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
+        setter.forward(session_id=sid, parameters=params)
         logger.info("[B187] re-applied the design to aviary session %s with the current engine before "
                     "run_simulation", sid)
     except Exception as exc:  # pragma: no cover - never break a run on this

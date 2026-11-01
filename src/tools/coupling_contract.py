@@ -387,9 +387,10 @@ def coupling_status() -> dict:
     store = get_design_state().data_store if get_design_state() is not None else {}
     engine = store.get("mission_engine") or {}
     out["engine_deck_status"] = status(ENGINE_DECK)
-    out["mission_engine"] = {k: engine.get(k) for k in ("deck", "deck_key", "designed_deck", "scale_factor",
+    out["mission_engine"] = {k: engine.get(k) for k in ("deck", "deck_key", "designed_deck", "engine_current_at_flight",
+                                                        "scale_factor",
                                                         "scaled_sls_thrust_lbf", "engine_mass_kg")} if engine else None
-    out["propulsion_coupled"] = bool(engine_deck_enabled() and out["propulsion_ran"]
+    out["propulsion_coupled"] = bool(engine_deck_enabled() and engine.get("engine_current_at_flight")
                                      and engine.get("designed_deck"))
     out["mission_coupled"] = out["aero_status"] == "ok" and out["mass_status"] == "ok"
     out["design_fingerprint"] = current_design_fingerprint()

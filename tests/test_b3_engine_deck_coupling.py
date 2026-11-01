@@ -168,3 +168,31 @@ def test_deck_tools_are_registered_for_the_framework_but_not_given_to_agents(mon
     assert {"generate_engine_deck", "set_engine_deck"} <= set(registered)
     selected = tool_loader._register_framework_tools(all_tools, list(all_tools))   # a "pycycle.*" toolset
     assert [t.name for t in selected] == ["run_cycle", "run_simulation"]
+
+
+def test_derived_span_is_not_sent_back_on_the_engine_reapply(plane):
+    """Smoke test 2026-11-01: aviary reports SPAN as applied with derived: True; re-sending it made aviary refuse
+    the whole re-apply (READ_ONLY_PARAMETER), so the mission flew the previous engine scale."""
+    state, stubs = plane
+    _sized_engine(state)
+    dp._capture_applied_design("set_aircraft_parameters", {"applied": [
+        {"name": "Aircraft.Wing.AREA", "new_value": 125.8},
+        {"name": "Aircraft.Wing.SPAN", "new_value": 35.05, "units": "m", "derived": True}]})
+    assert state.data_store["design_params_derived"] == ["Aircraft.Wing.SPAN"]       # kept, marked derived (B95)
+    dp.resolve_request("run_simulation", {"session_id": "av1"})
+    sent = stubs["set_aircraft_parameters"].calls[-1]["parameters"]
+    assert "Aircraft.Wing.SPAN" not in sent
+    assert sent["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(10072.0 / 5900.0)
+
+
+def test_coupled_is_judged_when_the_mission_flew(plane):
+    state, stubs = plane
+    _sized_engine(state)
+    dp.resolve_request("run_simulation", {"session_id": "av1"})
+    dp._capture_mission_engine("run_simulation", {"engine": {"deck": DECK["deck_file"], "external_deck": True}})
+    coupling.put_var(state, "mass.mtom_kg", 80000.0, source_tool="estimate_mass")   # design moves on afterwards
+    state.data_store["mass_mtom_kg"] = 80000.0
+    assert not dp.engine_is_current()
+    assert coupling_contract.coupling_status()["propulsion_coupled"] is True        # it was current when flown
+    dp._capture_mission_engine("run_simulation", {"engine": {"deck": DECK["deck_file"], "external_deck": True}})
+    assert coupling_contract.coupling_status()["propulsion_coupled"] is False       # flown on a stale engine
