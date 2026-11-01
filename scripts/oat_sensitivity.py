@@ -39,10 +39,11 @@ def ratings(t4_takeoff: float, t4_climb: float) -> tuple[Variable, ...]:
 
 
 # The step for each variable: small enough to stay in the agents' range, large enough to clear solver noise.
-# Wing sweep steps down: +3 deg would pass the agents' maximum quarter-chord sweep (23.62 deg, design_space).
+# Wing sweep steps down: +3 deg would pass the agents' maximum quarter-chord sweep (23.62 deg, design_space);
+# fuselage length +1%: the agents' range is 37.22-38.15 m.
 STEP = {
     "wing_area": ("rel", 0.05), "wing_aspect_ratio": ("abs", 0.63), "wing_sweep": ("abs", -3.0),
-    "fuselage_length": ("rel", 0.02), "fuselage_diameter": ("abs", 0.2),
+    "fuselage_length": ("rel", 0.01), "fuselage_diameter": ("abs", 0.2),
     "htail_area": ("rel", 0.10), "htail_aspect_ratio": ("rel", 0.10), "htail_sweep": ("abs", 3.0),
     "vtail_area": ("rel", 0.10), "vtail_aspect_ratio": ("rel", 0.10), "vtail_sweep": ("abs", 3.0),
     "bypass_ratio": ("abs", 0.895), "turbine_inlet_temperature": ("abs", 100.0),
