@@ -88,6 +88,44 @@ def engine_record() -> dict:
             "mission_engine": status.get("mission_engine"), "propulsion_coupled": status.get("propulsion_coupled")}
 
 
+def table(records: list[dict]) -> str:
+    """Markdown results: each variable's fuel / GTOW against the mean baseline, and whether it moved them.
+
+    "Moves" = the change exceeds the noise floor: the spread between the two baseline evaluations
+    (at least 1 kg), so a variable is called inert only if it moves fuel and GTOW less than a repeat does.
+    """
+    base = [r for r in records if r["label"].startswith("baseline") and r.get("fuel_burned_kg") is not None]
+
+    def mean(key):
+        vals = [r[key] for r in base if r.get(key) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    f0, g0 = mean("fuel_burned_kg"), mean("gtow_kg")
+    noise_f = max([abs(base[0]["fuel_burned_kg"] - b["fuel_burned_kg"]) for b in base] + [1.0]) if base else None
+    noise_g = max([abs(base[0]["gtow_kg"] - b["gtow_kg"]) for b in base] + [1.0]) if base else None
+    out = ["| Run | Changed (from -> to) | Fuel kg | dFuel kg | GTOW kg | dGTOW kg | Moves fuel / GTOW | "
+           "Converged | Engine flown | Minutes |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in records:
+        fuel, gtow = r.get("fuel_burned_kg"), r.get("gtow_kg")
+        changed = "; ".join(f"{k} {a:g} -> {b:g}" for k, (a, b) in (r.get("changed") or {}).items()) or "--"
+        if r["label"].startswith("baseline") or fuel is None or f0 is None:
+            df = dg = moves = "--"
+            if fuel is None:
+                moves = f"FAILED: {r.get('failure')}"
+        else:
+            df, dg = fuel - f0, gtow - g0
+            moves = f"{'yes' if abs(df) > noise_f else 'NO'} / {'yes' if abs(dg) > noise_g else 'NO'}"
+            df, dg = f"{df:+,.1f}", f"{dg:+,.1f}"
+        eng = r.get("engine") or {}
+        flown = (eng.get("mission_engine") or {}).get("deck_key") or ("bench" if fuel is not None else "--")
+        out.append(f"| {r['label']} | {changed} | {fuel if fuel is None else f'{fuel:,.1f}'} | {df} | "
+                   f"{gtow if gtow is None else f'{gtow:,.1f}'} | {dg} | {moves} | {r.get('converged')} | "
+                   f"{flown}{' (coupled)' if eng.get('propulsion_coupled') else ''} | {r.get('seconds', 0) / 60:.0f} |")
+    head = (f"Baseline mean: fuel {f0:,.1f} kg, GTOW {g0:,.1f} kg; noise floor (baseline spread, min 1 kg): "
+            f"fuel {noise_f:,.1f} kg, GTOW {noise_g:,.1f} kg\n\n" if f0 is not None else "Baseline pending\n\n")
+    return head + "\n".join(out) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
@@ -118,6 +156,8 @@ def main() -> int:
                    changed={v.name: [v.default, xi] for v, xi in zip(vs, x) if xi != v.default})
         with log.open("a") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
+        records = [json.loads(line) for line in log.open()]
+        (args.out / "oat_table.md").write_text(table(records))
         print(f"{label}: fuel {rec['fuel_burned_kg']} gtow {rec['gtow_kg']} converged {rec.get('converged')} "
               f"deck {rec['engine']['deck_key']} coupled {rec['engine']['propulsion_coupled']} "
               f"failure {rec['failure']} ({rec['seconds']} s)", flush=True)
