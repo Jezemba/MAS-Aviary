@@ -2105,6 +2105,17 @@ def _as_dict(result) -> dict:
     return out if isinstance(out, dict) else {}
 
 
+def _error_text(reply) -> str:
+    """A failed tool reply as text. pycycle-mcp sends {"error": {"type", "message"}}; aviary-mcp sends
+    {"error_code": ..., "error": "<message>"} (2026-11-01: the string form crashed the mission pre-hook)."""
+    if not isinstance(reply, dict):
+        return str(reply)
+    err = reply.get("error")
+    if isinstance(err, dict):
+        return f"{err.get('type', 'error')}: {err.get('message', err)}"
+    code = reply.get("error_code")
+    return f"{code}: {err}" if code and err else str(err or code or reply)
+
 def _ensure_engine_deck(resolved: dict) -> None:
     """B3: before a mission flies, aviary's engine must be the designed cycle's engine.
 
@@ -2132,8 +2143,7 @@ def _ensure_engine_deck(resolved: dict) -> None:
     except Exception as exc:  # pragma: no cover - surfaced through the contract
         out = {"error": {"type": type(exc).__name__, "message": str(exc)}}
     if not out.get("success") or not out.get("deck_file"):
-        err = out.get("error") or {}
-        store["engine_deck_error"] = f"{err.get('type', 'error')}: {err.get('message', out)}"
+        store["engine_deck_error"] = f"generate_engine_deck: {_error_text(out)}"
         store.pop("engine_deck", None)
         logger.warning("[B3] no engine deck for pycycle session %s: %s", cyc, store["engine_deck_error"])
         return
@@ -2151,8 +2161,7 @@ def _ensure_engine_deck(resolved: dict) -> None:
         except Exception as exc:  # pragma: no cover
             r = {"error": {"type": type(exc).__name__, "message": str(exc)}}
         if not r.get("success"):
-            err = r.get("error") or {}
-            store["engine_deck_error"] = f"set_engine_deck: {err.get('message', err) or r}"
+            store["engine_deck_error"] = f"set_engine_deck: {_error_text(r)}"
             attached.pop(sid, None)
             logger.warning("[B3] aviary session %s refused the engine deck: %s", sid, store["engine_deck_error"])
             return

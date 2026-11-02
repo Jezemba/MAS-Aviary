@@ -196,3 +196,17 @@ def test_coupled_is_judged_when_the_mission_flew(plane):
     assert coupling_contract.coupling_status()["propulsion_coupled"] is True        # it was current when flown
     dp._capture_mission_engine("run_simulation", {"engine": {"deck": DECK["deck_file"], "external_deck": True}})
     assert coupling_contract.coupling_status()["propulsion_coupled"] is False       # flown on a stale engine
+
+
+def test_aviary_string_error_is_recorded_not_raised(plane):
+    """Sweep 2026-11-01 (t4_takeoff): aviary refused a deck with {"error_code", "error": "<text>"}; the pre-hook
+    expected a dict and raised AttributeError, so the mission failed with no reason."""
+    state, stubs = plane
+    _sized_engine(state)
+    stubs["set_engine_deck"].reply = {"success": False, "error_code": "INVALID_ENGINE_DECK",
+                                      "error": "deck.deck: no sea-level static (Mach 0, altitude 0) rows"}
+    dp.resolve_request("run_simulation", {"session_id": "av1"})        # must not raise
+    assert state.data_store["engine_deck_error"] == (
+        "set_engine_deck: INVALID_ENGINE_DECK: deck.deck: no sea-level static (Mach 0, altitude 0) rows")
+    refusal = coupling_contract.check("run_simulation", {"session_id": "av1"})
+    assert "no sea-level static" in refusal["error"]
