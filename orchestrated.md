@@ -42,7 +42,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | degR |
-| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | not set | degR |
+| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | up to 3640 | degR |
 | Climb turbine inlet temperature | Set | pycycle: `T4_CLIMB` | pycycle | 3090 | not set | degR |
 | Fan pressure ratio | Set | pycycle: `fan.PR` | pycycle | 1.685 | 1.4 to 1.7 | none |
 | LPC pressure ratio | Set | pycycle: `lpc.PR` | pycycle | 1.935 | not set | none |
@@ -418,7 +418,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | degR |
-| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | not set | degR |
+| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | up to 3640 | degR |
 | Climb turbine inlet temperature | Set | pycycle: `T4_CLIMB` | pycycle | 3090 | not set | degR |
 | Fan pressure ratio | Set | pycycle: `fan.PR` | pycycle | 1.685 | 1.4 to 1.7 | none |
 | LPC pressure ratio | Set | pycycle: `lpc.PR` | pycycle | 1.935 | not set | none |
@@ -794,7 +794,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | degR |
-| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | not set | degR |
+| Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | up to 3640 | degR |
 | Climb turbine inlet temperature | Set | pycycle: `T4_CLIMB` | pycycle | 3090 | not set | degR |
 | Fan pressure ratio | Set | pycycle: `fan.PR` | pycycle | 1.685 | 1.4 to 1.7 | none |
 | LPC pressure ratio | Set | pycycle: `lpc.PR` | pycycle | 1.935 | not set | none |
