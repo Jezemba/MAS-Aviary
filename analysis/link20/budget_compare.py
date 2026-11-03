@@ -35,6 +35,9 @@ GTOW_LIMIT_KG = 90_000.0
 LAMBDA_BASE, LAMBDA_GAP = 1.0e6, 1.0e5          # MAS-Aviary scripts/optimizer_budget/budget.py
 CL_BOUNDS = (0.05, 1.0)                          # aviary Mission.Design.LIFT_COEFFICIENT, as the data plane checks
 OPTIMIZERS = ("bo", "ga", "mads", "slsqp", "random")
+# Fuel saving reference: the unchanged baseline mission (reports 00-08). Saving % = (reference - fuel) / reference.
+REFERENCE_FUEL_KG = 18_197.0
+SAVING_YLIM = (-100.0, 60.0)
 SHORT = {"sequential": "S", "orchestrated": "O", "networked": "N",
          "staged_pipeline": "SP", "iterative_feedback": "IF", "graph_routed": "GR"}
 
@@ -176,6 +179,103 @@ def scatter(series: pd.DataFrame, path: Path, method: str, ncols: int) -> None:
     fig.savefig(path, dpi=150, facecolor="white")
 
 
+def savings(series: pd.DataFrame) -> pd.DataFrame:
+    """Every flight's fuel saving vs REFERENCE_FUEL_KG, and the best converged saving so far."""
+    d = series[series.flight <= BUDGET].copy()
+    d["saving_pct"] = 100.0 * (REFERENCE_FUEL_KG - d.fuel) / REFERENCE_FUEL_KG
+    d["best_conv_saving_pct"] = 100.0 * (REFERENCE_FUEL_KG - d.best_conv_fuel) / REFERENCE_FUEL_KG
+    return d
+
+
+def savings_table(sav: pd.DataFrame) -> pd.DataFrame:
+    """Rows = evaluation (flight) 1..BUDGET, columns = method: best converged saving so far (%); optimizers = mean
+    over the seeds that have reached that evaluation."""
+    out = {}
+    for (method, name), d in sav.groupby(["method", "name"]):
+        out[name.upper() if method == "optimizer" else name] = d.groupby("flight").best_conv_saving_pct.mean()
+    order = [n.upper() for n in OPTIMIZERS] + sorted(n for n in out if n not in [o.upper() for o in OPTIMIZERS])
+    return pd.DataFrame(out).reindex(range(1, BUDGET + 1))[[c for c in order if c in out]].rename_axis("evaluation")
+
+
+def _clipped(ax, x, y, **kw):
+    """Scatter with points beyond SAVING_YLIM drawn as triangles on the edge."""
+    lo, hi = SAVING_YLIM
+    inside = (y >= lo) & (y <= hi)
+    ax.scatter(x[inside], y[inside], marker="o", **kw)
+    ax.scatter(x[y > hi], [hi] * int((y > hi).sum()), marker="^", **kw)
+    ax.scatter(x[y < lo], [lo] * int((y < lo).sum()), marker="v", **kw)
+
+
+def plot_savings(sav: pd.DataFrame, path: Path) -> None:
+    """One panel: best converged fuel saving so far against the number of evaluations, every method."""
+    colours = dict(zip(OPTIMIZERS, ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#7f7f7f")))
+    fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
+    for name, d in sav[sav.method == "mas"].groupby("name"):
+        d = d.dropna(subset=["best_conv_saving_pct"])
+        if not d.empty:
+            ax.plot(d.flight, d.best_conv_saving_pct, color="0.7", lw=1)
+            ax.annotate(name, (d.flight.iloc[-1], d.best_conv_saving_pct.iloc[-1]), fontsize=7, color="0.4",
+                        xytext=(2, 0), textcoords="offset points", va="center")
+    for algo in OPTIMIZERS:
+        d = sav[(sav.method == "optimizer") & (sav.name == algo)].dropna(subset=["best_conv_saving_pct"])
+        if not d.empty:
+            g = d.groupby("flight").best_conv_saving_pct
+            m = g.mean()[g.size() == d.seed.nunique()]
+            ax.plot(m.index, m.values, color=colours[algo], lw=2, label=algo.upper())
+    ax.axhline(0, color="black", lw=0.8)
+    ax.set_xlabel("Number of evaluations (flights)")
+    ax.set_ylabel(f"Best converged fuel saving (%)\nvs baseline {REFERENCE_FUEL_KG:,.0f} kg")
+    ax.set_xlim(1, BUDGET + 2)
+    ax.set_xticks(range(0, BUDGET + 1, 5))
+    ax.legend(frameon=False, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor="white")
+
+
+def plot_savings_per_evaluation(sav: pd.DataFrame, path: Path) -> None:
+    """Small multiples, one per method: each evaluation's saving (filled = converged, hollow = not; optimizers one
+    colour per seed) and the best converged saving so far (line; optimizers = seed mean). Points beyond the axis
+    are drawn as triangles on its edge."""
+    seed_colours = ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e")
+    panels = [("optimizer", n) for n in OPTIMIZERS if n in set(sav[sav.method == "optimizer"].name)]
+    panels += [("mas", n) for n in sorted(sav[sav.method == "mas"].name.unique())]
+    ncols = 5
+    nrows = -(-len(panels) // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.7 * nrows), facecolor="white", sharex=True,
+                             sharey=True, squeeze=False)
+    for ax, (method, name) in zip(axes.flat, panels):
+        d = sav[(sav.method == method) & (sav.name == name)]
+        for seed, ds in d.groupby("seed"):
+            c = "black" if method == "mas" else seed_colours[int(seed) % len(seed_colours)]
+            for conv, face in ((True, c), (False, "none")):
+                p = ds[ds.converged == conv]
+                _clipped(ax, p.flight.to_numpy(), p.saving_pct.to_numpy(), s=13, facecolors=face, edgecolors=c,
+                         linewidths=0.8)
+        g = d.dropna(subset=["best_conv_saving_pct"]).groupby("flight").best_conv_saving_pct
+        m = g.mean()[g.size() == d.seed.nunique()] if not g.size().empty else pd.Series(dtype=float)
+        ax.plot(m.index, m.values, color="black", lw=1.5)
+        ax.axhline(0, color="0.5", lw=0.6)
+        ax.set_title(name.upper() if method == "optimizer" else f"MAS {name}", fontsize=10)
+        ax.set_ylim(*SAVING_YLIM)
+        ax.set_xlim(0, BUDGET + 1)
+        ax.tick_params(labelsize=8)
+    for ax in axes[-1, :]:
+        ax.set_xlabel("Evaluation (flight)", fontsize=8)
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Fuel saving (%)", fontsize=8)
+    for ax in list(axes.flat)[len(panels):]:
+        ax.set_visible(False)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([], [], marker="o", ls="", color="0.2", label="Converged"),
+               Line2D([], [], marker="o", ls="", markerfacecolor="none", color="0.2", label="Not converged"),
+               Line2D([], [], color="black", lw=1.5, label="Best converged so far"),
+               Line2D([], [], marker="^", ls="", markerfacecolor="none", color="0.2", label="Beyond the axis")]
+    fig.legend(handles=handles, loc="lower right", frameon=False, fontsize=8, ncol=1,
+               bbox_to_anchor=(0.98, 0.04))
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor="white")
+
+
 def plot(series: pd.DataFrame, path: Path) -> None:
     """Minimal: two panels, optimizers = seed mean (solid, coloured), MAS combinations = thin grey, labelled. The loss
     is left to the table: every flight so far carries the 1e6 GTOW penalty, so a loss axis only shows that offset."""
@@ -226,6 +326,11 @@ def main() -> int:
     where.to_csv(args.out / "where_best_fuel_first_20_flights.csv", index=False)
     scatter(series, args.out / "fuel_per_flight_mas.png", "mas", ncols=4)
     scatter(series, args.out / "fuel_per_flight_optimizers.png", "optimizer", ncols=len(OPTIMIZERS))
+    sav = savings(series)
+    sav.to_csv(args.out / "fuel_saving_per_evaluation.csv", index=False)
+    savings_table(sav).round(1).to_csv(args.out / "best_converged_saving_by_evaluation.csv")
+    plot_savings(sav, args.out / "fuel_saving_vs_evaluations.png")
+    plot_savings_per_evaluation(sav, args.out / "fuel_saving_per_evaluation.png")
     cols = ["method", "name", "seeds", "flights", "best_conv_fuel_mean", "best_conv_fuel_min", "best_conv_fuel_max",
             "best_loss_mean", "min_conv_gtow_mean", "min_conv_gtow_min"]
     with pd.option_context("display.width", 220, "display.max_columns", 30):

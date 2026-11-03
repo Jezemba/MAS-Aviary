@@ -87,6 +87,43 @@ Optimizers: mean over seeds, with the range over seeds in brackets.
 
 ![Best converged fuel and lowest converged GTOW against flights used](figures/09_budget_compare.png)
 
+## Fuel saving against the number of evaluations
+
+Fuel saving = (18,197 − fuel) / 18,197, i.e. against the unchanged baseline mission used in reports 00–08. Above 0
+= less fuel than the baseline. One evaluation = one flight. The optimizers' starting design (19,020 kg) is −4.5 %,
+so every optimizer starts there. The MAS's first flights (~23,000 kg in link 1) already include agent changes and
+the coupled SU2 / mass / engine results.
+
+Best **converged** saving so far (%), at selected evaluations. Optimizers: mean over the seeds that reached that
+evaluation. "–" = no converged flight yet. Every evaluation 1–20 is in
+`data/09_best_converged_saving_by_evaluation.csv`.
+
+| Evaluation | MADS | BO | SLSQP | GA | Random | N_IF | S_IF | S_GR | S_SP | O_SP | O_IF | O_GR, N_GR |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | −4.5 | −4.5 | −4.5 | −4.5 | −4.5 | – | – | – | – | – | – | – |
+| 5 | −0.3 | 1.1 | 0.0 | −2.8 | −4.5 | 1.9 | – | −25.4 | −29.4 | – | – | – |
+| 10 | −0.3 | 1.8 | 0.0 | −2.8 | −4.5 | 3.7 | – | −25.4 | −29.4 | −48.1 | – | – |
+| 15 | 4.6 | 1.8 | 0.0 | −2.0 | (stopped) | 3.7 (at 11) | – | −25.4 | −29.4 | −48.1 | – | – |
+| 20 | **5.0** | 2.0 | 0.0 | −1.5 | (stopped) | 3.7 (at 11) | −14.0 | −25.4 | −29.4 | −48.1 | −56.7 | – |
+
+- Only MADS, BO and N_IF end below the baseline's fuel. SLSQP reaches the baseline (18,204 kg, −0.04 %); GA and
+  random do not.
+- N_IF gets to 3.7 % in 9 evaluations; MADS needs 15 to pass it, BO does not.
+- Random search has its last value at evaluation 10 (its seeds stopped at 2–10 flights).
+
+![Best converged fuel saving against the number of evaluations](figures/09_fuel_saving_vs_evaluations.png)
+
+Every evaluation's saving, per method: filled = converged, hollow = not converged (optimizers one colour per seed);
+the line is the best converged saving so far. Points beyond −100 % or +60 % are drawn as triangles on the edge.
+
+![Fuel saving at each evaluation, one panel per method](figures/09_fuel_saving_per_evaluation.png)
+
+- BO, GA and MADS: savings at single evaluations jump between about −100 % and +60 %; nearly all positive values
+  are unconverged. Converged points cluster between −10 % and +8 %.
+- SLSQP: converged steps between −90 % and 0 %, ending at 0 %.
+- MAS: most evaluations are unconverged (hollow). The positive savings of S_SP (+35 %) and O_IF (+5 %) are all
+  unconverged. N_GR's evaluations after the first are all at or beyond −94 %.
+
 ## Where the best fuel came from (first 20 flights)
 
 Flight = position in the method's flight sequence. MAS link = the chain link that flight belongs to.
@@ -167,8 +204,9 @@ Filled = the mission converged, hollow = it did not. Both figures use the same f
 
 - Script: `analysis/link20/budget_compare.py` (tests: `tests/test_link20_budget_compare.py`).
 - Data copied here: `data/09_budget_compare_at_20_flights.csv`, `data/09_where_best_fuel_first_20_flights.csv`,
-  `data/09_optimizer_aero_not_injected.csv`. The per-flight series is on aipexws8:
-  `~/Jessica/avion_analysis/out_20261028/budget_compare/budget_compare_series.csv`.
+  `data/09_optimizer_aero_not_injected.csv`, `data/09_best_converged_saving_by_evaluation.csv`. On aipexws8
+  (`~/Jessica/avion_analysis/out_20261028/budget_compare/`): the per-flight series `budget_compare_series.csv` and
+  every evaluation's saving `fuel_saving_per_evaluation.csv`.
 - Optimizer runs: aipexws8 `/data/Jessica/optimizer_budget/runs/<optimizer>/seed<k>/evaluations.jsonl`;
   W&B project `mas-aviary-optimizer-budget`.
 - Optimizer code: MAS-Aviary branch `feat/optimizer-budget` (`scripts/optimizer_budget/`); aviary-mcp branch
