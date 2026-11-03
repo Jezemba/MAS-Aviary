@@ -1,8 +1,7 @@
 # MAS combinations vs optimizers at an equal flight budget (B = 20)
 
-Compiled 2026-11-01. **Partial:** the optimizer sweep is still running. Bayesian optimization (BO) is complete
-(5 seeds). GA has 4 seeds complete; seed 1 had 14 flights when this was written. MADS, SLSQP and random search have
-not started. Re-run the script below when the sweep ends; the tables and figures regenerate.
+Compiled 2026-11-01; updated 2026-11-03 with the finished sweep. All five optimizers (Bayesian optimization (BO),
+GA, MADS, SLSQP and random search) ran 5 seeds each, between 2026-10-31 19:50 and 2026-11-02 23:35 on aipexws8.
 
 Combinations: S / O / N = sequential / orchestrated / networked; SP / IF / GR = staged pipeline / iterative
 feedback / graph-routed.
@@ -37,7 +36,7 @@ under the same fixed budget.
 
 ## Main point: no method met the GTOW limit
 
-No converged flight from any method reached GTOW ≤ 90,000 kg; only two unconverged GA flights did. The lowest
+No converged flight from any method reached GTOW ≤ 90,000 kg; only a few unconverged flights did. The lowest
 converged GTOW is 91,701 kg (N_IF); the starting design is at 97,263 kg. Best feasible fuel is therefore empty for
 every method. Three values are reported instead:
 
@@ -46,8 +45,19 @@ every method. Three values are reported instead:
 3. best fuel among **all** flights, converged or not (shown for completeness; see the caution below)
 
 The paper loss is in `data/09_budget_compare_at_20_flights.csv`, but it should not be used for ranking. Every
-flight carries the 1e6 GTOW penalty. The only flights under the limit were two unconverged GA missions, which the
-loss (no convergence check, as in D1) ranks best.
+converged flight carries the 1e6 GTOW penalty. The only flights under the limit did not converge, and the loss
+(no convergence check, as in D1) ranks them best.
+
+## Two optimizers need a note
+
+- **SLSQP's 5 seeds are identical.** SLSQP has no randomness, every seed starts from the same design, and the
+  pipeline returns the same result for the same design. All 5 seeds ran exactly the same 21 designs, so SLSQP is
+  effectively **n = 1**. Varying it would need a different start per seed, which would break "every method starts
+  from the agents' design".
+- **Random search rarely flies.** Every seed hit the 40-design cap with only 2–10 flights (29 flights from 200
+  designs). Its only converged flight in every seed is the starting design (flight 1), so its best converged fuel
+  is the starting design's 19,020 kg. Uniform random designs in this 10-variable space almost never produce a
+  converged mission.
 
 ## Converged flights, after 20 flights
 
@@ -55,9 +65,12 @@ Optimizers: mean over seeds, with the range over seeds in brackets.
 
 | Method | Flights | Best converged fuel (kg) | Lowest converged GTOW (kg) |
 |---|---|---|---|
-| MAS N_IF | 11 | 17,521 | 91,701 |
+| MADS | 20 | **17,282** (16,638–18,248) | 97,263 |
+| MAS N_IF | 11 | 17,521 | **91,701** |
 | BO | 20 | 17,841 (17,364–18,446) | 97,191 |
-| GA (seed 1 at 14) | 14–20 | 18,476 (17,395–19,020) | 97,097 |
+| SLSQP (n = 1) | 20 | 18,204 | 96,234 |
+| GA | 20 | 18,476 (17,395–19,020) | 97,091 |
+| Random | 2–10 | 19,020 (the starting design) | 97,263 |
 | MAS S_IF | 20 | 20,741 | 97,984 |
 | MAS S_GR | 20 | 22,811 | 102,672 |
 | MAS S_SP | 20 | 23,554 | 103,555 |
@@ -66,10 +79,11 @@ Optimizers: mean over seeds, with the range over seeds in brackets.
 | MAS O_GR | 20 | no converged flight | – |
 | MAS N_GR | 20 | no converged flight | – |
 
-- On converged fuel, BO and GA beat every MAS combination except N_IF. N_IF matches BO's better seeds with
-  11 flights.
-- N_IF is the only method that moved GTOW close to the limit. The optimizers stay near the starting design's
-  97,263 kg.
+- **Fuel:** MADS is lowest on average and has the lowest single result (16,638 kg). BO, SLSQP and GA follow, all
+  within about 1,200 kg of each other. Of the MAS, only N_IF is in this group (17,521 kg, with 11 flights). The
+  other MAS combinations are 2,000–11,000 kg higher.
+- **GTOW:** N_IF is the only method that moved GTOW close to the limit. The optimizers stay near the starting
+  design's 97,263 kg (SLSQP lowest at 96,234 kg).
 
 ![Best converged fuel and lowest converged GTOW against flights used](figures/09_budget_compare.png)
 
@@ -88,18 +102,29 @@ Flight = position in the method's flight sequence. MAS link = the chain link tha
 | O_GR | 0 | 22,664 (unconverged) | 1 / 1 | – | – |
 | N_GR | 0 | 22,998 (unconverged) | 1 / 1 | – | – |
 
-| Optimizer, seed | Converged flights | Best fuel, any (kg) | flight | Best converged fuel (kg) | flight |
-|---|---|---|---|---|---|
-| BO 0 | 15 | 17,723 | 4 | 17,723 | 4 |
-| BO 1 | 17 | 16,320 (unconverged) | 6 | 17,364 | 5 |
-| BO 2 | 13 | 18,268 | 16 | 18,268 | 16 |
-| BO 3 | 13 | 13,699 (unconverged) | 6 | 18,446 | 5 |
-| BO 4 | 14 | 17,403 | 20 | 17,403 | 20 |
-| GA 0 | 12 | 8,095 (unconverged) | 7 | 19,014 | 20 |
-| GA 1 (14 flights) | 11 | 17,395 | 14 | 17,395 | 14 |
-| GA 2 | 9 | 7,455 (unconverged) | 19 | 18,432 | 18 |
-| GA 3 | 14 | 4,852 (unconverged) | 3 | 19,020 | 1 |
-| GA 4 | 17 | 18,081 (unconverged) | 15 | 18,516 | 14 |
+| Optimizer, seed | Flights | Converged flights | Best fuel, any (kg) | flight | Best converged fuel (kg) | flight |
+|---|---|---|---|---|---|---|
+| BO 0 | 20 | 15 | 17,723 | 4 | 17,723 | 4 |
+| BO 1 | 20 | 17 | 16,320 (unconverged) | 6 | 17,364 | 5 |
+| BO 2 | 20 | 13 | 18,268 | 16 | 18,268 | 16 |
+| BO 3 | 20 | 13 | 13,699 (unconverged) | 6 | 18,446 | 5 |
+| BO 4 | 20 | 14 | 17,403 | 20 | 17,403 | 20 |
+| GA 0 | 20 | 12 | 8,095 (unconverged) | 7 | 19,014 | 20 |
+| GA 1 | 20 | 15 | 9,443 (unconverged) | 18 | 17,395 | 14 |
+| GA 2 | 20 | 9 | 7,455 (unconverged) | 19 | 18,432 | 18 |
+| GA 3 | 20 | 14 | 4,852 (unconverged) | 3 | 19,020 | 1 |
+| GA 4 | 20 | 17 | 18,081 (unconverged) | 15 | 18,516 | 14 |
+| MADS 0 | 20 | 17 | 16,695 | 18 | 16,695 | 18 |
+| MADS 1 | 20 | 16 | 14,586 (unconverged) | 19 | 16,638 | 11 |
+| MADS 2 | 20 | 17 | 16,638 | 20 | 16,638 | 20 |
+| MADS 3 | 20 | 14 | 16,118 (unconverged) | 8 | 18,189 | 17 |
+| MADS 4 | 20 | 15 | 11,591 (unconverged) | 18 | 18,248 | 13 |
+| SLSQP (all 5 seeds) | 20 | 18 | 18,204 | 3 | 18,204 | 3 |
+| Random 0 | 6 | 1 | 19,020 | 1 | 19,020 | 1 |
+| Random 1 | 5 | 2 | 15,508 (unconverged) | 3 | 19,020 | 1 |
+| Random 2 | 6 | 2 | 15,709 (unconverged) | 3 | 19,020 | 1 |
+| Random 3 | 2 | 2 | 19,020 | 1 | 19,020 | 1 |
+| Random 4 | 10 | 4 | 794 (unconverged) | 5 | 19,020 | 1 |
 
 **Caution on "best fuel, any":** almost every low value comes from a mission that did not converge. These missions
 stopped short of their range, so they burned less fuel because they flew less. Without the convergence filter, the
@@ -113,8 +138,10 @@ Filled = the mission converged, hollow = it did not. Both figures use the same f
 
 ![Optimizers: fuel per flight, one colour per seed](figures/09_fuel_per_flight_optimizers.png)
 
-- **Optimizers:** they spread widely over the first ~10 flights (5,000–60,000 kg, many unconverged), then settle
-  around 17,500–20,000 kg, mostly converged.
+- **BO, GA and MADS:** they spread widely over the first ~10 flights (5,000–60,000 kg, many unconverged), then
+  settle around 16,500–20,000 kg, mostly converged. MADS settles lowest.
+- **SLSQP:** one sequence (the 5 seeds overlap), mostly converged, 18,000–35,000 kg.
+- **Random search:** few flights, widely spread, mostly unconverged.
 - **MAS re-flies identical designs.** The long flat rows are the same design flown again and again: N_GR flies
   ~22,700 kg about 35 times in a row (flights ~110–145), O_GR repeats one design about 12 times within its first 20
   flights, S_GR about 25 times. Each repeat counts as a MAS flight. A repeat proposed by an optimizer is answered
@@ -124,14 +151,17 @@ Filled = the mission converged, hollow = it did not. Both figures use the same f
 
 ## Other checks
 
-- **SU2 aero not injected:** 5 optimizer designs had an SU2 lift coefficient outside Aviary's allowed range
+- **SU2 aero not injected:** some optimizer designs had an SU2 lift coefficient outside Aviary's allowed range
   (0.05–1.0), so the SU2 drag was not passed to Aviary. None of them flew, so no flight in this comparison ran on
   Aviary's default drag polar (`data/09_optimizer_aero_not_injected.csv`).
 - **BO relaunch (B236):** BO was restarted on 2026-10-31 at 19:50 to add the residual constraints. Each seed
   replayed its first 5 designs from the log, without re-running them. Those 5 records predate the residual field:
-  converged missions get residual 0, unconverged ones get the reported value or the 1e6 fallback.
+  converged missions get residual 0, unconverged ones get the reported value or the 1e6 fallback. GA, MADS, SLSQP
+  and random ran entirely on the new code.
+- **Designs tried for 20 flights:** BO 124, GA 124, MADS 129, SLSQP 105 (over 5 seeds); random 200 designs for 29
+  flights.
 - **Unconverged flights are common on both sides:** the MAS's first 20 flights converged 0–5 times; the
-  optimizers' converged 9–17 times.
+  optimizers' converged 9–18 times (random 1–4 of 2–10).
 
 ## Files and reproduction
 
