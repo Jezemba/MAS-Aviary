@@ -584,8 +584,8 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     commit bb99056). Without a server-side handoff that number stays
     inside the structures stage's text output — aviary then computes
     its OWN wing mass from internal FLOPS and ignores the external
-    discipline. resolve_request injects a matching
-    ``Aircraft.Wing.MASS_SCALER`` into the next
+    discipline. resolve_request injects it as
+    ``Aircraft.Wing.MASS`` (kg, B240) into the next
     ``set_aircraft_parameters`` so aviary's mission reflects the
     coupled wing mass.
     """
@@ -1295,7 +1295,7 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
     data["framework_applied"] = {
         "overridden": last,
         "note": ("Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR come from the "
-                 "SU2 result, Aircraft.Wing.MASS_SCALER from the mass estimate, pycycle's Fn_DES from the "
+                 "SU2 result, Aircraft.Wing.MASS from the mass estimate, pycycle's Fn_DES from the "
                  "mass and the SU2 drag (thrust sized to drag), and Aircraft.Engine.SCALE_FACTOR from "
                  "pycycle's thrust; the framework sets them. Values you passed for them were replaced. "
                  "read_design_json shows the values applied."),
@@ -2171,6 +2171,69 @@ def _ensure_engine_deck(resolved: dict) -> None:
     store.pop("engine_deck_error", None)
 
 
+# Agent tools the data plane also calls itself; registered for it even when a stage's toolset lacks them (unlike
+# ENGINE_DECK_TOOLS they stay visible to agents).
+FRAMEWORK_CALLED_TOOLS = ("configure_mission",)
+
+
+def _takeoff_mass_kg() -> float | None:
+    """The take-off mass the climb start is computed for: mass-mcp's MTOM (B239)."""
+    if _design_state is None:
+        return None
+    from src.tools import coupling as _cpl
+
+    mtom = _cpl.get_var(_design_state, "mass.mtom_kg")
+    if mtom is None:
+        mtom = _design_state.data_store.get("mass_mtom_kg")
+    return round(float(mtom), 1) if mtom is not None else None
+
+
+def _inject_takeoff_mass(resolved: dict) -> None:
+    """configure_mission carries mass-mcp's MTOM as takeoff_mass_kg; the framework's value wins (B143/B239)."""
+    mtom = _takeoff_mass_kg()
+    if mtom is None:
+        return
+    if resolved.get("takeoff_mass_kg") is not None:
+        _note_coupled_override("takeoff_mass_kg", resolved["takeoff_mass_kg"], mtom)
+    resolved["takeoff_mass_kg"] = mtom
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    _design_state.data_store.setdefault("takeoff_mass_applied", {})[sid] = mtom
+
+
+def _ensure_takeoff_mass(resolved: dict) -> None:
+    """Before a mission flies, its climb starts at V2 for THIS aircraft's take-off mass (B239).
+
+    aviary-mcp starts the climb at V2 = 1.2 x stall speed (FAR/CS 25.107) from the take-off mass, the wing area and
+    the aircraft file's take-off CLmax. Without a take-off mass it uses the bench file's design gross mass (79.6 t),
+    so a heavier design would start its climb at its stall speed -- the B3 baseline did, and its mission did not
+    converge. The mass changes with the design, so it is re-sent whenever the MTOM on record differs.
+    """
+    if _design_state is None:
+        return
+    mtom = _takeoff_mass_kg()
+    if mtom is None:
+        return
+    store = _design_state.data_store
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    if (store.get("takeoff_mass_applied") or {}).get(sid) == mtom:
+        return
+    tool = (_registered_tools or {}).get("configure_mission")
+    if tool is None:
+        store["takeoff_mass_error"] = "configure_mission is not loaded"
+        logger.warning("[B239] cannot give aviary session %s its take-off mass: configure_mission not loaded", sid)
+        return
+    try:
+        out = _as_dict(tool.forward(session_id=sid, takeoff_mass_kg=mtom))
+    except Exception as exc:  # pragma: no cover - surfaced through store and the mission's climb_start report
+        out = {"error": f"{type(exc).__name__}: {exc}"}
+    if not out.get("success"):
+        store["takeoff_mass_error"] = f"configure_mission: {_error_text(out)}"
+        logger.warning("[B239] aviary session %s refused the take-off mass: %s", sid, store["takeoff_mass_error"])
+        return
+    store.pop("takeoff_mass_error", None)
+    logger.info("[B239] aviary session %s: take-off mass %.1f kg (mass-mcp MTOM) for the V2 climb start", sid, mtom)
+
+
 def engine_deck_current(session_id: str | None = None) -> bool:
     """True when the aviary session carries the deck of the engine sized on the current design (B3)."""
     if _design_state is None:
@@ -2360,6 +2423,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name in _MORPH_FILE_READERS and _design_state:
         _auto_export_morph()
     if tool_name == "run_simulation" and _design_state and mcp_name == "aviary":
+        _ensure_takeoff_mass(resolved)         # B239: the climb starts at V2 for this take-off mass
         _ensure_engine_deck(resolved)          # B3: the designed cycle becomes the mission engine
         _reapply_current_engine(resolved)
     if tool_name in ("run_cycle", "get_outputs") and _design_state and mcp_name == "pycycle":
@@ -2701,6 +2765,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
                            "session_id": resolved.get("session_id"),
                            "updates": dict(resolved.get("updates") or {})}
+    if tool_name == "configure_mission" and _design_state and mcp_name == "aviary":
+        _inject_takeoff_mass(resolved)
     if tool_name == "set_aircraft_parameters" and _design_state:
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
@@ -2715,12 +2781,6 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     return resolved
 
 
-# Aviary's FLOPS Wing.MASS on the default bench geometry (no
-# overrides) is 5,998 kg — measured locally via aviary_runner with
-# MASS_SCALER=1.0 and AREA=124.6, AR=11.22. The middleware uses this
-# as the reference to translate mass-mcp's externally computed wing
-# mass into a scaler relative to aviary's own buildup.
-_AVIARY_BENCH_WING_MASS_KG = 5998.0
 
 
 # Phase K-B: per-engine cruise-climb thrust ≈ MTOM · g / (L/D · N_eng)
@@ -2887,19 +2947,17 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
 
 
 def _inject_phase_k_wing_mass(resolved: dict) -> None:
-    """Merge mass-mcp's wing mass into a set_aircraft_parameters call.
+    """Fly mass-mcp's wing: inject ``Aircraft.Wing.MASS`` (kg) into a set_aircraft_parameters call.
 
-    Adds ``Aircraft.Wing.MASS_SCALER`` to the parameters dict (if not
-    already set by the agent), scaled so that aviary's structural
-    wing mass lines up with mass-mcp's externally computed value.
+    Avion B240 (2026-11-03): this used to inject ``Aircraft.Wing.MASS_SCALER = wing_kg / 5,998 kg``. The 5,998 kg
+    is aviary's bench wing at the bench geometry and weight, but aviary multiplies ITS wing for the CURRENT geometry
+    and weight, so the mission did not carry mass-mcp's wing (B3 baseline: scaler 1.50 flew 12,400 kg where mass-mcp
+    said 8,995 kg, and with drag factor 1.27 the mission did not converge, B239). Setting the wing mass directly is
+    exact (aviary-mcp fix/b3-pycycle-engine: Aircraft.Wing.MASS overrides aviary's FLOPS estimate; measured empty
+    mass and structure mass move by the wing difference, nothing else). The framework's value wins (B143); an
+    agent-supplied MASS_SCALER is dropped, since it would no longer act on anything.
 
-    No-op when:
-      - mass-mcp didn't run (no ``mass_wing_kg`` in data_store)
-      - the agent already specified the scaler explicitly
-
-    Validated end-to-end before shipping (Avion 2026-05-23):
-    MASS_SCALER ∈ {0.5, 1.0, 1.5} on the bench moves fuel burn from
-    9,733 → 10,047 → 10,423 kg — a real, monotonic coupling.
+    No-op when mass-mcp did not run (no ``mass_wing_kg`` in data_store).
     """
     if _design_state is None:
         return
@@ -2917,18 +2975,16 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     if not isinstance(parameters, dict):
         return
 
-    from src.tools import coupling as _cpl
-    scaler = _cpl.wing_mass_to_aviary_scaler(wing_kg)
-    if "Aircraft.Wing.MASS_SCALER" in parameters:  # B143: the framework's value wins
-        _note_coupled_override("Aircraft.Wing.MASS_SCALER", parameters["Aircraft.Wing.MASS_SCALER"], scaler)
-
-    parameters["Aircraft.Wing.MASS_SCALER"] = scaler
+    wing_kg = float(wing_kg)
+    if "Aircraft.Wing.MASS" in parameters:  # B143: the framework's value wins
+        _note_coupled_override("Aircraft.Wing.MASS", parameters["Aircraft.Wing.MASS"], wing_kg)
+    if "Aircraft.Wing.MASS_SCALER" in parameters:
+        _design_state.data_store.setdefault("_coupled_override_last", {})["Aircraft.Wing.MASS_SCALER"] = {
+            "asked": parameters["Aircraft.Wing.MASS_SCALER"], "used": "dropped: Aircraft.Wing.MASS is set directly"}
+    parameters.pop("Aircraft.Wing.MASS_SCALER", None)
+    parameters["Aircraft.Wing.MASS"] = wing_kg
     resolved["parameters"] = parameters
-    logger.info(
-        "Phase K-A middleware injected Aircraft.Wing.MASS_SCALER=%.3f "
-        "(mass-mcp wing=%.1f kg / aviary bench=%.1f kg)",
-        scaler, float(wing_kg), _AVIARY_BENCH_WING_MASS_KG,
-    )
+    logger.info("[B240] injected Aircraft.Wing.MASS=%.1f kg (mass-mcp wing)", wing_kg)
 
 
 # A value shaped like a data-store ref key: "<tool_name>__<field>".
@@ -3136,7 +3192,7 @@ def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
     in place of it. Same AVION_ENFORCE_COUPLING toggle as the aero error.
 
     Fires only for ``set_aircraft_parameters``. Suppressed when mass is already coupled —
-    either the resolved params already carry ``Aircraft.Wing.MASS_SCALER`` (injected from
+    either the resolved params already carry ``Aircraft.Wing.MASS`` (injected from
     the registry or set by the agent) or mass-mcp has run this session (``mass_wing_kg``
     captured, so the injector will fill it in).
     """
@@ -3153,7 +3209,7 @@ def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
             params = json.loads(params)
         except (json.JSONDecodeError, TypeError):
             return None
-    if isinstance(params, dict) and "Aircraft.Wing.MASS_SCALER" in params:
+    if isinstance(params, dict) and ("Aircraft.Wing.MASS" in params or "Aircraft.Wing.MASS_SCALER" in params):
         return None  # already coupled (injected or agent-provided)
     if _design_state.data_store.get("mass_wing_kg") is not None:
         return None  # mass-mcp ran; the injector couples it — no hint needed
@@ -3161,7 +3217,7 @@ def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
         "COUPLING AVAILABLE (optional): the structures discipline can be coupled here. "
         "Run estimate_mass (mass-mcp) on the current morphed geometry BEFORE the mission "
         "and its wing mass is captured as the typed var mass.wing_kg and injected as "
-        "Aircraft.Wing.MASS_SCALER automatically. Proceeding now uses aviary's own internal "
+        "Aircraft.Wing.MASS automatically. Proceeding now uses aviary's own internal "
         "FLOPS wing mass instead — valid, but the external structures discipline is not "
         "coupled into this run. Your choice."
     )

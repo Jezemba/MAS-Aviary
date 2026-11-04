@@ -70,7 +70,6 @@ CANONICAL_VARS: dict[str, VarSpec] = {
 # ---------------------------------------------------------------------------
 
 # aviary height_energy A320-class bench references.
-AVIARY_BENCH_WING_MASS_KG = 5998.0     # MASS_SCALER = 1.0 corresponds to this wing.
 FN_DES_PER_KG_LBF = 0.0811             # engine thrust per kg MTOM.
 _AVIARY_CD0 = 0.022                    # aviary FLOPS baseline zero-lift CD.
 _OSWALD = 0.85                         # span efficiency in the aviary induced-drag est.
@@ -174,11 +173,6 @@ def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: f
     cd_aviary_default = _AVIARY_CD0 + (float(cl) ** 2) / (3.14159 * ar_eff * _OSWALD)
     factor = cd_total / cd_aviary_default
     return max(0.5, min(factor, 2.0))
-
-
-def wing_mass_to_aviary_scaler(wing_kg: float) -> float:
-    """Map mass-mcp wing mass to aviary's ``Aircraft.Wing.MASS_SCALER``."""
-    return max(0.5, min(float(wing_kg) / AVIARY_BENCH_WING_MASS_KG, 2.0))
 
 
 def mtom_to_pycycle_fn_des(mtom_kg: float) -> float:

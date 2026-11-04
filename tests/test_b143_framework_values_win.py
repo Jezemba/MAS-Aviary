@@ -51,8 +51,7 @@ def test_su2_and_mass_values_replace_the_callers():
     p = _resolve(ATTEMPT3_CALL)
     assert p["Mission.Design.LIFT_COEFFICIENT"] == pytest.approx(0.2403152789)
     assert p["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] != 1.02
-    assert p["Aircraft.Wing.MASS_SCALER"] == pytest.approx(
-        coupling.wing_mass_to_aviary_scaler(8736.345205942507))
+    assert p["Aircraft.Wing.MASS"] == pytest.approx(8736.345205942507)     # B240: the wing mass itself
 
 
 def test_a_placeholder_string_is_replaced_not_sent():
@@ -60,6 +59,7 @@ def test_a_placeholder_string_is_replaced_not_sent():
     p = _resolve({"Mission.Design.LIFT_COEFFICIENT": "from su2",
                   "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": "from su2",
                   "Aircraft.Wing.MASS_SCALER": "from mass"})
+    assert "Aircraft.Wing.MASS_SCALER" not in p and isinstance(p["Aircraft.Wing.MASS"], float)
     assert all(isinstance(p[k], float) for k in p)
 
 

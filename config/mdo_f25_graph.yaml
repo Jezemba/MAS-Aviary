@@ -15,7 +15,7 @@
 # these manually:
 #   • SU2 CL → Aviary Mission.Design.LIFT_COEFFICIENT (Phase H)
 #   • SU2 CD → Aviary SUBSONIC_DRAG_COEFF_FACTOR (Phase H)
-#   • mass-mcp wing → Aviary Aircraft.Wing.MASS_SCALER (Phase K-A)
+#   • mass-mcp wing → Aviary Aircraft.Wing.MASS (Phase K-A)
 #   • mass-mcp MTOM → pycycle Fn_DES (Phase K-B)
 
 mdo_f25_graph:
@@ -201,7 +201,7 @@ mdo_f25_graph:
 
         The data-plane middleware will auto-inject the resulting
         wing mass into the next set_aircraft_parameters call as
-        Aircraft.Wing.MASS_SCALER (Phase K-A) and stash MTOM for
+        Aircraft.Wing.MASS (Phase K-A) and stash MTOM for
         the propulsion stage's Fn_DES sizing (Phase K-B). You don't
         need to plumb these manually.
 
@@ -329,7 +329,7 @@ mdo_f25_graph:
 
            The data-plane middleware also auto-injects
            Mission.Design.LIFT_COEFFICIENT (from SU2 CL) and
-           Aircraft.Wing.MASS_SCALER (from mass-mcp wing) under
+           Aircraft.Wing.MASS (from mass-mcp wing) under
            Phase H / K-A coupling — you don't need to plumb those
            manually.
 

@@ -163,7 +163,7 @@ class TestStaleAeroNoLongerInjects:
             "set_aircraft_parameters",
             {"session_id": "s1", "parameters": {}},
         )
-        assert "Aircraft.Wing.MASS_SCALER" not in out["parameters"]
+        assert "Aircraft.Wing.MASS" not in out["parameters"]
 
     def test_fresh_su2_on_the_new_link_couples_normally(self):
         """Reset must not break coupling — only staleness."""

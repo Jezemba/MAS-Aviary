@@ -499,7 +499,7 @@ class TestPhaseHAeroInjection:
     # engine model OR replaces the engine deck file at runtime — both
     # of which the test will catch with a direct sensitivity sweep.
 
-    # ── Phase K-A: mass-mcp wing mass → Aircraft.Wing.MASS_SCALER ──
+    # ── Phase K-A: mass-mcp wing mass → Aircraft.Wing.MASS (kg, direct since B240) ──
 
     def test_capture_wing_mass_from_estimate_mass(self, fresh_state):
         """estimate_mass response payload's mass_breakdown.components
@@ -530,9 +530,9 @@ class TestPhaseHAeroInjection:
                 f"Captured implausible wing mass {nonsense}"
             )
 
-    def test_inject_wing_mass_scaler(self, fresh_state):
-        """resolve_request on set_aircraft_parameters adds the
-        Wing.MASS_SCALER from the captured mass-mcp wing mass."""
+    def test_inject_wing_mass(self, fresh_state):
+        """resolve_request on set_aircraft_parameters carries mass-mcp's wing mass itself (B240): the old
+        MASS_SCALER = wing / 5,998 kg made aviary fly 12,400 kg where mass-mcp said 8,995 kg."""
         fresh_state.data_store["mass_wing_kg"] = 7677.4
 
         out = resolve_request(
@@ -540,31 +540,32 @@ class TestPhaseHAeroInjection:
             {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
         )
         params = out["parameters"]
-        # 7677.4 / 5998 ≈ 1.280 (within clamp range)
-        assert params["Aircraft.Wing.MASS_SCALER"] == pytest.approx(
-            1.280, abs=0.005
-        )
+        assert params["Aircraft.Wing.MASS"] == pytest.approx(7677.4)
+        assert "Aircraft.Wing.MASS_SCALER" not in params
 
     def test_inject_phase_k_overwrites_explicit_value(
         self, fresh_state,
     ):
-        """B143: mass-mcp's scaler wins over the agent's."""
+        """B143: mass-mcp's wing wins over the agent's; an agent scaler is dropped (it would act on nothing)."""
         fresh_state.data_store["mass_wing_kg"] = 7677.4
         out = resolve_request(
             "set_aircraft_parameters",
             {"session_id": "s",
              "parameters": {
                  "Aircraft.Wing.AREA": 130.1,
+                 "Aircraft.Wing.MASS": 9000.0,
                  "Aircraft.Wing.MASS_SCALER": 1.5,
              }},
         )
-        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] != 1.5
+        assert out["parameters"]["Aircraft.Wing.MASS"] == pytest.approx(7677.4)
+        assert "Aircraft.Wing.MASS_SCALER" not in out["parameters"]
 
     def test_inject_phase_k_noop_when_no_wing_mass(self, fresh_state):
         out = resolve_request(
             "set_aircraft_parameters",
             {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
         )
+        assert "Aircraft.Wing.MASS" not in out["parameters"]
         assert "Aircraft.Wing.MASS_SCALER" not in out["parameters"]
 
     def test_inject_phase_h_and_k_coexist(self, fresh_state):
@@ -581,27 +582,17 @@ class TestPhaseHAeroInjection:
         params = out["parameters"]
         assert "Mission.Design.LIFT_COEFFICIENT" in params
         assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" in params
-        assert "Aircraft.Wing.MASS_SCALER" in params
+        assert params["Aircraft.Wing.MASS"] == pytest.approx(7677.4)
 
-    def test_inject_clamps_extreme_wing_mass_scaler(self, fresh_state):
-        """A mass-mcp number outside the clamp range still produces a
-        bounded scaler — protects aviary from runaway parameters."""
-        # 20,000 kg / 5998 = 3.33 → should clamp to 2.0
-        fresh_state.data_store["mass_wing_kg"] = 20000.0
-        out = resolve_request(
-            "set_aircraft_parameters",
-            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
-        )
-        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 2.0
-
-        # 2,000 kg / 5998 = 0.33 → should clamp to 0.5
-        del fresh_state.data_store["mass_wing_kg"]
-        fresh_state.data_store["mass_wing_kg"] = 2000.0
-        out = resolve_request(
-            "set_aircraft_parameters",
-            {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
-        )
-        assert out["parameters"]["Aircraft.Wing.MASS_SCALER"] == 0.5
+    def test_extreme_but_plausible_wing_mass_passes_through_exactly(self, fresh_state):
+        """No 0.5-2.0 clamp any more: the mass is the mass (implausible values are rejected at capture)."""
+        for wing_kg in (20000.0, 2000.0):
+            fresh_state.data_store["mass_wing_kg"] = wing_kg
+            out = resolve_request(
+                "set_aircraft_parameters",
+                {"session_id": "s", "parameters": {"Aircraft.Wing.AREA": 130.1}},
+            )
+            assert out["parameters"]["Aircraft.Wing.MASS"] == pytest.approx(wing_kg)
 
     # ── Phase K-B: mass-mcp MTOM → pycycle Fn_DES ────────────────────
 

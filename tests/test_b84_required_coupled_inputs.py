@@ -106,7 +106,7 @@ def test_the_mission_will_not_run_on_aviarys_internal_flops_wing_mass():
     refusal = _call("run_simulation")
     assert refusal is not None
     missing = {m["parameter"]: m["state"] for m in refusal["missing"]}
-    assert missing["Aircraft.Wing.MASS_SCALER"] == "missing"
+    assert missing["Aircraft.Wing.MASS"] == "missing"          # B240: the wing mass itself
     assert "estimate_mass" in refusal["error"]
     assert "MORPHED" in refusal["error"]           # not the baseline fixture (B21/B30)
 

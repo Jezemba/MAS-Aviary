@@ -38,7 +38,7 @@ PRODUCER_NODE = {"tigl": GEOMETRY, "su2": AERO, "mass": MASS, "pycycle": PROPULS
 GEOMETRY_CODES = {"NO_MESH", "MORPH_NOT_EXPORTED", "STALE_GEOMETRY", "GEOMETRY_NOT_APPLIED", "AERO_NONPHYSICAL"}
 # Aviary parameters the framework sets, by the discipline that produces them (rule 5, READ_ONLY_PARAMETER).
 PARAM_PRODUCER = [(re.compile(r"LIFT_COEFFICIENT|DRAG_COEFF", re.I), AERO),
-                  (re.compile(r"MASS_SCALER", re.I), MASS),
+                  (re.compile(r"MASS_SCALER|Wing\.MASS\b", re.I), MASS),   # before the Aircraft.Wing.* geometry rule
                   (re.compile(r"Engine\.SCALE_FACTOR|SCALED_SLS_THRUST", re.I), PROPULSION),
                   (re.compile(r"Aircraft\.(Wing|Fuselage|HorizontalTail|VerticalTail)\.", re.I), GEOMETRY)]
 # Words in a recommended change, by the discipline that produces the variable (rules 10-13). Geometry first:

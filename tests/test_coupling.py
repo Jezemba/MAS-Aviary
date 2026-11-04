@@ -50,12 +50,6 @@ def test_aero_transform_still_clamps_extremes():
     assert C.aero_cd_to_aviary_drag_factor(1.0, 0.4, 11.0) == 2.0   # huge CD clamps high
 
 
-def test_wing_mass_scaler_matches():
-    assert C.wing_mass_to_aviary_scaler(7677.0) == max(0.5, min(7677.0 / 5998.0, 2.0))
-    assert C.wing_mass_to_aviary_scaler(20000.0) == 2.0   # clamp
-    assert C.wing_mass_to_aviary_scaler(1000.0) == 0.5    # clamp
-
-
 def test_fn_des_matches():
     assert C.mtom_to_pycycle_fn_des(73000.0) == max(2000.0, min(73000.0 * 0.0811, 25000.0))
     assert C.mtom_to_pycycle_fn_des(500000.0) == 25000.0  # clamp

@@ -149,9 +149,9 @@ def test_phase_h_drag_factor_changes_fuel_burn():
 
 
 def test_phase_k_wing_mass_changes_fuel_burn():
-    """Sweep three mass-mcp wing-mass values. Middleware injects
-    ``Aircraft.Wing.MASS_SCALER = wing_kg / 5998``. Higher wing mass
-    → larger scaler → heavier MTOM → more fuel.
+    """Sweep three mass-mcp wing-mass values. Middleware injects the wing mass itself
+    as ``Aircraft.Wing.MASS`` (kg, B240; it injected MASS_SCALER = wing_kg / 5998 before). Higher wing mass
+    → heavier MTOM → more fuel.
 
     Direct sanity-test of the target knob produced
     MASS_SCALER ∈ {0.5, 1.0, 1.5} → fuel 9.7t/10.0t/10.4t
@@ -172,14 +172,14 @@ def test_phase_k_wing_mass_changes_fuel_burn():
         fuel_burns[wing_kg] = result.get("fuel_burned_kg")
         params = (result.get("design_parameters", {})
                   .get("aircraft_params", {}))
-        scalers[wing_kg] = params.get("Aircraft.Wing.MASS_SCALER")
+        scalers[wing_kg] = params.get("Aircraft.Wing.MASS")
 
-    print(f"\n  wing_kg   scaler   fuel_burn_kg")
+    print(f"\n  wing_kg   flown_kg   fuel_burn_kg")
     for w in wing_kg_levels:
         print(f"  {w:7.0f}   {scalers[w]:.3f}    {fuel_burns[w]:.1f}")
 
     assert scalers[wing_kg_levels[0]] < scalers[wing_kg_levels[1]] < scalers[wing_kg_levels[2]], (
-        f"MASS_SCALER isn't monotone in wing_kg: {scalers}"
+        f"Aircraft.Wing.MASS not carried as given: {scalers}"
     )
     assert fuel_burns[wing_kg_levels[0]] < fuel_burns[wing_kg_levels[1]] < fuel_burns[wing_kg_levels[2]], (
         f"Phase K-A coupling silent — fuel burn doesn't respond to "

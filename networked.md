@@ -60,7 +60,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
 | Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
 | Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
-| Wing mass scaler | Derived | framework: mass result to aviary `Aircraft.Wing.MASS_SCALER` | aviary | from mass | set by framework | none |
+| Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
 | Max take-off mass | Derived | mass / aviary | pycycle, su2 | 78,126 | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
 | Passengers | Condition | mission definition | mass | 239 | fixed | none |
@@ -273,7 +273,7 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, ENGINE SCALE_FACTOR, as applied>
+  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS, ENGINE SCALE_FACTOR, as applied>
   PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
@@ -440,7 +440,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
 | Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
 | Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
-| Wing mass scaler | Derived | framework: mass result to aviary `Aircraft.Wing.MASS_SCALER` | aviary | from mass | set by framework | none |
+| Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
 | Max take-off mass | Derived | mass / aviary | pycycle, su2 | 78,126 | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
 | Passengers | Condition | mission definition | mass | 239 | fixed | none |
@@ -662,7 +662,7 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS_SCALER, ENGINE SCALE_FACTOR, as applied>
+  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS, ENGINE SCALE_FACTOR, as applied>
   PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 

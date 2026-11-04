@@ -6,7 +6,7 @@ Every MCP server has a default for everything, and the framework's injectors are
 no-ops when their upstream has not run:
 
   * no SU2 solve  -> no drag factor injected -> aviary flies its OWN DEFAULT drag polar
-  * no mass-mcp   -> no MASS_SCALER injected -> aviary uses its OWN internal FLOPS wing mass
+  * no mass-mcp   -> no Aircraft.Wing.MASS injected -> aviary uses its OWN internal FLOPS wing mass
   * no mass-mcp   -> no Fn_DES injected      -> pycycle sizes the engine on its own default thrust
 
 So the discipline chain (geometry -> SU2 -> aviary, geometry -> mass -> pycycle -> aviary)
@@ -95,7 +95,7 @@ AERO_CD = CoupledInput(
     note="Captured as aero.cd_cruise; the drag factor is derived and injected for you -- "
          "without it aviary flies its own DEFAULT drag polar.")
 WING_MASS = CoupledInput(
-    var="mass.wing_kg", parameter="Aircraft.Wing.MASS_SCALER",
+    var="mass.wing_kg", parameter="Aircraft.Wing.MASS",
     label="structural wing mass (mass-mcp)", producer="mass",
     produced_by="export_cpacs (the morphed geometry) -> estimate_mass",
     note="Size it on the EXPORTED MORPHED geometry, not the baseline fixture. Captured as "

@@ -119,12 +119,16 @@ def _register_framework_tools(all_tools: list[Tool], selected: list[Tool]) -> li
     run_simulation. The data plane only knows tools that were loaded for some agent, so they are wrapped
     (full middleware: knowledge base, watchdog) and registered here. They are not handed to agents: an
     agent attaching a deck by hand would bypass the framework's record of which engine a session flies.
+    FRAMEWORK_CALLED_TOOLS (configure_mission: the take-off mass, B239) are registered the same way but stay in
+    the agent's toolset.
     A tool already wrapped in ``selected`` is registered as it is, not wrapped twice.
     """
-    from src.tools.data_plane import ENGINE_DECK_TOOLS, register_tools
+    from src.tools.data_plane import ENGINE_DECK_TOOLS, FRAMEWORK_CALLED_TOOLS, register_tools
 
     have = {t.name for t in selected if getattr(t, "name", None) in ENGINE_DECK_TOOLS}
-    extra = [t for t in all_tools if getattr(t, "name", None) in ENGINE_DECK_TOOLS and t.name not in have]
+    have |= {t.name for t in selected if getattr(t, "name", None) in FRAMEWORK_CALLED_TOOLS}
+    wanted = set(ENGINE_DECK_TOOLS) | set(FRAMEWORK_CALLED_TOOLS)
+    extra = [t for t in all_tools if getattr(t, "name", None) in wanted and t.name not in have]
     if extra:
         register_tools(apply_coercion_to_tools(extra))
     return [t for t in selected if getattr(t, "name", None) not in ENGINE_DECK_TOOLS]

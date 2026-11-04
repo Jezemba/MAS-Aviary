@@ -107,7 +107,7 @@ STRUCTURES = Procedure(
     steps=(
         Step("estimate_mass", "size on the exported morphed CPACS path -- NOT the baseline fixture."),
     ),
-    notes=("mass.wing_kg is injected into the mission as Aircraft.Wing.MASS_SCALER; without it "
+    notes=("mass.wing_kg is injected into the mission as Aircraft.Wing.MASS; without it "
            "aviary silently uses its own internal FLOPS wing mass.",
            "mass.mtom_kg sizes the engine, so propulsion cannot run until this has.",),
 )
