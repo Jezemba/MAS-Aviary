@@ -47,3 +47,20 @@ def test_table_flags_inert_variables_against_the_noise_floor():
     assert "NO / NO" in rows["htail_sweep"]                     # within the 2 kg / 1 kg baseline spread
     assert "FAILED: SU2 solve failed" in rows["vtail_area"]
     assert "noise floor" in text and "19,001.0" in text
+
+
+def test_t4_takeoff_step_stays_within_the_static_limit():
+    """3540 + 150 = 3690 degR has no sea-level static solution (DeckNotUsable in oat_run3)."""
+    to = next(v for v in oat.all_variables(3540.0, 3090.0) if v.name == "t4_takeoff")
+    assert 3540.0 < oat.stepped(to) <= oat.T4_TAKEOFF_STATIC_LIMIT_DEGR
+
+
+def test_retry_failed_reruns_only_rows_without_a_fuel_figure():
+    runs = [("baseline_1", [1.0]), ("bypass_ratio", [2.0]), ("t4_takeoff", [3.0]), ("t4_climb", [4.0])]
+    logged = [{"label": "baseline_1", "fuel_burned_kg": 1.0}, {"label": "bypass_ratio", "fuel_burned_kg": 2.0},
+              {"label": "t4_takeoff", "fuel_burned_kg": None}]
+    assert [l for l, _ in oat.to_run(runs, logged)] == ["t4_climb"]
+    assert [l for l, _ in oat.to_run(runs, logged, retry_failed=True)] == ["t4_takeoff", "t4_climb"]
+    assert [l for l, _ in oat.to_run(runs, logged, only=["t4_takeoff"], retry_failed=True)] == ["t4_takeoff"]
+    logged.append({"label": "t4_takeoff", "fuel_burned_kg": 3.0})          # a retry that worked is done
+    assert [l for l, _ in oat.to_run(runs, logged, retry_failed=True)] == ["t4_climb"]

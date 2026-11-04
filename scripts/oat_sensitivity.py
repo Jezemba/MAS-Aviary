@@ -50,8 +50,13 @@ STEP = {
     "fan_pressure_ratio": ("abs", 0.065), "lpc_pressure_ratio": ("abs", 0.165), "hpc_pressure_ratio": ("abs", 1.131),
     "fan_efficiency": ("abs", 0.01), "lpc_efficiency": ("abs", 0.01), "hpc_efficiency": ("abs", 0.01),
     "hpt_efficiency": ("abs", 0.01), "lpt_efficiency": ("abs", 0.01),
-    "t4_takeoff": ("abs", 150.0), "t4_climb": ("abs", 100.0),
+    # T4_TAKEOFF +100: 3540 -> 3640 degR, the top of the agents' range. +150 (3690) has no sea-level static
+    # solution and pycycle refuses the deck (DeckNotUsable, measured 2026-11-02 and again in oat_run3).
+    "t4_takeoff": ("abs", 100.0), "t4_climb": ("abs", 100.0),
 }
+
+# The highest take-off rating with a sea-level static solution on the bench cycle (static_limit, 2026-11-02).
+T4_TAKEOFF_STATIC_LIMIT_DEGR = 3640.0
 
 
 def all_variables(t4_takeoff: float, t4_climb: float) -> tuple[Variable, ...]:
@@ -72,6 +77,14 @@ def plan(vs: tuple[Variable, ...], repeats: int = 2) -> list[tuple[str, list[flo
         x[i] = stepped(v)
         runs.append((v.name, x))
     return runs
+
+
+def to_run(runs: list[tuple[str, list[float]]], records: list[dict], only=None,
+           retry_failed: bool = False) -> list[tuple[str, list[float]]]:
+    """The planned runs still to do: not yet logged (or, with retry_failed, logged only without a fuel figure)."""
+    ok = {r["label"] for r in records if r.get("fuel_burned_kg") is not None}
+    done = ok if retry_failed else {r["label"] for r in records}
+    return [(label, x) for label, x in runs if label not in done and (not only or label in only)]
 
 
 def engine_record() -> dict:
@@ -135,6 +148,8 @@ def main() -> int:
     ap.add_argument("--t4-takeoff", type=float, required=True)
     ap.add_argument("--t4-climb", type=float, required=True)
     ap.add_argument("--only", nargs="*", help="labels to run (default: all)")
+    ap.add_argument("--retry-failed", action="store_true",
+                    help="run again the labels logged without a fuel figure (the failed record stays in the log)")
     args = ap.parse_args()
     if "claude" in args.config:
         ap.error("the paid-API config is never used")
@@ -144,13 +159,11 @@ def main() -> int:
     ports = {"tigl": 0, "su2": 1, "pycycle": 2, "aviary": 3, "mass": 4}
     args.out.mkdir(parents=True, exist_ok=True)
     log = args.out / "oat.jsonl"
-    done = {json.loads(line)["label"] for line in log.open()} if log.exists() else set()
+    logged = [json.loads(line) for line in log.open()] if log.exists() else []
     vs = all_variables(args.t4_takeoff, args.t4_climb)
     ev = CoupledEvaluator(args.config, args.out / "evaluator", coarse_mesh=False,
                           server_ports={k: args.server_base + s for k, s in ports.items()})
-    for label, x in plan(vs):
-        if label in done or (args.only and label not in args.only):
-            continue
+    for label, x in to_run(plan(vs), logged, args.only, args.retry_failed):
         rec = ev.evaluate(x, vs)
         rec.update(label=label, engine=engine_record(),
                    changed={v.name: [v.default, xi] for v, xi in zip(vs, x) if xi != v.default})
