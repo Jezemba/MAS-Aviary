@@ -26,7 +26,10 @@ def _json(out: Any) -> dict:
     try:
         return json.loads(out)
     except (TypeError, ValueError):
-        return {"raw": str(out)[:500]}
+        # Every tool this evaluator calls replies with JSON; plain text is an MCP tool ERROR ("Error executing
+        # tool ..."). B241 ladder 2026-11-06: a refused generate_volume_mesh was recorded "ok" and SU2 then
+        # failed with NO_MESH, hiding the real reason.
+        return {"error": str(out)[:500], "raw": str(out)[:500]}
 
 
 class CoupledEvaluator:

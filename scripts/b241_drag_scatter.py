@@ -43,7 +43,7 @@ def plan(vs, ladders=LADDERS) -> list[tuple[str, list[float]]]:
 
 def table(records: list[dict], baseline: dict | None) -> str:
     out = ["| Run | CL | CD | dCD % | Mesh elements | Fuel kg | dFuel % | Converged |", "|---|---|---|---|---|---|---|---|"]
-    rows = ([dict(baseline, label="baseline (oat_run3)")] if baseline else []) + records
+    rows = ([dict(baseline, label="baseline")] if baseline else []) + records
     cd0 = ((baseline or {}).get("coupled") or {}).get("cd")
     f0 = (baseline or {}).get("fuel_burned_kg")
     for r in rows:
@@ -65,6 +65,9 @@ def main() -> int:
     ap.add_argument("--server-base", type=int, required=True)
     ap.add_argument("--t4-takeoff", type=float, required=True)
     ap.add_argument("--t4-climb", type=float, required=True)
+    ap.add_argument("--tigl-port", type=int, help="a different tigl server, e.g. one in mesh-deformation mode")
+    ap.add_argument("--with-baseline", action="store_true",
+                    help="evaluate the baseline here first (label \"baseline\") instead of reading it from --baseline")
     args = ap.parse_args()
     if "claude" in args.config:
         ap.error("the paid-API config is never used")
@@ -80,15 +83,19 @@ def main() -> int:
     vs = all_variables(args.t4_takeoff, args.t4_climb)
     ports = {"tigl": 0, "su2": 1, "pycycle": 2, "aviary": 3, "mass": 4}
     ev = CoupledEvaluator(args.config, args.out / "evaluator", coarse_mesh=False,
-                          server_ports={k: args.server_base + s for k, s in ports.items()})
-    for label, x in plan(vs):
+                          server_ports={k: (args.tigl_port if k == "tigl" and args.tigl_port else args.server_base + s)
+                                        for k, s in ports.items()})
+    runs = ([("baseline", [v.default for v in vs])] if args.with_baseline else []) + plan(vs)
+    for label, x in runs:
         if label in done:
             continue
         rec = ev.evaluate(x, vs)
         rec["label"] = label
         with log.open("a") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
-        (args.out / "drag_scatter.md").write_text(table([json.loads(l) for l in log.open()], baseline))
+        records = [json.loads(l) for l in log.open()]
+        base = baseline or next((r for r in records if r["label"] == "baseline"), None)
+        (args.out / "drag_scatter.md").write_text(table([r for r in records if r["label"] != "baseline"], base))
         c = rec.get("coupled") or {}
         print(f"{label}: cd {c.get('cd')} cl {c.get('cl')} mesh {rec.get('mesh_elements')} "
               f"fuel {rec.get('fuel_burned_kg')} failure {rec.get('failure')} ({rec.get('seconds')} s)", flush=True)
