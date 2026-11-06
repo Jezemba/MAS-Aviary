@@ -20,9 +20,18 @@ class LLMConfig:
     temperature: float = 0.7
     reasoning_effort: str = "medium"
     # Qwen3 thinking mode for the transformers backend (Jessica, 2026-10-12: measure the pipeline without it).
-    # True keeps the model's default (<think> on); False renders every call with enable_thinking=False.
-    # Env override: MAS_AVIARY_ENABLE_THINKING=0/1. Strategies that set it per agent (orchestrated) still do.
-    enable_thinking: bool = True
+    # B231/B230 (Jessica, 2026-10-29): OFF is the default for every model and every agent, so a launch that
+    # forgets MAS_AVIARY_ENABLE_THINKING=0 still runs without thinking. True keeps the model's default
+    # (<think> on). Env override: MAS_AVIARY_ENABLE_THINKING=0/1. No strategy turns it on per agent (B216).
+    enable_thinking: bool = False
+    # B231/B226: the sampling the transformers backend actually uses. Before, temperature was never passed
+    # and generation ran on the model's generation_config.json (Qwen3-32B: T 0.6, top-p 0.95, top-k 20).
+    # `temperature` above is now applied; top_p / top_k None = keep the model's own value.
+    top_p: float | None = None
+    top_k: int | None = None
+    # B231/B226: torch/transformers RNG seed set once when the model loads (env MAS_AVIARY_LLM_SEED).
+    # None = unseeded. GPU kernels and batching order can still make two runs differ.
+    seed: int | None = 42
     reliability: dict = field(default_factory=dict)
     # Extra kwargs forwarded verbatim to transformers' from_pretrained (local
     # backend only). Needed for multi-GPU placement: device_map "balanced"
@@ -138,6 +147,7 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         MAS_AVIARY_PYCYCLE_URL — overrides URL for server named "pycycle"
         MAS_AVIARY_AVIARY_URL — overrides URL for server named "aviary"
         MAS_AVIARY_ENABLE_THINKING — overrides llm.enable_thinking ("0"/"false"/"no"/"off" = off)
+        MAS_AVIARY_LLM_SEED — overrides llm.seed (an integer, or "none" for unseeded)
     """
     mcp_url = os.environ.get("MAS_AVIARY_MCP_URL")
     if mcp_url:
@@ -161,6 +171,10 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     thinking = os.environ.get("MAS_AVIARY_ENABLE_THINKING")
     if thinking is not None and thinking.strip():
         config.llm.enable_thinking = thinking.strip().lower() not in ("0", "false", "no", "off")
+
+    seed = os.environ.get("MAS_AVIARY_LLM_SEED")
+    if seed is not None and seed.strip():
+        config.llm.seed = None if seed.strip().lower() in ("none", "off") else int(seed)
 
     # Per-server URL overrides (multi-MCP support).
     server_by_name = {s.name: s for s in config.mcp.servers if s.name}

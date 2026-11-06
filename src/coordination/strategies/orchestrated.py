@@ -219,6 +219,10 @@ class OrchestratedStrategy(CoordinationStrategy):
         orchestrator_agent = agents[self._orchestrator_name]
         model = orchestrator_agent.model
         self._model = model  # Store for thinking toggle.
+        # B216: the CONFIGURED thinking setting. The model is cached across links, so its live flag may still
+        # hold the last link's per-agent toggle; generation_settings records what the config asked for.
+        settings = getattr(model, "generation_settings", None) or {}
+        self._config_thinking = bool(settings.get("enable_thinking", getattr(model, "thinking_enabled", False)))
 
         # Skill content (data-plane coupling map etc.) — load at init
         # time and append to the orchestrator's system prompt. This keeps
@@ -412,12 +416,12 @@ class OrchestratedStrategy(CoordinationStrategy):
                 metadata={"reason": "orchestration_complete"},
             )
 
-        # Toggle thinking mode: OFF for orchestrator (needs reliable JSON
-        # for CreateAgent/AssignTask), ON for workers (benefit from
-        # reasoning before parameter decisions).
+        # Thinking: always OFF for the orchestrator (needs reliable JSON for CreateAgent/AssignTask);
+        # workers follow the run config (llm.enable_thinking, OFF by default). B216: this used to switch
+        # workers ON regardless of the config, so the "nothink" orchestrated runs thought on 67-86 % of tokens.
         if hasattr(self._model, "thinking_enabled"):
             is_orchestrator = action.agent_name == self._orchestrator_name
-            self._model.thinking_enabled = not is_orchestrator
+            self._model.thinking_enabled = False if is_orchestrator else self._config_thinking
 
         return action
 

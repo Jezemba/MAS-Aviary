@@ -248,9 +248,10 @@ def test_loader_sets_the_thinking_flag_and_the_template_follows_it(monkeypatch):
 
     monkeypatch.setattr(model_loader, "ThinkingModel", _Stub)
     assert model_loader._build_model(LLMConfig(model_id="m", enable_thinking=False)).thinking_enabled is False
-    assert model_loader._build_model(LLMConfig(model_id="m")).thinking_enabled is True
+    assert model_loader._build_model(LLMConfig(model_id="m")).thinking_enabled is False      # B231 default
+    assert model_loader._build_model(LLMConfig(model_id="m", enable_thinking=True)).thinking_enabled is True
     assert (model_loader._cache_key(LLMConfig(model_id="m", enable_thinking=False))
-            != model_loader._cache_key(LLMConfig(model_id="m")))
+            != model_loader._cache_key(LLMConfig(model_id="m", enable_thinking=True)))
 
     m = ThinkingModel.__new__(ThinkingModel)        # the real flag -> template path, without __init__
     m.apply_chat_template_kwargs = {}
@@ -352,7 +353,8 @@ def test_gpt6_goes_through_the_responses_api_with_the_thinking_switch(monkeypatc
     model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", enable_thinking=False))
     assert seen["model_id"] == "openai/responses/gpt-6.1-sol" and seen["reasoning_effort"] == "low"
     assert seen["allowed_openai_params"] == ["reasoning_effort"] and "temperature" not in seen
-    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", reasoning_effort="high"))
+    model_loader._build_model(LLMConfig(model_id="openai/gpt-6.1-sol", backend="litellm", reasoning_effort="high",
+                                          enable_thinking=True))      # B231: thinking is OFF by default
     assert seen["reasoning_effort"] == "high"
     model_loader._build_model(LLMConfig(model_id="openai/gpt-5", backend="litellm"))
     assert seen["model_id"] == "openai/gpt-5" and "reasoning_effort" not in seen      # gpt-5: unchanged route

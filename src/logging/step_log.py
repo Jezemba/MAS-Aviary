@@ -166,7 +166,7 @@ def record_prompt(messages: list, prompt_tokens: int) -> None:
     _tls.prompt = {"messages": [serialize_message(m) for m in messages], "prompt_tokens": int(prompt_tokens)}
 
 
-def record_generation(message: Any, *, attempt: int, thinking: bool) -> None:
+def record_generation(message: Any, *, attempt: int, thinking: bool, sampling: dict | None = None) -> None:
     """One raw generation attempt, BEFORE parse_tool_calls strips its think block."""
     if _path is None:
         return
@@ -177,6 +177,7 @@ def record_generation(message: Any, *, attempt: int, thinking: bool) -> None:
     _pending().append({
         "attempt": int(attempt),
         "thinking_enabled": bool(thinking),
+        "sampling": sampling,   # B231: do_sample/temperature/top_p/top_k/seed the model was built with
         "prompt": prompt,   # None: built on another thread (networked batch worker), not captured
         "raw_text": raw,
         **split_think(raw),

@@ -471,6 +471,7 @@ class ThinkingModel(TransformersModel):
                 )
                 # Before parse_tool_calls, which strips the think block in place.
                 step_log.record_generation(raw_message, attempt=attempt,
+                                           sampling=getattr(self, "generation_settings", None),
                                            thinking=self._thinking_for_call())
                 try:
                     parsed = self.parse_tool_calls(raw_message)

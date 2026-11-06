@@ -75,7 +75,8 @@ _MODEL_CACHE: dict[tuple, Model] = {}
 def _cache_key(config: LLMConfig) -> tuple:
     return (
         config.backend, config.model_id, config.device_map, config.torch_dtype,
-        config.max_new_tokens, config.temperature, config.api_base, getattr(config, "enable_thinking", True),
+        config.max_new_tokens, config.temperature, config.api_base, getattr(config, "enable_thinking", False),
+        getattr(config, "top_p", None), getattr(config, "top_k", None),
         json.dumps(config.reliability or {}, sort_keys=True),
         json.dumps(config.model_kwargs or {}, sort_keys=True, default=str),
     )
@@ -103,11 +104,47 @@ def load_model(config: LLMConfig) -> Model:
     _configure_generation(config)
     load_summary_model(config)          # B82: summaries never run on the big model
     cached = _MODEL_CACHE.get(key)
-    if cached is not None:
-        return cached
-    model = _build_model(config)
-    _MODEL_CACHE[key] = model
-    return model
+    if cached is None:
+        cached = _MODEL_CACHE[key] = _build_model(config)
+    elif hasattr(cached, "thinking_enabled"):
+        # B231: a reused model starts the run at the CONFIGURED setting, not the previous run's last toggle.
+        cached.thinking_enabled = bool(getattr(config, "enable_thinking", False))
+    # B231/B226: reseed on every call (once per run/link), so each link starts from the same RNG state
+    # whether its process loaded the model or reused the cached one.
+    seed_generation(getattr(config, "seed", None))
+    return cached
+
+
+def sampling_kwargs(config: LLMConfig) -> dict:
+    """B231/B226: the sampling settings handed to transformers' generate() for the local backend.
+
+    Before this, `temperature` was never passed and generation used the model's generation_config.json.
+    temperature <= 0 means greedy decoding; top_p / top_k None keep the model's own values.
+    """
+    temperature = getattr(config, "temperature", None)
+    if temperature is not None and temperature <= 0:
+        return {"do_sample": False}
+    out: dict = {"do_sample": True}
+    if temperature is not None:
+        out["temperature"] = float(temperature)
+    if getattr(config, "top_p", None) is not None:
+        out["top_p"] = float(config.top_p)
+    if getattr(config, "top_k", None) is not None:
+        out["top_k"] = int(config.top_k)
+    return out
+
+
+def seed_generation(seed: int | None) -> bool:
+    """Seed python, numpy and torch (all GPUs) for LLM sampling; False when unseeded or torch is absent."""
+    if seed is None:
+        return False
+    try:
+        from transformers import set_seed
+    except ImportError:
+        return False
+    set_seed(int(seed))
+    logger.info("[B231] LLM generation seeded with %d", int(seed))
+    return True
 
 
 def _configure_generation(config: LLMConfig) -> None:
@@ -209,7 +246,7 @@ def _build_model(config: LLMConfig) -> Model:
             kwargs["model_id"] = f"openai/responses/{bare}"
             # llm.enable_thinking=False -> the lowest effort this family accepts ('none' is refused);
             # litellm 1.83 does not know the model, so the parameter is allowed through explicitly.
-            kwargs["reasoning_effort"] = (config.reasoning_effort or "medium") if getattr(config, "enable_thinking", True) else "low"
+            kwargs["reasoning_effort"] = (config.reasoning_effort or "medium") if getattr(config, "enable_thinking", False) else "low"
             kwargs["allowed_openai_params"] = ["reasoning_effort"]
         if not any(s in mid for s in _NO_SAMPLING) and not openai_reasoning:
             kwargs["temperature"] = config.temperature
@@ -236,6 +273,9 @@ def _build_model(config: LLMConfig) -> Model:
         "torch_dtype": None,
         "max_new_tokens": config.max_new_tokens,
         "reliability": reliability,
+        # B231/B226: smolagents keeps these in model.kwargs and passes them to every generate(),
+        # the batched path included (batch_generation reuses _prepare_completion_args).
+        **sampling_kwargs(config),
     }
     # Forwarded to from_pretrained. Chiefly `max_memory`, which is how a big
     # local model gets an EVEN multi-GPU split — see LLMConfig.model_kwargs.
@@ -245,7 +285,10 @@ def _build_model(config: LLMConfig) -> Model:
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
     model = ThinkingModel(**kwargs)
-    # llm.enable_thinking (default True = the model's own default). Every call reads this flag unless a
-    # strategy sets it per agent or per call.
-    model.thinking_enabled = bool(getattr(config, "enable_thinking", True))
+    # llm.enable_thinking (default False since B231). Every call reads this flag; the orchestrated
+    # strategy only ever turns it OFF (orchestrator JSON, message turns), never ON (B216).
+    model.thinking_enabled = bool(getattr(config, "enable_thinking", False))
+    model.generation_settings = {**sampling_kwargs(config), "seed": getattr(config, "seed", None),
+                                 "enable_thinking": model.thinking_enabled}
+    logger.info("[B231] local model generation settings: %s", model.generation_settings)
     return model
