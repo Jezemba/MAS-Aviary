@@ -112,6 +112,12 @@ def load_tools_for_agent(tool_names: list[str], config: AppConfig) -> list[Tool]
     return _register_framework_tools(all_tools, apply_coercion_to_tools(result))
 
 
+# B246 (2026-11-08): tigl morph_wing / morph_fuselage reshape the geometry but the data plane captures the design only
+# from set_high_level_parameters, so after a morph the mission flew the OLD wing with no warning (networked peers get
+# every loaded tool; the orchestrator can hand any tool out). set_high_level_parameters does the same job, coupled.
+AGENT_HIDDEN_TOOLS = ("morph_wing", "morph_fuselage")
+
+
 def _register_framework_tools(all_tools: list[Tool], selected: list[Tool]) -> list[Tool]:
     """The data plane's own tools: registered for it, kept out of every agent's toolset (B3).
 
@@ -122,6 +128,7 @@ def _register_framework_tools(all_tools: list[Tool], selected: list[Tool]) -> li
     FRAMEWORK_CALLED_TOOLS (configure_mission: the take-off mass, B239) are registered the same way but stay in
     the agent's toolset.
     A tool already wrapped in ``selected`` is registered as it is, not wrapped twice.
+    AGENT_HIDDEN_TOOLS (B246) are dropped from every agent toolset as well.
     """
     from src.tools.data_plane import ENGINE_DECK_TOOLS, FRAMEWORK_CALLED_TOOLS, register_tools
 
@@ -131,7 +138,7 @@ def _register_framework_tools(all_tools: list[Tool], selected: list[Tool]) -> li
     extra = [t for t in all_tools if getattr(t, "name", None) in wanted and t.name not in have]
     if extra:
         register_tools(apply_coercion_to_tools(extra))
-    return [t for t in selected if getattr(t, "name", None) not in ENGINE_DECK_TOOLS]
+    return [t for t in selected if getattr(t, "name", None) not in ENGINE_DECK_TOOLS + AGENT_HIDDEN_TOOLS]
 
 
 def _init_data_plane_if_needed(connector) -> None:
