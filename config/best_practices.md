@@ -15,6 +15,7 @@ bottom: the newest entries are last.
 - [2026-10-12] When a recommendation from the mdo_integrator is shown to you and you address it (fully, in part, or by finding it belongs to another role), record how with respond_to_recommendation(how_addressed).
 - [2026-10-12] Values the framework sets from other disciplines replace anything passed for them: Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR (SU2), Aircraft.Wing.MASS (mass; MASS_SCALER until 2026-11-03), Fn_DES and Aircraft.Engine.SCALE_FACTOR (engine sized to drag and mass). To move them, change the design variable that drives them.
 - [2026-10-12] Graph-routed combinations: if the task needs more disciplines re-run, call request_complexity(level, reason) with level moderate or complex. The framework reads that call, not your text.
+- [2026-11-08] Two couplings are done for you: every design's CFD mesh is the study's one baseline mesh deformed to the design (see geometry), and the engine that flies the mission is the engine cycle you designed (see propulsion). You change design variables; you do not build meshes or engine tables yourself.
 
 ## geometry
 
@@ -24,6 +25,10 @@ bottom: the newest entries are last.
 - [2026-10-04] get_wing_summary's reference_area and aspect_ratio are half-wing figures; full_reference_area and full_aspect_ratio are the full wing.
 - [2026-10-04] generate_volume_mesh without component_uid meshes the whole aircraft. The framework sets the mesh sizes. export_component_mesh(format="su2") is surface-only and SU2 cannot solve it.
 - [2026-10-04] After reshaping, call export_cpacs; the mass stage reads the exported file.
+- [2026-11-08] generate_volume_mesh does not re-mesh: it deforms the study's one baseline mesh to the current geometry (statistics.mesh_mode = "deformed_from_anchor"). The same geometry always gives the same mesh, so a small design change gives a small drag change. Mesh sizes and far_field_distance belong to the baseline mesh; values you pass are ignored and listed in statistics.mesh_settings_ignored.
+- [2026-11-08] A reply starting "MeshDeformationRefused:" means the design moved too far from the baseline for the mesh to follow; it names the component and its baseline area, aspect ratio and sweep. Your geometry stays as set but has no mesh, so SU2 cannot run on it. Move that component back toward the baseline (a smaller change) and call generate_volume_mesh again.
+- [2026-11-08] A reply starting "MeshDeformationToolFailure:" is a tool failure, not your design. Calling generate_volume_mesh again will not help: report it.
+- [2026-11-08] statistics also reports surface_triangles_flipped / surface_flipped_area_m2 (a few sliver triangles at a tail root are accepted and reported) and junction_overhang_nodes (a vertical-tail root that overhangs the fuselage; the mesh follows the root). Neither is an error.
 
 ## aero
 
@@ -37,6 +42,8 @@ bottom: the newest entries are last.
 - [2026-10-12] cruise_mach, cruise_altitude_ft, aspect_ratio and target_cl are arguments of create_su2_session / configure_from_cpacs, not SU2 options. Never put them inside overrides: one invalid option name makes SU2 reject the whole config.
 - [2026-10-12] An 'invalid option name' in config_errors is removed with update_config_entries(updates={NAME: null}); configure_from_cpacs also removes names SU2 rejected in this session. Do not swap in a did_you_mean spelling unless that option is what you meant.
 - [2026-10-12] The solve is trimmed to the cruise lift W/(qS): report the trimmed angle of attack and CL from run_su2_solver, not the starting AOA of 2 deg.
+- [2026-11-08] Replaces "takes about 10 minutes" above: on the deformed baseline mesh (2.3 million cells) the whole-aircraft solve took 2 minutes on 66 MPI ranks. SU2 uses the cores that are free when it starts, so it is slower when the machine is busy.
+- [2026-11-08] Every design is solved on the same baseline mesh, deformed, so CD differences between designs are design effects. Before 2026-11-07 each design was re-meshed and designs 2.5 % apart differed by about 22 % in CD from the mesh alone; results from before that date are not comparable.
 
 ## structures
 
@@ -54,6 +61,11 @@ bottom: the newest entries are last.
 - [2026-10-04] run_cycle reports converged; an unconverged cycle is not a result. Measured window: splitter.BPR up to about 10, fan.PR 1.4 to 1.7, T4_MAX 2857 degR and above.
 - [2026-10-04] pycycle computes no engine mass.
 - [2026-10-21] The framework sizes the cycle (Fn_DES from the mass and drag, fc.alt / fc.MN at the cruise point) before run_cycle when set_inputs has not done it on the current design. Without a mass result run_cycle is refused.
+- [2026-11-08] The cycle you design flies the mission: after a converged run_cycle the framework builds that cycle's off-design engine table (engine deck) and puts it on the aviary session before run_simulation. BPR, pressure ratios and T4 change fuel burn, not only TSFC. generate_engine_deck and set_engine_deck are framework tools; do not call them.
+- [2026-11-08] A new cycle's engine deck takes about 30 minutes to build (1,820 s measured); an unchanged cycle's deck is reused at once. run_simulation waits for it.
+- [2026-11-08] Ratings, set with set_inputs like the other inputs: T4_TAKEOFF (default 3540 degR) is the turbine inlet temperature at maximum power at and below 1,500 ft and sets take-off thrust; T4_CLIMB (default 3090 degR) is the same from 2,000 ft to the design altitude and sets climb thrust. They change the engine deck, not the design point. T4_MAX is the cruise rating.
+- [2026-11-08] T4_TAKEOFF above about 3640 degR has no sea-level static solution (3690 measured): the deck is refused (DeckNotUsable) and the mission cannot fly until the cycle changes.
+- [2026-11-08] Replaces "pycycle computes no engine mass" above for the mission: pycycle still computes none, but aviary now computes the engine mass from the flown engine's sea-level thrust (FLOPS mass law). A bigger engine is heavier; run_simulation reports it as engine.engine_mass_kg.
 
 ## mission
 
@@ -74,6 +86,7 @@ bottom: the newest entries are last.
 - [2026-10-04] exit_code 0 = success, 9 = iteration limit. Do not present unconverged numbers as reliable.
 - [2026-10-12] A mission can fly without the optimiser converging: run_simulation then returns flown=true and a convergence_warning with the remaining residuals. That is a result with a warning; report the numbers and the residuals. 'Did not fly' means no fuel burned (ZERO_FUEL).
 - [2026-10-21] NO_CHANGE_SINCE_FAILED_RUN: the last mission on this session did not fly and nothing has been set since; the same mission gives the same result. Change the design (set_aircraft_parameters) or an upstream discipline first, or report the failure.
+- [2026-11-08] run_simulation reports the engine that flew: engine.deck (the designed cycle's table), external_deck (true), scale_factor, scaled_sls_thrust_lbf and engine_mass_kg. It is refused, with the reason, when the designed cycle has no engine deck yet (no converged run_cycle, or the deck was refused); fix the cycle, not the scale factor.
 
 ## integrator
 
