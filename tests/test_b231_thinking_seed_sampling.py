@@ -54,9 +54,12 @@ def test_seed_env_override(monkeypatch):
 def test_study_config_runs_without_thinking_at_its_temperature(monkeypatch):
     monkeypatch.delenv("MAS_AVIARY_ENABLE_THINKING", raising=False)
     monkeypatch.delenv("MAS_AVIARY_LLM_SEED", raising=False)
-    llm = load_config("config/mdo_f25_run_qwen32b_2gpu.yaml").llm
-    assert llm.enable_thinking is False and llm.seed == 42
-    assert (llm.temperature, llm.top_p, llm.top_k) == (pytest.approx(0.7), pytest.approx(0.8), 20)   # Qwen3 card
+    for path in ("config/mdo_f25_run_qwen32b_2gpu.yaml", "config/mdo_f25_run_qwen32b.yaml"):
+        llm = load_config(path).llm
+        assert llm.enable_thinking is False and llm.seed == 42, path
+        # B245 (Jessica, 2026-11-08): greedy, deterministic
+        assert llm.temperature == 0.0, path
+        assert model_loader.sampling_kwargs(llm) == {"do_sample": False}, path
 
 
 # ---- sampling reaches generate() --------------------------------------------------------------------------
