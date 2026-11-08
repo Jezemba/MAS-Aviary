@@ -2765,6 +2765,11 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
                            "session_id": resolved.get("session_id"),
                            "updates": dict(resolved.get("updates") or {})}
+    # B248 (Jessica, 2026-11-08): SU2 session folders are kept for later inspection (archived, never deleted by an
+    # agent). close_su2_session(delete_workdir=True) would remove one; the framework always closes without deleting.
+    if tool_name == "close_su2_session" and resolved.get("delete_workdir"):
+        resolved["delete_workdir"] = False
+        logger.info("[B248] close_su2_session: delete_workdir=True ignored, the SU2 folder is kept")
     if tool_name == "configure_mission" and _design_state and mcp_name == "aviary":
         _inject_takeoff_mass(resolved)
     if tool_name == "set_aircraft_parameters" and _design_state:
