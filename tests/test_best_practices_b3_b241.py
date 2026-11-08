@@ -40,3 +40,12 @@ def test_entries_newest_last_in_every_section():
 
 def test_tool_returns_the_section():
     assert "T4_TAKEOFF" in ReadBestPractices().forward("propulsion")
+
+
+def test_b247_climb_start_and_thrust_message_are_in_simulation_section():
+    from pathlib import Path
+
+    text = Path("config/best_practices.md").read_text(encoding="utf-8")
+    section = text.split("## simulation")[1].split("\n## ")[0]
+    assert "1.2 x the clean (flaps-up) stall speed" in section
+    assert "failure.thrust_limited" in section

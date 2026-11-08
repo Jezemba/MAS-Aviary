@@ -87,6 +87,8 @@ bottom: the newest entries are last.
 - [2026-10-12] A mission can fly without the optimiser converging: run_simulation then returns flown=true and a convergence_warning with the remaining residuals. That is a result with a warning; report the numbers and the residuals. 'Did not fly' means no fuel burned (ZERO_FUEL).
 - [2026-10-21] NO_CHANGE_SINCE_FAILED_RUN: the last mission on this session did not fly and nothing has been set since; the same mission gives the same result. Change the design (set_aircraft_parameters) or an upstream discipline first, or report the failure.
 - [2026-11-08] run_simulation reports the engine that flew: engine.deck (the designed cycle's table), external_deck (true), scale_factor, scaled_sls_thrust_lbf and engine_mass_kg. It is refused, with the reason, when the designed cycle has no engine deck yet (no converged run_cycle, or the deck was refused); fix the cycle, not the scale factor.
+- [2026-11-08] The climb starts at 1.2 x the clean (flaps-up) stall speed for the mass the mission solves; run_simulation reports it as climb_start. takeoff_mass_kg is only the starting guess, so changing it does not change the mission.
+- [2026-11-08] When a mission does not converge and the last attempt needs more than full thrust, failure.thrust_limited says where: phase, Mach, altitude and throttle (above 1.0). Close the gap at that condition with more thrust from the engine cycle, less drag, or less weight. It says where the shortfall is, not which of the three to change. If it is absent, read failure.violated_constraints.
 
 ## integrator
 
