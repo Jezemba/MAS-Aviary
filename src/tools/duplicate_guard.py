@@ -104,6 +104,7 @@ def _state() -> dict | None:
     gs = kb.guard_state
     gs.setdefault("geometry_epoch", {})       # tigl session -> int
     gs.setdefault("open_cpacs", {})           # tigl session -> {"fp", "seq"}
+    gs.setdefault("active_design", {})        # B255: {"session", "fp"} the design lives in; survives close_cpacs
     gs.setdefault("su2", {})                  # su2 session -> {"mesh", "config", "live", "mesh_seq"}
     gs.setdefault("in_flight", {})            # (tool, fp) -> {"agent", "time_utc"}
     gs.setdefault("refused_keys", set())      # (agent, tool) whose one refusal is spent
@@ -377,11 +378,14 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
             rebuilt = bool(morph.get("rebuilt")) if isinstance(morph, dict) else tool != "set_high_level_parameters"
             if rebuilt:
                 gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
+                if gs["active_design"].get("session") != sid:
+                    gs["active_design"] = {"session": sid, "fp": (gs["open_cpacs"].get(sid) or {}).get("fp")}
         elif tool == "open_cpacs" and parsed.get("session_id"):
             gs["geometry_epoch"][parsed["session_id"]] = 0
             fp = entry.get("design_fingerprint") if entry else None
             if fp:
                 gs["open_cpacs"][parsed["session_id"]] = {"fp": fp, "seq": seq}
+            gs["active_design"] = {"session": parsed["session_id"], "fp": fp}
         elif tool == "close_cpacs":
             gs["open_cpacs"].pop(args.get("session_id"), None)
         elif tool == "create_su2_session" and parsed.get("session_id"):

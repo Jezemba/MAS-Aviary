@@ -20,8 +20,8 @@ bottom: the newest entries are last.
 ## geometry
 
 - [2026-10-04] set_high_level_parameters inputs that reshape the geometry: wing (Wing1, Wing2H, Wing3V) area, aspect_ratio, sweep; fuselage length, diameter. span alone, root_chord, tip_chord, dihedral, twist and taper are not inputs; the tool reports ignored keys in warnings.
-- [2026-10-04] Pass only the keys you want to change. Passing a key reshapes even at its current value: sweep sets every section's positioning angle, and this wing's inboard sections are at 0 deg.
-- [2026-10-04] Change one or two wing keys per call; area, aspect_ratio and sweep together miss their targets. Read the achieved values from geometry_morph.after.
+- [2026-11-09] A key you leave out stays at its current value, and passing a key at its current value changes nothing. sweep is the quarter-chord sweep, the same quantity get_high_level_parameters reports.
+- [2026-11-09] area, aspect_ratio and sweep can be changed together. geometry_morph.after holds the achieved values and geometry_morph.targets_met says whether they reached what you asked.
 - [2026-10-04] get_wing_summary's reference_area and aspect_ratio are half-wing figures; full_reference_area and full_aspect_ratio are the full wing.
 - [2026-10-04] generate_volume_mesh without component_uid meshes the whole aircraft. The framework sets the mesh sizes. export_component_mesh(format="su2") is surface-only and SU2 cannot solve it.
 - [2026-10-04] After reshaping, call export_cpacs; the mass stage reads the exported file.

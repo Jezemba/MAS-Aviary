@@ -42,6 +42,9 @@ from src.logging import step_log
 
 logger = logging.getLogger(__name__)
 
+_NO_TOOL_CALL_HINT = ("Every reply must be one tool call. If your work is finished, call final_answer with your "
+                      "report as its answer; otherwise call the next tool.")
+
 # Pre-compiled pattern for <think>...</think> blocks (supports nested tags).
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
@@ -394,23 +397,16 @@ class ThinkingModel(TransformersModel):
     # -- Truncation detection ---------------------------------------------------
 
     def _is_truncated(self, message: ChatMessage) -> bool:
-        """Return True if the output was truncated at max_new_tokens.
+        """Return True if the output was cut off inside a ``<think>`` block at max_new_tokens.
 
-        Truncated outputs have exactly max_new_tokens of generated text
-        and typically contain an unclosed ``<think>`` block with no JSON.
+        B185: this also used to call any long reply with no braces "truncated". Those replies are complete
+        plain text, far below max_new_tokens: an agent writing its report instead of calling a tool. Taken
+        for truncation they were regenerated with the same input and told nothing, which under greedy
+        generation (B245) gives the same text 4 times per step, up to the step cap. They now go to the
+        parse-failure path, which tells the model what to do.
         """
         content = message.content or ""
-        # Heuristic: unclosed <think> block (opened but never closed).
-        has_open_think = "<think>" in content and "</think>" not in content
-        if has_open_think:
-            return True
-        # Heuristic: no braces at all in a supposedly-tool-calling response.
-        stripped = strip_think_blocks(content)
-        if not stripped or ("{" not in stripped and "}" not in stripped):
-            # Only consider truncation if the raw content was substantial.
-            if len(content) > 200:
-                return True
-        return False
+        return "<think>" in content and "</think>" not in content
 
     # -- Retry-aware generate --------------------------------------------------
 
@@ -517,7 +513,7 @@ class ThinkingModel(TransformersModel):
                         f"valid tool call. Error: {exc}\n"
                         "Please respond with ONLY a valid JSON tool call "
                         "in the format: "
-                        '{{"name": "<tool_name>", "arguments": {{...}}}}'
+                        '{"name": "<tool_name>", "arguments": {...}}'
                     )
                     msgs = msgs + [
                         {
@@ -667,10 +663,12 @@ class ThinkingModel(TransformersModel):
                     )
                     if tool_dict.get(self.tool_name_key) is None and "<function=" in cleaned:
                         tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key) or tool_dict
-                except ValueError:
+                except ValueError as exc:
                     tool_dict = _find_xml_tool_call(cleaned, self.tool_name_key, self.tool_arguments_key)
                     if tool_dict is None:
-                        raise
+                        # B185: this text is what the agent is told. "No JSON blob" alone does not say that a
+                        # report written as plain text has to go through final_answer.
+                        raise ValueError(f"{exc} {_NO_TOOL_CALL_HINT}") from exc
 
             tool_name = tool_dict.get(self.tool_name_key)
             if tool_name is None:

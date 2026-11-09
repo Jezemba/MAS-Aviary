@@ -359,6 +359,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         _obs_status = (_entry or {}).get("status", "success")
         duplicate_guard.observe(tool.name, resolved, result, _obs_status, _entry)
         mission_guard.observe(tool.name, resolved, result, _obs_status)
+        coupling_contract.note_su2_references(tool.name, resolved, result)
         from src.tools.data_plane import note_session_closed
         note_session_closed(tool.name, resolved, result)
         # 4a/4b (retired by B84): the aero warning and the optional-mass hint used to be

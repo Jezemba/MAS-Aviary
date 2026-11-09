@@ -2656,10 +2656,11 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         from src.tools import coupling as _cpl
 
         # B138: the aspect ratio su2-mcp needs for the induced-drag floor, from the geometry.
-        if resolved.get("aspect_ratio") is None:
-            _ar = (_design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.ASPECT_RATIO")
-            if isinstance(_ar, (int, float)) and _ar > 0:
-                resolved["aspect_ratio"] = float(_ar)
+        # B253: the geometry's value wins over a caller's, as for the aviary coupled values (B143): an agent
+        # re-sent the previous wing's 10.004 for a 10.520 wing.
+        _ar = (_design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.ASPECT_RATIO")
+        if isinstance(_ar, (int, float)) and _ar > 0:
+            resolved["aspect_ratio"] = float(_ar)
         # B132: the solve's flight state is the mission's (Mach + ISA freestream at altitude).
         try:
             from src.config.canonical import load_canonical

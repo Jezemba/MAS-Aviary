@@ -142,10 +142,15 @@ REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
 def current_design_fingerprint() -> str:
     """Identity of the geometry the disciplines are supposed to be consuming.
 
-    Built from the B81 guard state: the per-session geometry epoch (bumped by every morph)
-    and the CPACS the session was opened from. The MESH is deliberately not part of it -- a
-    remesh is a different discretisation of the same design, and treating it as a design
+    Built from the B81 guard state: the CPACS the design's session was opened from and that
+    session's geometry epoch (bumped by every morph). The MESH is deliberately not part of it --
+    a remesh is a different discretisation of the same design, and treating it as a design
     change would make a perfectly good SU2 solve look stale.
+
+    B255: only the session the design lives in counts, whether or not it is still open. This
+    used to hash every OPEN session, so close_cpacs changed the "design" with the geometry
+    untouched: a networked peer's mass result was then refused as "produced for an EARLIER
+    geometry" 12 times in a link that never morphed, and nothing flew.
     """
     try:
         from src.tools.duplicate_guard import _state as guard_state
@@ -153,9 +158,13 @@ def current_design_fingerprint() -> str:
         gs = guard_state()
         if gs is None:
             return "design:none"
+        active = gs.get("active_design") or {}
+        epochs = gs.get("geometry_epoch") or {}
+        session = active.get("session")
         payload = {
-            "epochs": sorted((str(k), int(v)) for k, v in (gs.get("geometry_epoch") or {}).items()),
-            "cpacs": sorted((str(k), (v or {}).get("fp")) for k, v in (gs.get("open_cpacs") or {}).items()),
+            "epochs": sorted((str(k), int(v)) for k, v in
+                             ({session: epochs.get(session, 0)} if session else epochs).items()),
+            "cpacs": active.get("fp"),
         }
     except Exception:      # pragma: no cover - a fingerprint bug must never block work
         return "design:none"
@@ -237,6 +246,8 @@ def check(tool_name: str, resolved: dict) -> dict | None:
     """The refusal payload for a call whose coupled inputs do not exist yet, else None."""
     import os
 
+    if tool_name == "run_su2_solver" and os.environ.get("AVION_REQUIRE_COUPLED_INPUTS", "1") == "1":
+        return _su2_reference_refusal(resolved)
     required = REQUIRED_BY_TOOL.get(tool_name)
     if not required:
         return None
@@ -251,6 +262,74 @@ def check(tool_name: str, resolved: dict) -> dict | None:
     for producer, state in sorted({(r.producer, s) for r, s in problems}):
         _bump(tool_name, producer, state)
     return _refusal(tool_name, problems)
+
+
+# -- SU2 references follow the wing (B253) -------------------------------------------------
+
+STALE_SU2_REFERENCES = "STALE_SU2_REFERENCES"
+_SU2_REFERENCE_TOL = 0.005  # CPACS-declared 122.4 against the measured 122.83 m^2 is 0.35 %: the same wing
+
+
+def _as_dict(result: Any) -> dict:
+    if isinstance(result, dict):
+        return result
+    try:
+        parsed = json.loads(result)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def note_su2_references(tool_name: str, resolved: dict, result: Any) -> None:
+    """Remember the reference area and aspect ratio each SU2 session was actually configured with."""
+    if tool_name not in ("create_su2_session", "configure_from_cpacs"):
+        return
+    from src.tools.data_plane import get_design_state
+
+    state = get_design_state()
+    if state is None:
+        return
+    data = _as_dict(result)
+    session = data.get("session_id") or resolved.get("session_id")
+    area = (data.get("references") or {}).get("REF_AREA")
+    if not session or area is None:
+        return
+    state.data_store.setdefault("su2_session_references", {})[session] = {
+        "ref_area": area, "aspect_ratio": (data.get("drag_floor") or {}).get("aspect_ratio")}
+
+
+def _su2_reference_refusal(resolved: dict) -> dict | None:
+    """Refuse a solve whose session was configured for a different wing than the design has now.
+
+    networked_graph_routed, 2026-11-09: a new mesh of the 132.54 m^2 wing went by set_mesh into a session
+    configured for the 125.86 m^2 wing, and SU2 normalised by the old area without a word. A mesh does not
+    carry the references, so a session has to be configured again when the wing changes.
+    """
+    from src.tools.data_plane import get_design_state
+
+    state = get_design_state()
+    if state is None:
+        return None
+    configured = (state.data_store.get("su2_session_references") or {}).get(resolved.get("session_id"))
+    wing = state.data_store.get("geometry_wing") or {}
+    if not configured:
+        return None
+    wrong = []
+    for label, have, want in (("reference area", configured.get("ref_area"), wing.get("Aircraft.Wing.AREA")),
+                              ("aspect ratio", configured.get("aspect_ratio"), wing.get("Aircraft.Wing.ASPECT_RATIO"))):
+        if isinstance(have, (int, float)) and isinstance(want, (int, float)) and want > 0 \
+                and abs(have / want - 1.0) > _SU2_REFERENCE_TOL:
+            wrong.append(f"{label} {have:.4g} (the wing now has {want:.4g})")
+    if not wrong:
+        return None
+    _bump("run_su2_solver", "geometry", "stale")
+    return {
+        "success": False,
+        "error_code": STALE_SU2_REFERENCES,
+        "error": ("run_su2_solver did not run: this SU2 session was configured for a different wing: "
+                  + "; ".join(wrong) + ". CL and CD would be normalised by the old values. Call "
+                  "configure_from_cpacs on this session, or create a new session, then run_su2_solver."),
+    }
 
 
 def _refusal(tool_name: str, problems: list[tuple[CoupledInput, str]]) -> dict:

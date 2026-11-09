@@ -47,9 +47,27 @@ def baseline_cpacs() -> str:
     return str(AVION_ROOT / "mass-mcp" / "tests" / "fixtures" / "D150_simple.xml")
 
 
+# B254: bump when the code that produces the baseline changes. The key used to be the CPACS alone, so results from
+# old code were reused indefinitely and differed by machine (CD 0.02288 on ws8, 0.02232 on ws5 for one name).
+BASELINE_VERSION = "b254"
+
+
 def _cache_path(cpacs: str) -> Path:
     digest = hashlib.md5(Path(cpacs).read_bytes()).hexdigest()
-    return CACHE_DIR / f"{digest}.design.json"
+    return CACHE_DIR / f"{digest}.{BASELINE_VERSION}.design.json"
+
+
+def _size_engine_session(design: dict | None = None) -> None:
+    """Put the mission's flight state, the design's sizing and its engine inputs on the pyCycle session.
+
+    B254: on a seeded link nothing else did. seed_from_design records the engine RESULT, so run_cycle was not
+    needed and the session stayed on the tool's defaults, M0.80 / 35,000 ft. The first mission's engine deck was
+    built from that session: a different engine from the M0.78 / 33,000 ft cycle whose SFC had been seeded.
+    """
+    from src.tools.data_plane import get_design_state
+
+    engine = ((design or {}).get("design_space") or {}).get("engine") or {}
+    _call("set_inputs", session_id=(get_design_state().sessions or {}).get("pycycle"), values=dict(engine))
 
 
 def seed_from_design(design: dict) -> list[str]:
@@ -127,7 +145,7 @@ def _compute_baseline(cpacs: str, mission: dict) -> None:
     sessions = get_design_state().sessions or {}
     _call("estimate_mass", cpacs_file_path=cpacs)
     _call("run_su2_solver", session_id=sessions.get("su2"), max_runtime_seconds=3600)
-    _call("set_inputs", session_id=sessions.get("pycycle"), values={})
+    _size_engine_session()
     _call("run_cycle", session_id=sessions.get("pycycle"))
 
 
@@ -149,11 +167,14 @@ def prepare(carry_over: dict | None) -> dict:
         if isinstance(previous, dict) and previous.get("aero"):
             report["results"] = "previous link's end-state"
             report["seeded"] = seed_from_design(previous)
+            _size_engine_session(previous)
         else:
             cache = _cache_path(cpacs)
             if cache.is_file():
                 report["results"] = f"cached baseline {cache.name}"
-                report["seeded"] = seed_from_design(json.loads(cache.read_text()))
+                cached = json.loads(cache.read_text())
+                report["seeded"] = seed_from_design(cached)
+                _size_engine_session(cached)
             else:
                 report["results"] = "baseline computed now (first run for this CPACS)"
                 _compute_baseline(cpacs, mission)
