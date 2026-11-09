@@ -84,10 +84,15 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
     budget = timeout_for(tool_name)
     with _lock:
         _stats["calls_watched"] += 1
+    from src.logging import step_log
+
     future = _pool.submit(fn, *args, **kwargs)
     try:
-        return future.result(timeout=budget)
+        result = future.result(timeout=budget)
+        step_log.record_tool_call(tool_name, kwargs, result)
+        return result
     except FutureTimeout:
+        step_log.record_tool_call(tool_name, kwargs, error=TimeoutError(f"no answer within {budget:.0f}s"))
         future.cancel()          # it is already running, so this only stops a queued call
         with _lock:
             _stats["timeouts"][tool_name] = _stats["timeouts"].get(tool_name, 0) + 1
@@ -98,6 +103,9 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
             "could continue (B85). The server may still be working; do not simply repeat the "
             "call -- check the design knowledge base for what has already been produced."
         ) from None
+    except Exception as exc:
+        step_log.record_tool_call(tool_name, kwargs, error=exc)
+        raise
 
 
 def stats() -> dict:

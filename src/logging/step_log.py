@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 _THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+_BASE64_RUN_RE = re.compile(r'"[A-Za-z0-9+/=\s]{4000,}"')
+_TOOL_LOG_STR = 4000
 
 _lock = threading.Lock()
 _path: Path | None = None
@@ -149,6 +151,46 @@ def _write(row: dict) -> None:
         row = {"seq": _seq, "time": time.time(), **row}
         with open(_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+
+
+def _clip(value: Any) -> Any:
+    """A value as it can be logged: payloads (a mesh is 155 MB of base64) become their length."""
+    if isinstance(value, str):
+        return value if len(value) <= _TOOL_LOG_STR else f"<{len(value)} chars>"
+    if isinstance(value, dict):
+        return {str(k): _clip(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clip(v) for v in value]
+    return value
+
+
+def record_tool_call(tool: str, args: dict, result: Any = None, error: BaseException | None = None) -> None:
+    """One call as it left the framework: the arguments the tool RECEIVED, after every injection.
+
+    The steps above hold what the model typed, and the knowledge base skips the framework's own calls (the ones
+    that apply CL, CD, wing mass and the engine deck to aviary). call_watchdog sees all of them. Written to
+    tool_calls_attemptN.jsonl beside the step log, and read by scripts/check_coupling.py. Never breaks a call.
+    """
+    if _path is None:
+        return
+    try:
+        from src.tools.agent_context import current_agent_name
+
+        parsed = result
+        if isinstance(result, str):
+            try:
+                parsed = json.loads(_BASE64_RUN_RE.sub('"<payload>"', result) if len(result) > _TOOL_LOG_STR else result)
+            except ValueError:
+                parsed = result
+        row = {"seq": 0, "time": time.time(), "agent": current_agent_name(), "tool": tool, "args": _clip(args),
+               "result": _clip(parsed), "error": f"{type(error).__name__}: {error}" if error else None}
+        with _lock:
+            if _path is None:
+                return
+            with open(_path.with_name(_path.name.replace("step_log", "tool_calls")), "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+    except Exception:  # pragma: no cover - a log must never break a tool call
+        pass
 
 
 def _pending() -> list:
