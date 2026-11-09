@@ -55,7 +55,7 @@ def test_a_coupled_link_passes_every_check(tmp_path):
     _write(tmp_path, 0, _flight())
     checks = next(iter(check_sweep(tmp_path).values()))[0]
     assert [c for c in checks if c[1] == FAIL] == []
-    assert sum(c[1] == PASS for c in checks) == 7
+    assert sum(c[1] == PASS for c in checks) == 8
 
 
 def test_b253_the_old_reference_area_fails(tmp_path):
