@@ -138,3 +138,21 @@ def test_checker_mass_reading_the_closed_sessions_autoexport_passes(tmp_path):
     (tmp_path / "repeat_000" / "mdo_f25_sequential_staged_pipeline" / "tool_calls_attempt1.jsonl").write_text(
         "\n".join(json.dumps(r) for r in rows))
     assert _status(tmp_path, "geometry -> mass", 0) == FAIL
+
+
+def test_checker_takes_the_last_verdict_from_design_json_not_the_flown_record(tmp_path):
+    """l2c orch_graph 2026-11-10: the flown record ends at a CONTINUE to structures_analyst; the link's last
+    word (design.json) is COMPLETE. The runner carries COMPLETE, so the checker must grade COMPLETE."""
+    rec = {"kind": "recommendation", "agent": "mdo_integrator", "verdict": "CONTINUE",
+           "recommendation_to": "structures_analyst", "recommended_change": "Adjust wing taper ratio"}
+    done = {"kind": "recommendation", "agent": "mdo_integrator", "verdict": "COMPLETE",
+            "recommendation_to": None, "recommended_change": ""}
+    rows = [_row("run_simulation", {}, {"summary": {"fuel_burned_kg": 21698.6}})]
+    _link(tmp_path, 0, rows)
+    _link(tmp_path, 1, rows)
+    d0 = tmp_path / "repeat_000" / "mdo_f25_sequential_staged_pipeline"
+    (d0 / "design_flown.json").write_text(json.dumps({"coordination_signals": [rec]}))
+    (d0 / "design.json").write_text(json.dumps({"coordination_signals": [rec, done]}))
+    assert _status(tmp_path, "recommendation -> next link", 1) != FAIL
+    from scripts.check_coupling import Link
+    assert Link(d0).design["coordination_signals"][-1]["verdict"] == "COMPLETE"

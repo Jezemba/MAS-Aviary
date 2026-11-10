@@ -71,9 +71,15 @@ class Link:
         self.dir = directory
         self.result = json.loads((directory / "result.json").read_text())
         # B265: the record of the last FLOWN mission when there is one; design.json may hold a later, unflown design.
-        design = directory / "design_flown.json"
-        design = design if design.is_file() else directory / "design.json"
-        self.design = json.loads(design.read_text()) if design.is_file() else {}
+        # The coordination record is the link's last word, so it comes from design.json -- the same rule as
+        # stat_batch_runner.link_design (not imported: the runner loads torch). l2c orch_graph 2026-11-10: the
+        # flown record stopped before the final COMPLETE verdict and the check graded an older recommendation.
+        final_path, flown_path = directory / "design.json", directory / "design_flown.json"
+        final = json.loads(final_path.read_text()) if final_path.is_file() else {}
+        self.design = json.loads(flown_path.read_text()) if flown_path.is_file() else dict(final)
+        for key in ("coordination_signals", "graph_route"):
+            if key in final:
+                self.design[key] = final[key]
         carry = directory / "carry_over.json"
         self.carry_over = json.loads(carry.read_text()) if carry.is_file() else {}
         log = directory / f"tool_calls_attempt{int(self.result.get('attempt') or 1)}.jsonl"
