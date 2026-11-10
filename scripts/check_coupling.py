@@ -61,6 +61,10 @@ def ok(row: dict) -> bool:
     result = row.get("result")
     if row.get("error"):
         return False
+    # An MCP tool error comes back as the result text with no error field (l2c orch_iter 2026-11-10: an
+    # "Unknown session_id" reply was read as the link's first wing measurement, all None).
+    if isinstance(result, str) and result.lstrip().startswith("Error calling tool"):
+        return False
     return not (isinstance(result, dict) and (result.get("success") is False or result.get("error_code")))
 
 

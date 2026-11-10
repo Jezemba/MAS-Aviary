@@ -156,3 +156,20 @@ def test_checker_takes_the_last_verdict_from_design_json_not_the_flown_record(tm
     assert _status(tmp_path, "recommendation -> next link", 1) != FAIL
     from scripts.check_coupling import Link
     assert Link(d0).design["coordination_signals"][-1]["verdict"] == "COMPLETE"
+
+
+def test_checker_skips_an_mcp_error_text_as_a_measurement(tmp_path):
+    """l2c orch_iter 2026-11-10: attempt 2's first call hit a stale session; its error text was taken as the
+    starting wing (all None) and link -> link wing failed although the next call measured the carried wing."""
+    wing = {"area": 122.788, "aspect_ratio": 9.3693, "sweep": 27.3267, "taper_ratio": 0.2462}
+    end = [_row("set_high_level_parameters", {"component_uid": "Wing1", "updates": {"area": 122.788}},
+                {"geometry_morph": {"after": {"reference_area": 122.788, "aspect_ratio": 9.3693, "sweep_deg": 27.3267,
+                                              "taper_ratio": 0.2462}}}),
+           _row("run_simulation", {}, {"summary": {"fuel_burned_kg": 23885.5}})]
+    start = [_row("get_high_level_parameters", {"component_uid": "Wing1"},
+                  "Error calling tool 'get_high_level_parameters': Unknown session_id 'b3b3'"),
+             _row("get_high_level_parameters", {"component_uid": "Wing1"}, {"parameters": wing}),
+             _row("run_simulation", {}, {"summary": {"fuel_burned_kg": 27909.5}})]
+    _link(tmp_path, 0, end)
+    _link(tmp_path, 1, start)
+    assert _status(tmp_path, "link -> link wing", 1) == PASS
