@@ -70,8 +70,12 @@ class Link:
     def __init__(self, directory: Path):
         self.dir = directory
         self.result = json.loads((directory / "result.json").read_text())
-        design = directory / "design.json"
+        # B265: the record of the last FLOWN mission when there is one; design.json may hold a later, unflown design.
+        design = directory / "design_flown.json"
+        design = design if design.is_file() else directory / "design.json"
         self.design = json.loads(design.read_text()) if design.is_file() else {}
+        carry = directory / "carry_over.json"
+        self.carry_over = json.loads(carry.read_text()) if carry.is_file() else {}
         log = directory / f"tool_calls_attempt{int(self.result.get('attempt') or 1)}.jsonl"
         self.calls = [json.loads(line) for line in log.read_text().splitlines()] if log.is_file() else None
 
@@ -219,6 +223,13 @@ def check_mass(link: Link, mission: int) -> list[tuple]:
         # G1: the framework hands mass-mcp a copy of the file (avion_mass_*/<same name>), so it cannot write its
         # breakdown back into the design's file (B260: compared as a path, that copy read as a FAIL).
         copy = bool(used and path) and Path(used).name == Path(path).name and Path(used).parent.name.startswith("avion_mass_")
+        # tigl-mcp close_cpacs writes the session it closes to cpacs_autoexport_<session>.xml (cpacs_io.py); mass
+        # reading that file after the reshaped session was closed reads the reshaped wing.
+        sid = (link.calls[morphed]["args"] or {}).get("session_id")
+        closed = any(r["args"].get("session_id") == sid for i, r in link.rows("close_cpacs", before=index)
+                     if i > morphed)
+        auto = bool(used and sid and closed) and Path(used).name == f"cpacs_autoexport_{sid}.xml"
+        copy = copy or auto
         out.append(("geometry -> mass", PASS if used and (used == path or copy) else FAIL,
                     f"mass read {used}{' (framework copy)' if copy else ''}, last export {path}"))
     return out
@@ -278,6 +289,18 @@ def check_chain(link: Link, previous: Link) -> list[tuple]:
             out.append(("link -> link wing", PASS if same else FAIL, f"start {start}, previous end {end}"))
         else:
             out.append(("link -> link wing", NOT_EXERCISED, "the wing was not measured in one of the links"))
+    # B265: the aviary inputs this link started from are the ones the previous link last FLEW.
+    started = link.carry_over.get("aviary_session_start") or {}
+    if previous.calls and started:
+        end_mission, _ = previous.final_mission()
+        flown = previous.flown_parameters(end_mission) if end_mission is not None else {}
+        shared = {k: v for k, v in flown.items() if k in started and number(v) is not None}
+        wrong = {k: (started[k], v) for k, v in shared.items() if not close(number(started[k]), number(v), 1e-6)}
+        if not shared:
+            out.append(("link -> link aviary inputs", NOT_EXERCISED, "the previous link flew no design variable"))
+        else:
+            out.append(("link -> link aviary inputs", FAIL if wrong else PASS,
+                        f"start vs previous flown {wrong}" if wrong else f"{len(shared)} inputs as flown"))
     carried = (previous.design.get("design_space") or {}).get("engine") or {}
     if not carried:
         out.append(("link -> link engine", NOT_EXERCISED, "the previous link set no engine inputs"))

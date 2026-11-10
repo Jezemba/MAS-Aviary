@@ -459,12 +459,31 @@ def integrator_text(result) -> str:
     return text
 
 
-def design_space_of(link_dir) -> dict | None:
-    """design.json's design_space in a link folder, or None."""
+def link_design(link_dir) -> dict | None:
+    """The design a link hands on: design_flown.json (as its last flown mission flew it), else design.json.
+
+    B265: design.json keeps changing after the last flight; carrying it started the next link from a
+    design that never flew (networked_graph_routed 2026-11-10: flew 122.79 m^2, carried 150 m^2). The
+    coordination record (recommendation, graph route) is the link's last word, so it comes from design.json.
+    """
+    folder = Path(link_dir)
     try:
-        return json.loads((Path(link_dir) / "design.json").read_text()).get("design_space") or None
+        final = json.loads((folder / "design.json").read_text())
     except (OSError, ValueError):
-        return None
+        final = None
+    try:
+        flown = json.loads((folder / "design_flown.json").read_text())
+    except (OSError, ValueError):
+        return final
+    for key in ("coordination_signals", "graph_route"):
+        if final and key in final:
+            flown[key] = final[key]
+    return flown
+
+
+def design_space_of(link_dir) -> dict | None:
+    """The design_space a link hands on (see link_design), or None."""
+    return (link_design(link_dir) or {}).get("design_space") or None
 
 
 def set_aside_design_json(link_dir, attempt: int) -> None:
@@ -476,6 +495,9 @@ def set_aside_design_json(link_dir, attempt: int) -> None:
     path = Path(link_dir) / "design.json"
     if attempt > 1 and path.exists():
         path.replace(path.with_name(f"design_attempt{attempt - 1}.json"))
+    flown = Path(link_dir) / "design_flown.json"           # B265: a failed attempt's flight is not this one's
+    if attempt > 1 and flown.exists():
+        flown.replace(flown.with_name(f"design_flown_attempt{attempt - 1}.json"))
 
 
 def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
@@ -499,12 +521,8 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
     space = design_space or {}
     # Graph-routed v2 pre-initialization (2026-10-12) starts a link from the previous link's end-state: its
     # whole design.json (discipline results included), from the sibling folder repeat_<link-1>/<combo>.
-    previous_design = None
-    try:
-        prev = link_dir.parent.parent / f"repeat_{link - 1:03d}" / link_dir.name / "design.json"
-        previous_design = json.loads(prev.read_text()) if prev.is_file() else None
-    except (OSError, ValueError):
-        previous_design = None
+    # B265: as its last flown mission flew it (link_design), not as design.json was left.
+    previous_design = link_design(link_dir.parent.parent / f"repeat_{link - 1:03d}" / link_dir.name)
     # B180: the recommendation the previous link's integrator RECORDED (record_recommendation), if it did.
     recorded = [s for s in ((previous_design or {}).get("coordination_signals") or [])
                 if isinstance(s, dict) and s.get("kind") == "recommendation"]

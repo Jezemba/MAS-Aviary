@@ -98,6 +98,33 @@ def write_design(state: Any) -> str | None:
         return None
 
 
+FLOWN_FILE_NAME = "design_flown.json"
+
+
+def write_flown_design(state: Any) -> str | None:
+    """B265: design_flown.json, design.json as it stood when a mission flew. Never raises.
+
+    The runner carries this one to the next link (falling back to design.json when nothing flew), so the
+    next link starts from the design that has a fuel figure, not from whatever was touched after it.
+    """
+    try:
+        path = design_path()
+        if not path or state is None:
+            return None
+        store = getattr(state, "data_store", {}) or {}
+        doc = build_design(store, getattr(state, "sessions", {}) or {})
+        if store.get("flown_cpacs_path"):
+            doc["geometry"]["cpacs_file"] = store["flown_cpacs_path"]
+        path = os.path.join(os.path.dirname(path), FLOWN_FILE_NAME)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh, indent=1, default=str)
+        os.replace(tmp, path)
+        return path
+    except Exception:  # pragma: no cover
+        return None
+
+
 class ReadDesignJson(Tool):
     name = "read_design_json"
     description = (

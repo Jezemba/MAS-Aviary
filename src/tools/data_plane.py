@@ -792,6 +792,7 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
     src = store.get("morphed_cpacs_path")
     if not src or not os.path.isfile(str(src)):
         store["flown_cpacs_path"] = ""
+        _write_flown_design()
         return
     try:
         dst = os.path.join(tempfile.mkdtemp(prefix="avion_flown_"), "flown_geometry.xml")
@@ -801,6 +802,22 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
         return
     store["flown_cpacs_path"] = dst
     logger.info("[B263] the mission flew %s (kept as %s)", src, dst)
+    _write_flown_design()
+
+
+def _write_flown_design() -> None:
+    """B265: design_flown.json, the design record as this flown mission flew it. Never raises.
+
+    design.json keeps changing after the last flight (a reshape, an SU2 solve, a set nobody flew), and the
+    runner carried THAT to the next link: networked_graph_routed 2026-11-10 link 1 flew 122.79 m^2 then
+    solved a 150 m^2 wing it never flew; link 2 was seeded with the 150 m^2 aero, area and engine scale.
+    """
+    try:
+        from src.tools.design_json import write_flown_design
+
+        write_flown_design(_design_state)
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _warn_flown_not_converged(tool_name: str, data: dict) -> None:
