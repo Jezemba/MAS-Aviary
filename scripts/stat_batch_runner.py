@@ -1835,6 +1835,7 @@ def run_stat_batch(
                                 short = k.split(".")[-1]
                                 log_data[f"init_{short}"] = v
                         wandb.log(log_data)
+                        upload_run_files(wb_run, out_path, link_dir=out_path / f"repeat_{repeat_idx:03d}" / combo.name)
 
                     last_error = None
                     break
@@ -1968,11 +1969,17 @@ def run_stat_batch(
 
 # The files a reviewer needs from each link, uploaded to the W&B run when the batch ends.
 _RUN_FILE_PATTERNS = ("knowledge_base.jsonl", "carry_over.json", "design_attempt*.json", "step_log_attempt*.jsonl", "step_log_attempt*.md",
-                      "design.json", "result.json", "trace.json", "chain_anchor.json")
+                      "design.json", "result.json", "trace.json", "chain_anchor.json",
+                      # 2026-11-10 (Jessica: "make sure its all on wandb"): the checker's input, the flown design
+                      # (B265), the geometry handed to the next link, and any hang stacks (B267).
+                      "tool_calls_attempt*.jsonl", "design_flown*.json", "geometry_end.xml", "hang_stacks.txt")
 
 
-def upload_run_files(wb_run, out_path) -> list[str]:
+def upload_run_files(wb_run, out_path, link_dir=None) -> list[str]:
     """Upload the console log and every link's files to the W&B run (best effort, never raises).
+
+    With *link_dir*, only that link's files (called after every link, so a long chain is on W&B as it runs,
+    not only when the batch ends; 2026-11-10). Paths stay relative to *out_path* either way.
 
     The console log reached W&B only through the live mirror, which needs SWEEP_LOG_PATH and keeps a
     400 KB tail. This uploads the whole log at the end, plus each link's step logs (rendered to
@@ -1988,7 +1995,8 @@ def upload_run_files(wb_run, out_path) -> list[str]:
             from scripts.render_step_log import render as renderer
         except Exception:  # pragma: no cover
             renderer = None
-        for jsonl in sorted(out_path.glob("repeat_*/*/step_log_attempt*.jsonl")):
+        links = [Path(link_dir)] if link_dir is not None else sorted(out_path.glob("repeat_*/*/"))
+        for jsonl in sorted(j for d in links for j in d.glob("step_log_attempt*.jsonl")):
             if renderer is not None:
                 try:
                     renderer(jsonl, jsonl.parent / "knowledge_base.jsonl")
@@ -1996,8 +2004,8 @@ def upload_run_files(wb_run, out_path) -> list[str]:
                     pass
         files = [out_path / "chain_anchor.json"]
         for pattern in _RUN_FILE_PATTERNS:
-            files += sorted(out_path.glob(f"repeat_*/*/{pattern}"))
-        log_path = os.environ.get("SWEEP_LOG_PATH", "")
+            files += sorted(f for d in links for f in d.glob(pattern))
+        log_path = os.environ.get("SWEEP_LOG_PATH", "") if link_dir is None else ""
         if log_path and os.path.isfile(log_path):
             files.append(Path(log_path))
         for f in files:

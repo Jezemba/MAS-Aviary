@@ -203,6 +203,32 @@ def test_run_files_and_the_log_are_uploaded(monkeypatch, tmp_path):
             "step_log_attempt1.jsonl", "step_log_attempt1.md", "run.log"} <= names
 
 
+def test_each_link_is_uploaded_when_it_finishes_with_every_file(monkeypatch, tmp_path):
+    """2026-11-10 ("make sure its all on wandb"): a 20-link chain is on W&B as it runs, with the checker's input."""
+    import scripts.stat_batch_runner as sbr
+
+    names = ("knowledge_base.jsonl", "design.json", "result.json", "trace.json", "carry_over.json",
+             "tool_calls_attempt1.jsonl", "design_flown.json", "design_flown_attempt1.json", "geometry_end.xml",
+             "hang_stacks.txt")
+    links = [tmp_path / f"repeat_{i:03d}" / "mdo_f25_sequential_graph_routed" for i in (0, 1)]
+    for link in links:
+        link.mkdir(parents=True)
+        for name in names:
+            (link / name).write_text("{}\n")
+    (tmp_path / "chain_anchor.json").write_text("{}")
+    log = tmp_path / "run.log"
+    log.write_text("console\n")
+    monkeypatch.setenv("SWEEP_LOG_PATH", str(log))
+    saved = []
+    monkeypatch.setattr(sbr.wandb, "save", lambda path, base_path=None, policy=None: saved.append((path, base_path)))
+    sbr.upload_run_files(object(), tmp_path, link_dir=links[1])
+    got = {Path(p).relative_to(tmp_path).as_posix() for p, _ in saved}
+    assert {f"repeat_001/mdo_f25_sequential_graph_routed/{n}" for n in names} <= got
+    assert not any(p.startswith("repeat_000/") for p in got)          # only the link that just finished
+    assert "run.log" not in got                                       # the whole console log goes up at the end
+    assert all(base == str(tmp_path) for _, base in saved)            # same paths as the end-of-batch upload
+
+
 # ---- verbatim prompt assembly: the model sees exactly her prompts -----------------------------------
 
 def test_the_agents_yaml_switches_on_verbatim():
