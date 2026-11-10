@@ -148,15 +148,53 @@ def dump_stacks(reason: str) -> str | None:
         return None
 
 
+# A wedged server alone does NOT reproduce the l2c escape (ws8, 2026-11-10: a FastMCP server spinning on its
+# only thread; run_su2_solver, then get_su2_status twice, were each released at their budget by call() on the
+# old code). The hang may sit outside the tool path altogether, so a stall is also recorded wherever it is:
+# when no tool call has started or finished for _STALL_DUMP_SECONDS, every thread's stack is written beside
+# the link's files, and again every _STALL_REPEAT_SECONDS while it lasts. It only writes a file.
+_STALL_DUMP_SECONDS = 2700.0
+_STALL_REPEAT_SECONDS = 1800.0
+_progress = {"last": None, "dumped": None}
+_monitor_started = threading.Event()
+
+
+def _note_progress() -> None:
+    import time
+
+    _progress["last"] = time.time()
+    _progress["dumped"] = None
+    if not _monitor_started.is_set():
+        _monitor_started.set()
+        threading.Thread(target=_stall_monitor, name="avion-stall-monitor", daemon=True).start()
+
+
+def _stall_monitor() -> None:  # pragma: no cover - timing loop; the dump itself is tested
+    import time
+
+    while True:
+        time.sleep(60)
+        last, dumped = _progress["last"], _progress["dumped"]
+        if last is None:
+            continue
+        now = time.time()
+        if now - last >= _STALL_DUMP_SECONDS and (dumped is None or now - dumped >= _STALL_REPEAT_SECONDS):
+            _progress["dumped"] = now
+            dump_stacks(f"stall: no tool call started or finished for {now - last:.0f}s")
+
+
 def bounded(tool_name: str, fn: Callable, *args, **kwargs):
     """Run the whole tool call (framework work + server call) under the tool's budget plus a margin."""
     import contextvars
 
     budget = timeout_for(tool_name) + _OUTER_MARGIN_SECONDS
     ctx = contextvars.copy_context()          # the calling agent's identity travels with the call
+    _note_progress()
     future = _outer_pool.submit(ctx.run, fn, *args, **kwargs)
     try:
-        return future.result(timeout=budget)
+        result = future.result(timeout=budget)
+        _note_progress()
+        return result
     except FutureTimeout:
         future.cancel()
         with _lock:

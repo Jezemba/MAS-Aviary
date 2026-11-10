@@ -131,6 +131,13 @@ def test_a_timeout_writes_every_threads_stack_beside_the_link(tmp_path, monkeypa
     assert "get_su2_status" in text and "Thread" in text
 
 
+def test_a_call_marks_progress_and_starts_the_stall_monitor():
+    call_watchdog._progress["last"] = None
+    _tool("get_su2_status", ["session_id"], []).forward()
+    assert call_watchdog._progress["last"] is not None
+    assert call_watchdog._monitor_started.is_set()
+
+
 def test_the_agent_identity_and_the_heartbeat_scope_travel_with_the_call():
     seen = {}
 
