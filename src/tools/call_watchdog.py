@@ -86,7 +86,10 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
         _stats["calls_watched"] += 1
     from src.logging import step_log
 
-    future = _pool.submit(fn, *args, **kwargs)
+    import contextvars
+
+    # B267: the caller's context (agent identity, the heartbeat's not_recorded) travels into the worker.
+    future = _pool.submit(contextvars.copy_context().run, fn, *args, **kwargs)
     try:
         result = future.result(timeout=budget)
         step_log.record_tool_call(tool_name, kwargs, result)
