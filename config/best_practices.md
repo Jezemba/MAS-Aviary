@@ -23,8 +23,6 @@ bottom: the newest entries are last.
 ## geometry
 
 - [2026-10-04] set_high_level_parameters inputs that reshape the geometry: wing (Wing1, Wing2H, Wing3V) area, aspect_ratio, sweep; fuselage length, diameter. span alone, root_chord, tip_chord, dihedral, twist and taper are not inputs; the tool reports ignored keys in warnings.
-- [2026-11-09] A key you leave out stays at its current value, and passing a key at its current value changes nothing. sweep is the quarter-chord sweep, the same quantity get_high_level_parameters reports.
-- [2026-11-09] area, aspect_ratio and sweep can be changed together. geometry_morph.after holds the achieved values and geometry_morph.targets_met says whether they reached what you asked.
 - [2026-10-04] get_wing_summary's reference_area and aspect_ratio are half-wing figures; full_reference_area and full_aspect_ratio are the full wing.
 - [2026-10-04] generate_volume_mesh without component_uid meshes the whole aircraft. The framework sets the mesh sizes. export_component_mesh(format="su2") is surface-only and SU2 cannot solve it.
 - [2026-10-04] After reshaping, call export_cpacs; the mass stage reads the exported file.
@@ -32,6 +30,8 @@ bottom: the newest entries are last.
 - [2026-11-08] A reply starting "MeshDeformationRefused:" means the design moved too far from the baseline for the mesh to follow; it names the component and its baseline area, aspect ratio and sweep. Your geometry stays as set but has no mesh, so SU2 cannot run on it. Move that component back toward the baseline (a smaller change) and call generate_volume_mesh again.
 - [2026-11-08] A reply starting "MeshDeformationToolFailure:" is a tool failure, not your design. Calling generate_volume_mesh again will not help: report it.
 - [2026-11-08] statistics also reports surface_triangles_flipped / surface_flipped_area_m2 (a few sliver triangles at a tail root are accepted and reported) and junction_overhang_nodes (a vertical-tail root that overhangs the fuselage; the mesh follows the root). Neither is an error.
+- [2026-11-09] A key you leave out stays at its current value, and passing a key at its current value changes nothing. sweep is the quarter-chord sweep, the same quantity get_high_level_parameters reports.
+- [2026-11-09] area, aspect_ratio and sweep can be changed together. geometry_morph.after holds the achieved values and geometry_morph.targets_met says whether they reached what you asked.
 
 ## aero
 
