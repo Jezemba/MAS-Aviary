@@ -86,7 +86,10 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
         _stats["calls_watched"] += 1
     from src.logging import step_log
 
-    future = _pool.submit(fn, *args, **kwargs)
+    import contextvars
+
+    # B267: the caller's context (agent identity, the heartbeat's not_recorded) travels into the worker.
+    future = _pool.submit(contextvars.copy_context().run, fn, *args, **kwargs)
     try:
         result = future.result(timeout=budget)
         step_log.record_tool_call(tool_name, kwargs, result)
@@ -96,6 +99,7 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
         future.cancel()          # it is already running, so this only stops a queued call
         with _lock:
             _stats["timeouts"][tool_name] = _stats["timeouts"].get(tool_name, 0) + 1
+        dump_stacks(f"{tool_name}: no answer within {budget:.0f}s")      # B267
         logger.error("[B85] %s did not answer within %.0fs -- treating it as a failed call so "
                      "the run continues instead of wedging", tool_name, budget)
         raise ToolCallTimeout(
@@ -106,6 +110,104 @@ def call(tool_name: str, fn: Callable, *args, **kwargs):
     except Exception as exc:
         step_log.record_tool_call(tool_name, kwargs, error=exc)
         raise
+
+
+# -- B267: the whole call, not only the server round trip -------------------------------------------
+#
+# l2c seq_graph (ws5, 2026-11-10): the su2 server was wedged (its log parser spinning on a 155 MB line).
+# call() above released run_su2_solver x3 and list_result_files on time; the next get_su2_status then
+# waited 3 h with no timeout, no log line and 52 of 59 threads parked on locks. call() bounds only the
+# server call; the framework's own work before it (argument resolution, which can call tools itself,
+# and the guards) had no bound. bounded() puts the WHOLE middleware call under one, a margin above the
+# tool's own budget so call() still fires first when the server is the one that is slow, and every
+# timeout now writes every thread's stack beside the link's files, so the next escape is located, not
+# inferred.
+_OUTER_MARGIN_SECONDS = 300.0
+_outer_pool = ThreadPoolExecutor(max_workers=32, thread_name_prefix="avion-tool-outer")
+
+
+def dump_stacks(reason: str) -> str | None:
+    """Every thread's Python stack, appended to hang_stacks.txt in the link folder. Never raises."""
+    import faulthandler
+    import os
+    import time
+
+    try:
+        from src.tools.design_json import design_path
+
+        path = design_path()
+        path = os.path.join(os.path.dirname(path), "hang_stacks.txt") if path else None
+        if not path:
+            return None
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n===== {time.strftime('%Y-%m-%dT%H:%M:%S')} {reason}\n")
+            fh.flush()
+            faulthandler.dump_traceback(file=fh, all_threads=True)
+        return path
+    except Exception:  # pragma: no cover - a diagnostic must never break the run
+        return None
+
+
+# A wedged server alone does NOT reproduce the l2c escape (ws8, 2026-11-10: a FastMCP server spinning on its
+# only thread; run_su2_solver, then get_su2_status twice, were each released at their budget by call() on the
+# old code). The hang may sit outside the tool path altogether, so a stall is also recorded wherever it is:
+# when no tool call has started or finished for _STALL_DUMP_SECONDS, every thread's stack is written beside
+# the link's files, and again every _STALL_REPEAT_SECONDS while it lasts. It only writes a file.
+_STALL_DUMP_SECONDS = 2700.0
+_STALL_REPEAT_SECONDS = 1800.0
+_progress = {"last": None, "dumped": None}
+_monitor_started = threading.Event()
+
+
+def _note_progress() -> None:
+    import time
+
+    _progress["last"] = time.time()
+    _progress["dumped"] = None
+    if not _monitor_started.is_set():
+        _monitor_started.set()
+        threading.Thread(target=_stall_monitor, name="avion-stall-monitor", daemon=True).start()
+
+
+def _stall_monitor() -> None:  # pragma: no cover - timing loop; the dump itself is tested
+    import time
+
+    while True:
+        time.sleep(60)
+        last, dumped = _progress["last"], _progress["dumped"]
+        if last is None:
+            continue
+        now = time.time()
+        if now - last >= _STALL_DUMP_SECONDS and (dumped is None or now - dumped >= _STALL_REPEAT_SECONDS):
+            _progress["dumped"] = now
+            dump_stacks(f"stall: no tool call started or finished for {now - last:.0f}s")
+
+
+def bounded(tool_name: str, fn: Callable, *args, **kwargs):
+    """Run the whole tool call (framework work + server call) under the tool's budget plus a margin."""
+    import contextvars
+
+    budget = timeout_for(tool_name) + _OUTER_MARGIN_SECONDS
+    ctx = contextvars.copy_context()          # the calling agent's identity travels with the call
+    _note_progress()
+    future = _outer_pool.submit(ctx.run, fn, *args, **kwargs)
+    try:
+        result = future.result(timeout=budget)
+        _note_progress()
+        return result
+    except FutureTimeout:
+        future.cancel()
+        with _lock:
+            key = f"{tool_name} (whole call)"
+            _stats["timeouts"][key] = _stats["timeouts"].get(key, 0) + 1
+        where = dump_stacks(f"{tool_name}: the whole call did not finish within {budget:.0f}s")
+        logger.error("[B267] %s: the whole call did not finish within %.0fs -- released; stacks in %s",
+                     tool_name, budget, where)
+        raise ToolCallTimeout(
+            f"{tool_name} did not finish within {budget:.0f}s and was abandoned so the run could continue "
+            "(B267). Do not simply repeat the call -- check the design knowledge base for what has already "
+            "been produced."
+        ) from None
 
 
 def stats() -> dict:

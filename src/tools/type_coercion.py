@@ -255,7 +255,8 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         #     a one-character typo in a mesh ref surfaced as "Invalid
         #     base64-encoded string", and the agent reissued the same call).
         import json as _json
-        bad_ref = unresolved_ref_error(tool.name, resolved)
+        from src.tools.data_plane import payload_into_name_error
+        bad_ref = payload_into_name_error(tool.name, resolved, _declared) or unresolved_ref_error(tool.name, resolved)
         if bad_ref is not None:
             return _json.dumps(bad_ref)
         # 2a'. A session the runner created is authoritative: refuse creating a
@@ -368,7 +369,13 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         #     server has its coupled inputs, because the contract above required them.
         return result
 
-    tool.forward = middleware_forward
+    def bounded_forward(*args, **kwargs):
+        # B267: the framework's own work before and after the server call is bounded too, not only the
+        # server round trip (l2c seq_graph: get_su2_status waited 3 h past its 900 s budget).
+        from src.tools import call_watchdog
+        return call_watchdog.bounded(tool.name, middleware_forward, *args, **kwargs)
+
+    tool.forward = bounded_forward
     return tool
 
 
