@@ -342,6 +342,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         #    call that overruns its budget becomes an ordinary tool failure, so the agent
         #    ends, its peer place is released, and the link finishes and is recorded.
         from src.tools import call_watchdog
+        coupling_contract.note_call_start(tool.name)     # B262: results belong to the design the call started on
         try:
             result = call_watchdog.call(tool.name, original_forward, *args, **resolved)
         except Exception as exc:

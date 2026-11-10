@@ -180,3 +180,118 @@ def test_mass_reading_some_other_file_still_fails(tmp_path):
     _link(tmp_path, 0, rows)
     checks = {c[0]: c[1] for c in next(iter(check_sweep(tmp_path).values()))[0]}
     assert checks["geometry -> mass"] == FAIL
+
+
+# -- B261: a later link starts with the previous link's engine ---------------------------------------------
+
+def test_the_previous_links_engine_fills_what_set_inputs_leaves_out(monkeypatch):
+    """Orchestrated link 2 sent only Fn_DES and the Mach and flew the baseline engine instead of BPR 10."""
+    from src.coordination import prompt_assembly
+
+    dp.init_data_plane(DesignState(), {"set_inputs": "pycycle"})
+    carried = {"T4_MAX": 2857.0, "splitter.BPR": 10.0, "fan.PR": 1.5, "lpc.PR": 1.8, "hpc.PR": 12.0}
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: {"starting_design": {"engine": carried}})
+    out = dp.resolve_request("set_inputs", {"session_id": "c1", "values": {"Fn_DES": 8144.6, "fc.MN": 0.78, "fan.PR": 1.6}})
+    assert out["values"]["splitter.BPR"] == 10.0 and out["values"]["hpc.PR"] == 12.0
+    assert out["values"]["fan.PR"] == 1.6          # what the agent sends wins
+
+
+def test_an_input_already_set_in_this_link_is_not_overwritten(monkeypatch):
+    from src.coordination import prompt_assembly
+
+    state = DesignState()
+    state.data_store["design_space_engine"] = {"splitter.BPR": 7.0}
+    dp.init_data_plane(state, {"set_inputs": "pycycle"})
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: {"starting_design": {"engine": {"splitter.BPR": 10.0}}})
+    out = dp.resolve_request("set_inputs", {"session_id": "c1", "values": {"Fn_DES": 8144.6}})
+    assert "splitter.BPR" not in out["values"]
+
+
+def test_link_1_has_nothing_to_carry(monkeypatch):
+    from src.coordination import prompt_assembly
+
+    dp.init_data_plane(DesignState(), {"set_inputs": "pycycle"})
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: None)
+    out = dp.resolve_request("set_inputs", {"session_id": "c1", "values": {"Fn_DES": 8144.6}})
+    assert "splitter.BPR" not in out["values"]
+
+
+# -- B262: a result belongs to the design its call started on ----------------------------------------------
+
+def test_a_mass_result_that_started_before_a_reshape_is_stale(tmp_path):
+    from src.tools import coupling_contract as cc, duplicate_guard as dg, knowledge_base as kbm
+
+    dp.init_data_plane(DesignState(), {"run_cycle": "pycycle", "estimate_mass": "mass"})
+    kbm.configure_run(str(tmp_path / "kb.jsonl"), 0, 1, None)
+    dg.observe("open_cpacs", {"source": "D150.xml"}, json.dumps({"session_id": "t1"}), "success",
+               {"design_fingerprint": "geo:f", "seq": 1})
+    cc.note_call_start("estimate_mass")                     # agent_3's mass call reads the AR 9.36 file
+    dg.observe("set_high_level_parameters", {"session_id": "t1", "component_uid": "Wing1"},
+               json.dumps({"geometry_morph": {"rebuilt": True}}), "success", {"seq": 2})   # agent_1 reshapes
+    coupling.put_var(dp.get_design_state(), "mass.mtom_kg", 91000.0, source_tool="estimate_mass")
+    cc.note_capture("mass", {"mtom_kg": 91000.0})           # the answer comes back after the reshape
+    refusal = cc.check("run_cycle", {"session_id": "c1"})
+    assert refusal["missing"][0]["state"] == "stale"
+    kbm.configure_run(None, 0, 1, None)
+
+
+def test_a_result_with_no_reshape_during_its_call_is_current(tmp_path):
+    from src.tools import coupling_contract as cc, duplicate_guard as dg, knowledge_base as kbm
+
+    dp.init_data_plane(DesignState(), {"run_cycle": "pycycle", "estimate_mass": "mass"})
+    kbm.configure_run(str(tmp_path / "kb.jsonl"), 0, 1, None)
+    dg.observe("open_cpacs", {"source": "D150.xml"}, json.dumps({"session_id": "t1"}), "success",
+               {"design_fingerprint": "geo:f", "seq": 1})
+    cc.note_call_start("estimate_mass")
+    coupling.put_var(dp.get_design_state(), "mass.mtom_kg", 91000.0, source_tool="estimate_mass")
+    cc.note_capture("mass", {"mtom_kg": 91000.0})
+    assert cc.check("run_cycle", {"session_id": "c1"}) is None
+    kbm.configure_run(None, 0, 1, None)
+
+
+# -- B263: the next link inherits the geometry the last flown mission flew --------------------------------
+
+def test_the_flown_geometry_is_carried_not_a_later_export(tmp_path):
+    from scripts.stat_batch_runner import carry_geometry_forward
+
+    state = DesignState()
+    dp.init_data_plane(state, {"run_simulation": "aviary"})
+    flown = tmp_path / "export.xml"
+    flown.write_text("<wing area='95'/>")
+    state.data_store["morphed_cpacs_path"] = str(flown)
+    dp._snapshot_flown_geometry("run_simulation", {"summary": {"fuel_burned_kg": 24306.7}})
+    flown.write_text("<wing area='85'/>")                   # exported after the last mission, never flown
+    out = carry_geometry_forward(state.data_store, tmp_path / "link")
+    assert open(out).read() == "<wing area='95'/>"
+
+
+def test_a_mission_on_the_starting_geometry_carries_nothing_new(tmp_path):
+    from scripts.stat_batch_runner import carry_geometry_forward
+
+    state = DesignState()
+    dp.init_data_plane(state, {"run_simulation": "aviary"})
+    dp._snapshot_flown_geometry("run_simulation", {"summary": {"fuel_burned_kg": 21788.5}})
+    later = tmp_path / "later.xml"
+    later.write_text("<wing area='85'/>")
+    state.data_store["morphed_cpacs_path"] = str(later)       # a morph after the last mission
+    assert carry_geometry_forward(state.data_store, tmp_path / "link") is None
+
+
+def test_a_mission_that_did_not_fly_keeps_nothing(tmp_path):
+    state = DesignState()
+    dp.init_data_plane(state, {"run_simulation": "aviary"})
+    state.data_store["morphed_cpacs_path"] = str(tmp_path / "x.xml")
+    dp._snapshot_flown_geometry("run_simulation", {"summary": {"fuel_burned_kg": 0.0}})
+    assert "flown_cpacs_path" not in state.data_store
+
+
+def test_a_recommendation_with_a_unit_symbol_is_found(tmp_path):
+    rec = {"kind": "recommendation", "verdict": "CONTINUE", "recommendation_to": "geometry_engineer",
+           "recommended_change": "Reduce wing area further from 95 m² to ~85 m²"}
+    _link(tmp_path, 0, [], design={"coordination_signals": [rec]})
+    d = tmp_path / "repeat_001" / "mdo_f25_sequential_iterative_feedback"
+    _link(tmp_path, 1, [])
+    (d / "trace.json").write_text(json.dumps({"geometry_engineer": [
+        {"step_number": 1, "model_input_messages": [{"content": "RECOMMENDED_CHANGE: Reduce wing area further from 95 m² to ~85 m²"}]}]}))
+    checks = {c[0]: c[1] for c in next(iter(check_sweep(tmp_path).values()))[1]}
+    assert checks["recommendation -> next link"] == PASS

@@ -532,6 +532,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_applied_design(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 _warn_flown_not_converged(tool_name, data)
+                _snapshot_flown_geometry(tool_name, data)
                 _annotate_pinned(tool_name, data)
                 _write_design_json()
                 data = _intercept_binaries(tool_name, data)
@@ -567,6 +568,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_applied_design(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         _warn_flown_not_converged(tool_name, response)
+        _snapshot_flown_geometry(tool_name, response)
         _annotate_pinned(tool_name, response)
         _write_design_json()
         response = _intercept_binaries(tool_name, response)
@@ -763,6 +765,42 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
             "failure": failure or None,
         }
 
+
+
+def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
+    """B263: keep the geometry each flown mission flew; the next link inherits the last one of those.
+
+    sequential_graph_routed, 2-link study 2026-11-09: the last mission flew 95 m^2 / AR 10 (24,307 kg); the
+    geometry agent then reopened the baseline file, cut it to 85 m^2 and exported. The runner carried the LAST
+    export, so link 2 started from a wing that never flew while the link's recorded end-state said 95 / AR 10.
+    The export path is reused, so the file is copied now, not referenced. "" means the mission flew the geometry
+    the link started from (no export yet).
+    """
+    if _design_state is None or tool_name != "run_simulation":
+        return
+    summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
+    try:
+        fuel = float((summary or {}).get("fuel_burned_kg"))
+    except (TypeError, ValueError):
+        return
+    if fuel <= _ZERO_FUEL_FLOOR_KG:
+        return
+    import shutil
+    import tempfile
+
+    store = _design_state.data_store
+    src = store.get("morphed_cpacs_path")
+    if not src or not os.path.isfile(str(src)):
+        store["flown_cpacs_path"] = ""
+        return
+    try:
+        dst = os.path.join(tempfile.mkdtemp(prefix="avion_flown_"), "flown_geometry.xml")
+        shutil.copyfile(str(src), dst)
+    except OSError as exc:  # pragma: no cover - the runner then falls back to the last export
+        logger.warning("[B263] could not keep the flown geometry %s: %s", src, exc)
+        return
+    store["flown_cpacs_path"] = dst
+    logger.info("[B263] the mission flew %s (kept as %s)", src, dst)
 
 
 def _warn_flown_not_converged(tool_name: str, data: dict) -> None:
@@ -2818,6 +2856,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _inject_phase_k_wing_mass(resolved)
         _inject_engine_scale(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
+        _inject_carried_engine(resolved)
         _inject_phase_k_b_fn_des(resolved)
         _inject_cycle_flight_condition(resolved)
         # design.json design_space: the values actually sent, recorded once pycycle confirms them.
@@ -2835,6 +2874,37 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 # 1.25× climb thrust margin). For MTOM=73 t → 5,920 lbf, matching
 # pycycle HBTF's default Fn_DES of 5,900 lbf within 0.3%.
 _FN_DES_PER_KG_LBF = 0.0811
+
+
+def _inject_carried_engine(resolved: dict) -> None:
+    """B261: a later link's engine starts as the previous link's engine, as its wing does.
+
+    Orchestrated 2-link study, 2026-11-09: link 1 designed BPR 10 / fan PR 1.5 / HPC PR 12 and flew 18,346 kg;
+    link 2's propulsion agent sent only Fn_DES and the Mach, so pyCycle fell back to its built-in cycle and link 2
+    flew the baseline engine (exactly the baseline's 21,788.49 kg). The geometry is carried as a file; the engine
+    was carried only if an agent re-typed it. An input this call names, or one already set in this link, wins.
+    """
+    from src.coordination.prompt_assembly import read_carry_over
+
+    carried = ((read_carry_over() or {}).get("starting_design") or {}).get("engine") or {}
+    if not carried or _design_state is None:
+        return
+    values = resolved.get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if values is None:
+        values = {}
+    if not isinstance(values, dict):
+        return
+    already = _design_state.data_store.get("design_space_engine") or {}
+    added = {k: v for k, v in carried.items() if k in _ENGINE_INPUTS and k not in values and k not in already}
+    if added:
+        values.update(added)
+        resolved["values"] = values
+        logger.info("[B261] carried engine inputs from the previous link: %s", added)
 
 
 def _inject_cycle_flight_condition(resolved: dict) -> None:

@@ -645,7 +645,13 @@ def carry_geometry_forward(store: dict, link_dir) -> str | None:
     """
     import shutil
 
-    src = (store or {}).get("morphed_cpacs_path")
+    store = store or {}
+    # B263: the geometry the link's last flown mission flew, not whatever was exported after it. "" = that
+    # mission flew the geometry the link started from, so the next link keeps it too.
+    if "flown_cpacs_path" in store:
+        src = store.get("flown_cpacs_path")
+    else:
+        src = store.get("morphed_cpacs_path")
     if not src or not Path(str(src)).is_file():
         return None
     dest = (Path(link_dir) / "geometry_end.xml").resolve()     # absolute: the tigl server opens it

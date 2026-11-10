@@ -171,14 +171,35 @@ def current_design_fingerprint() -> str:
     return "design:" + hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+# B262: the tool calls whose results are coupled inputs, and the producer each one's result belongs to.
+PRODUCER_TOOLS = {"estimate_mass": "mass", "run_su2_solver": "su2", "read_history_csv": "su2",
+                  "run_cycle": "pycycle", "get_outputs": "pycycle"}
+_call_start = __import__("threading").local()
+
+
+def note_call_start(tool_name: str) -> None:
+    """Remember the design a producing call STARTED on (B262), for note_capture on this thread."""
+    producer = PRODUCER_TOOLS.get(tool_name)
+    if producer:
+        started = getattr(_call_start, "fp", None) or {}
+        started[producer] = current_design_fingerprint()
+        _call_start.fp = started
+
+
 def note_capture(producer: str, detail: Any = None) -> None:
-    """Record WHICH design a discipline's results were produced for, at capture time."""
+    """Record WHICH design a discipline's results were produced for.
+
+    B262: that is the design when the call STARTED, not when its answer came back. Networked 2-link study,
+    2026-11-09: agent_3's estimate_mass was reading the AR 9.36 file while agent_1 reshaped the wing to AR 10;
+    stamped at capture, the old mass counted as the new design's, and the mission flew it.
+    """
     from src.tools.data_plane import get_design_state
 
     state = get_design_state()
     if state is None:
         return
-    state.data_store[f"_coupled_fp_{producer}"] = current_design_fingerprint()
+    started = (getattr(_call_start, "fp", None) or {}).pop(producer, None)
+    state.data_store[f"_coupled_fp_{producer}"] = started or current_design_fingerprint()
     if detail is not None:
         state.data_store[f"_coupled_detail_{producer}"] = detail
 

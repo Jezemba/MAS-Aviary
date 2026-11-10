@@ -129,7 +129,7 @@ class Link:
             return seen
         for agent, value in json.loads(trace.read_text()).items():
             steps = value if isinstance(value, list) else value.get("steps", value.get("trace", []))
-            seen[agent] = " ".join(json.dumps(s.get("model_input_messages", ""), default=str) + str(s.get("task", ""))
+            seen[agent] = " ".join(json.dumps(s.get("model_input_messages", ""), default=str, ensure_ascii=False) + str(s.get("task", ""))
                                    for s in steps if isinstance(s, dict))
         return seen
 
@@ -313,7 +313,8 @@ def check_recommendation(link: Link, previous: Link) -> tuple:
         if "orchestrator" not in shown and addressed not in shown:
             return "recommendation -> next link", FAIL, info
         return "recommendation -> next link", PASS, info + f" (addressed role saw it: {addressed in shown})"
-    if org == "networked":
+    if org == "networked" or link.result.get("handler") == "graph_routed":
+        # Who runs is the network's or the graph router's decision (coordination); delivery is seen by any agent.
         return "recommendation -> next link", PASS, info
     return ("recommendation -> next link", PASS if addressed in shown else FAIL, info)
 
