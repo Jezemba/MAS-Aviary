@@ -49,3 +49,16 @@ def test_b247_climb_start_and_thrust_message_are_in_simulation_section():
     section = text.split("## simulation")[1].split("\n## ")[0]
     assert "1.2 x the clean (flaps-up) stall speed" in section
     assert "failure.thrust_limited" in section
+
+
+def test_2026_11_10_lessons_reach_their_disciplines():
+    """B264 drag bias, B261/B263/B265 the flown design is carried, B262 stale results, B267 payload refs (2026-11-10)."""
+    for d in ("geometry", "aero", "propulsion", "mission", "simulation", "integrator"):
+        text = read_sections(d)
+        assert "starts from the design the last mission FLEW" in text, d
+        assert "PAYLOAD_IN_NAME_ARGUMENT" in text, d
+        assert "when the call STARTED" in text, d
+    assert "leading-edge suction is not resolved" in read_sections("aero")
+    assert "T4_MAX, splitter.BPR, fan.PR, lpc.PR, hpc.PR" in read_sections("propulsion")
+    assert "changed_since_run" in read_sections("simulation")
+    assert "changed_since_run" in read_sections("integrator")

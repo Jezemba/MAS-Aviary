@@ -16,6 +16,9 @@ bottom: the newest entries are last.
 - [2026-10-12] Values the framework sets from other disciplines replace anything passed for them: Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR (SU2), Aircraft.Wing.MASS (mass; MASS_SCALER until 2026-11-03), Fn_DES and Aircraft.Engine.SCALE_FACTOR (engine sized to drag and mass). To move them, change the design variable that drives them.
 - [2026-10-12] Graph-routed combinations: if the task needs more disciplines re-run, call request_complexity(level, reason) with level moderate or complex. The framework reads that call, not your text.
 - [2026-11-08] Two couplings are done for you: every design's CFD mesh is the study's one baseline mesh deformed to the design (see geometry), and the engine that flies the mission is the engine cycle you designed (see propulsion). You change design variables; you do not build meshes or engine tables yourself.
+- [2026-11-10] The next design iteration starts from the design the last mission FLEW: the geometry, the mission inputs and the engine cycle of the last run_simulation that burned fuel. A change made after the last run_simulation is not carried; fly it if it should count.
+- [2026-11-10] A mass, SU2 or engine-cycle result belongs to the design that was current when the call STARTED. If the geometry changed while it ran, the result is stale and the mission asks for it again.
+- [2026-11-10] A stored payload's reference (for example generate_volume_mesh__mesh_base64) goes only in the argument that takes the data (mesh_base64, initial_mesh). In a name or path argument such as mesh_file_name it is refused with PAYLOAD_IN_NAME_ARGUMENT. Leave mesh_file_name out (default mesh.su2); the framework attaches the current mesh.
 
 ## geometry
 
@@ -44,6 +47,7 @@ bottom: the newest entries are last.
 - [2026-10-12] The solve is trimmed to the cruise lift W/(qS): report the trimmed angle of attack and CL from run_su2_solver, not the starting AOA of 2 deg.
 - [2026-11-08] Replaces "takes about 10 minutes" above: on the deformed baseline mesh (2.3 million cells) the whole-aircraft solve took 2 minutes on 66 MPI ranks. SU2 uses the cores that are free when it starts, so it is slower when the machine is busy.
 - [2026-11-08] Every design is solved on the same baseline mesh, deformed, so CD differences between designs are design effects. Before 2026-11-07 each design was re-meshed and designs 2.5 % apart differed by about 22 % in CD from the mesh alone; results from before that date are not comparable.
+- [2026-11-10] Known bias on this mesh: SU2's wing drag grows with the angle of attack the wing needs for the cruise lift, because the leading-edge suction is not resolved (the wing's force acts close to normal to the wing rather than to the flow). A change that raises the trimmed angle of attack (more sweep, less area, a lower lift slope) is charged extra drag of about CL x the increase in angle of attack. Measured at constant lift, sweep 14 to 28 deg: trimmed angle of attack 2.64 to 3.43 deg, wing CD 0.0249 to 0.0301, of which CL x sin(angle of attack) 0.0215 to 0.0279; the remainder (wave drag) falls with sweep as it should.
 
 ## structures
 
@@ -66,6 +70,7 @@ bottom: the newest entries are last.
 - [2026-11-08] Ratings, set with set_inputs like the other inputs: T4_TAKEOFF (default 3540 degR) is the turbine inlet temperature at maximum power at and below 1,500 ft and sets take-off thrust; T4_CLIMB (default 3090 degR) is the same from 2,000 ft to the design altitude and sets climb thrust. They change the engine deck, not the design point. T4_MAX is the cruise rating.
 - [2026-11-08] T4_TAKEOFF above about 3640 degR has no sea-level static solution (3690 measured): the deck is refused (DeckNotUsable) and the mission cannot fly until the cycle changes.
 - [2026-11-08] Replaces "pycycle computes no engine mass" above for the mission: pycycle still computes none, but aviary now computes the engine mass from the flown engine's sea-level thrust (FLOPS mass law). A bigger engine is heavier; run_simulation reports it as engine.engine_mass_kg.
+- [2026-11-10] The engine cycle of the design the previous design iteration flew is carried: set_inputs fills any of T4_MAX, splitter.BPR, fan.PR, lpc.PR, hpc.PR that your call leaves out with that design's value. A value you send replaces it.
 
 ## mission
 
@@ -89,6 +94,7 @@ bottom: the newest entries are last.
 - [2026-11-08] run_simulation reports the engine that flew: engine.deck (the designed cycle's table), external_deck (true), scale_factor, scaled_sls_thrust_lbf and engine_mass_kg. It is refused, with the reason, when the designed cycle has no engine deck yet (no converged run_cycle, or the deck was refused); fix the cycle, not the scale factor.
 - [2026-11-08] The climb starts at 1.2 x the clean (flaps-up) stall speed for the mass the mission solves; run_simulation reports it as climb_start. takeoff_mass_kg is only the starting guess, so changing it does not change the mission.
 - [2026-11-08] When a mission does not converge and the last attempt needs more than full thrust, failure.thrust_limited says where: phase, Mach, altitude and throttle (above 1.0). Close the gap at that condition with more thrust from the engine cycle, less drag, or less weight. It says where the shortfall is, not which of the three to change. If it is absent, read failure.violated_constraints.
+- [2026-11-10] get_results returns the last run_simulation's results, and its design_parameters hold the inputs that run FLEW. Inputs set after it are listed in changed_since_run: they have not been flown, and their fuel is unknown until run_simulation is called again.
 
 ## integrator
 
@@ -102,6 +108,7 @@ bottom: the newest entries are last.
 - [2026-10-12] Every agent of the next iteration (in graph-routed, the next pass) receives the recommendation; any of them may answer with respond_to_recommendation. Use those answers in your verdict.
 
 - [2026-10-15] Networked: the mdo_integrator is the peer holding RESULTS_REVIEW (graph-routed) or evaluation (iterative). Claim that TODO before calling record_recommendation; finish any TODO you hold with mark_todo_done first (see networked).
+- [2026-11-10] Judge the design that flew: get_results' design_parameters are the inputs the last mission flew. If changed_since_run is present, the current inputs have no fuel figure yet. The next design iteration starts from the flown design (see general).
 
 ## networked
 
