@@ -2116,6 +2116,19 @@ def _error_text(reply) -> str:
     code = reply.get("error_code")
     return f"{code}: {err}" if code and err else str(err or code or reply)
 
+def _deck_before_close(resolved: dict) -> None:
+    """B259: build the engine deck while the session that sized the engine still exists.
+
+    ws6 2-link study, 2026-11-09: propulsion_analyst ran the cycle, then closed it; the mission's deck was then
+    requested from the closed session 8 times ("Session ... not found"), every run_simulation was refused and the
+    link flew nothing. Building the deck here costs nothing new (the mission would build the same deck) and only
+    happens when this session's engine is the current one.
+    """
+    if _design_state is None or resolved.get("session_id") != _design_state.data_store.get("prop_cycle_session"):
+        return
+    _ensure_engine_deck({})
+
+
 def _ensure_engine_deck(resolved: dict) -> None:
     """B3: before a mission flies, aviary's engine must be the designed cycle's engine.
 
@@ -2138,10 +2151,27 @@ def _ensure_engine_deck(resolved: dict) -> None:
         store["engine_deck_error"] = ("generate_engine_deck / set_engine_deck are not loaded"
                                       if gen is None or attach is None else "no pycycle session")
         return
-    try:
-        out = _as_dict(gen.forward(session_id=cyc))
-    except Exception as exc:  # pragma: no cover - surfaced through the contract
-        out = {"error": {"type": type(exc).__name__, "message": str(exc)}}
+    # B259: the session that sized the engine may be closed by now (close_cycle_model is allowed). Its deck was
+    # built before it closed (_deck_before_close); a closed session cannot change, so that deck is still its deck.
+    built = store.get("engine_deck") or {}
+    if (_design_state.sessions or {}).get("pycycle") != cyc:
+        if built.get("pycycle_session") == cyc and built.get("cycle_key") == store.get("prop_cycle_key") and built.get("file"):
+            out = {"success": True, "deck_file": built["file"], "design_key": built.get("key"),
+                   "reference_fn_des_lbf": built.get("reference_fn_des_lbf"), "design_tsfc": built.get("design_tsfc"),
+                   "sls_net_thrust_lbf": built.get("sls_net_thrust_lbf"), "envelope_holes": built.get("envelope_holes"),
+                   "cached": True}
+        else:
+            store["engine_deck_error"] = (
+                f"the pycycle session {cyc} that sized this engine was closed before its engine deck was built. "
+                "Run the cycle again on an open session (create_cycle_model, set_inputs, run_cycle) and do not close "
+                "it before the mission has flown")
+            store.pop("engine_deck", None)
+            return
+    else:
+        try:
+            out = _as_dict(gen.forward(session_id=cyc))
+        except Exception as exc:  # pragma: no cover - surfaced through the contract
+            out = {"error": {"type": type(exc).__name__, "message": str(exc)}}
     if not out.get("success") or not out.get("deck_file"):
         store["engine_deck_error"] = f"generate_engine_deck: {_error_text(out)}"
         store.pop("engine_deck", None)
@@ -2426,6 +2456,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _ensure_takeoff_mass(resolved)         # B239: the climb starts at V2 for this take-off mass
         _ensure_engine_deck(resolved)          # B3: the designed cycle becomes the mission engine
         _reapply_current_engine(resolved)
+    if tool_name == "close_cycle_model" and _design_state:
+        _deck_before_close(resolved)           # B259: the deck needs the session, so build it before it goes
     if tool_name in ("run_cycle", "get_outputs") and _design_state and mcp_name == "pycycle":
         if tool_name == "run_cycle":
             _auto_size_cycle(resolved)
@@ -2469,10 +2501,16 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # exports "back to the file it opened" overwrote the git-tracked D150 baseline with its morphed design
     # (netval, 4 exports in two networked links), so every later link and combination started from that
     # design instead of the baseline. The export goes to a per-run file of the same name instead.
+    # B258 (2026-11-09): the same for a run's recorded results. Link 2's geometry agent exported its morph "back to
+    # the file it opened", which was link 1's logs/stat_results/.../geometry_end.xml: link 1's archived end-geometry
+    # was replaced, and a retried link would have reopened the wrong wing. The runner writes geometry_end.xml with a
+    # file copy (carry_geometry_forward), never through export_cpacs, so redirecting every such export is safe.
     if tool_name == "export_cpacs" and _design_state is not None:
         out = resolved.get("output_path") or resolved.get("cpacs_file_path")
         key = "output_path" if resolved.get("output_path") else "cpacs_file_path"
-        if isinstance(out, str) and "tests/fixtures/" in out.replace("\\", "/"):
+        posix = out.replace("\\", "/") if isinstance(out, str) else ""
+        if isinstance(out, str) and ("tests/fixtures/" in posix or "logs/stat_results/" in posix
+                                     or os.path.basename(posix) == "geometry_end.xml"):
             import tempfile
 
             redirects = _design_state.data_store.setdefault("_export_redirects", {})
@@ -2480,7 +2518,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             if not dst:
                 dst = os.path.join(tempfile.mkdtemp(prefix="avion_export_"), os.path.basename(out))
                 redirects[out] = dst
-            logger.warning("B214: export_cpacs to the tracked fixture %s redirected to %s", out, dst)
+            logger.warning("B214/B258: export_cpacs to the tracked fixture or recorded result %s redirected to %s",
+                           out, dst)
             resolved[key] = dst
 
     # B111: the aero solve must be trimmed to the lift this aircraft has to make. After the path

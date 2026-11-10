@@ -42,8 +42,19 @@ def find(data: Any, key: str) -> Any:
     return None
 
 
+def number(value: Any) -> float | None:
+    """A number, also from the text form agents often send ('2857'); None otherwise (B260)."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def close(a: Any, b: Any, rel: float) -> bool:
-    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and abs(a - b) <= rel * max(abs(b), 1e-12)
+    a, b = number(a), number(b)
+    return a is not None and b is not None and abs(a - b) <= rel * max(abs(b), 1e-12)
 
 
 def ok(row: dict) -> bool:
@@ -81,6 +92,19 @@ class Link:
         for _, row in self.rows("set_aircraft_parameters", before=before):
             merged.update(row["args"].get("parameters") or {})
         return merged
+
+    def starting_wing(self) -> dict | None:
+        """The main wing as the link found it: the first measurement, or the first reshape's "before" (B260)."""
+        for _, row in self.rows("set_high_level_parameters", "morph_wing", "get_high_level_parameters"):
+            if row["args"].get("component_uid", row["args"].get("wing_uid")) != MAIN_WING:
+                continue
+            before = find(row["result"], "before")
+            if before:
+                return {"area": before.get("reference_area"), "aspect_ratio": before.get("aspect_ratio"),
+                        "sweep": before.get("sweep_deg"), "taper_ratio": before.get("taper_ratio")}
+            if row["tool"] == "get_high_level_parameters":
+                return {k: find(row["result"], k) for k in ("area", "aspect_ratio", "sweep", "taper_ratio")}
+        return None
 
     def wing_at(self, before: int) -> tuple[dict | None, int | None]:
         """The main wing as last measured before this point, and the index of the last reshape."""
@@ -192,7 +216,11 @@ def check_mass(link: Link, mission: int) -> list[tuple]:
         _, exported = link.last("export_cpacs", before=index)
         path = find(exported["result"], "cpacs_file_path") if exported else None
         used = mass["args"].get("cpacs_file_path")
-        out.append(("geometry -> mass", PASS if used and used == path else FAIL, f"mass read {used}, last export {path}"))
+        # G1: the framework hands mass-mcp a copy of the file (avion_mass_*/<same name>), so it cannot write its
+        # breakdown back into the design's file (B260: compared as a path, that copy read as a FAIL).
+        copy = bool(used and path) and Path(used).name == Path(path).name and Path(used).parent.name.startswith("avion_mass_")
+        out.append(("geometry -> mass", PASS if used and (used == path or copy) else FAIL,
+                    f"mass read {used}{' (framework copy)' if copy else ''}, last export {path}"))
     return out
 
 
@@ -244,7 +272,7 @@ def check_chain(link: Link, previous: Link) -> list[tuple]:
     if previous.calls:
         end_mission, _ = previous.final_mission()
         end, _ = previous.wing_at(end_mission if end_mission is not None else len(previous.calls))
-        start = next((r for r in (link.wing_at(i + 1)[0] for i in range(len(link.calls))) if r), None)
+        start = link.starting_wing()
         if end and start:
             same = all(close(start[k], end[k], 0.002) for k in ("area", "aspect_ratio", "sweep") if end.get(k) is not None)
             out.append(("link -> link wing", PASS if same else FAIL, f"start {start}, previous end {end}"))
