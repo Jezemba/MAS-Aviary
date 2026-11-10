@@ -2431,6 +2431,12 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 
     for key, value in kwargs.items():
         ref_key = _extract_ref_key(value)
+        if _payload_into_name(key, ref_key) is not None or (
+                isinstance(value, str) and _payload_into_name(key, value.strip()) is not None):
+            # B267: a stored payload never goes into a file-name or path argument; unresolved_ref_error
+            # refuses the call and names the argument that takes it.
+            resolved[key] = value
+            continue
         if ref_key is not None and _design_state and ref_key in _design_state.data_store:
             payload = _design_state.data_store[ref_key]
             logger.info(
@@ -3168,6 +3174,54 @@ def _placeholder_reason(arg_name: str, value: str) -> str | None:
             f"it is only {len(text)} characters — far too short to be a real "
             f"payload (expected thousands)"
         )
+    return None
+
+
+# B267 (l2c seq_graph, 2026-11-10): create_su2_session(mesh_file_name="generate_volume_mesh__mesh_base64")
+# had the 155,514,712-char mesh substituted into the FILE NAME. su2-mcp wrote it into the config, SU2 echoed
+# it into its log, and the server's log parser spun on it for hours with the run waiting on it. A payload
+# belongs in a payload argument; a name or path argument takes a name or a path.
+_NAME_ARG_SUFFIXES = ("_name", "_path", "_file", "filename", "_dir")
+
+
+def _is_name_arg(arg_name: str) -> bool:
+    name = str(arg_name).lower()
+    return name not in _PAYLOAD_ARGS and (name in ("name", "path", "file", "filename")
+                                          or name.endswith(_NAME_ARG_SUFFIXES))
+
+
+def _payload_into_name(arg_name: str, ref_key) -> str | None:
+    """The store key when *ref_key* names a stored PAYLOAD and *arg_name* takes a name or path, else None.
+
+    A short stored value (a path the framework captured, e.g. a CPACS export path) may still resolve into a
+    path argument; only bulk data is kept out."""
+    if not isinstance(ref_key, str) or _design_state is None or not _is_name_arg(arg_name):
+        return None
+    payload = (getattr(_design_state, "data_store", None) or {}).get(ref_key)
+    return ref_key if isinstance(payload, str) and len(payload) >= _MIN_PAYLOAD_CHARS else None
+
+
+def payload_into_name_error(tool_name: str, resolved: dict, declared=()) -> dict | None:
+    """B267: refuse a call that put a stored payload's reference into a name or path argument.
+
+    *declared* is the tool's input names, used to name the argument that does take the payload."""
+    for key, value in resolved.items():
+        ref = _payload_into_name(key, _extract_ref_key(value))
+        if ref is None and isinstance(value, str):
+            ref = _payload_into_name(key, value.strip())
+        if ref is None:
+            continue
+        takes = sorted(k for k in _PAYLOAD_ARGS if k in set(declared or ()))
+        where = (f" Pass it as {' or '.join(repr(k) for k in takes)} instead." if takes
+                 else " Pass it in the argument that takes the data itself.")
+        return {
+            "success": False,
+            "error_code": "PAYLOAD_IN_NAME_ARGUMENT",
+            "error": (f"Argument '{key}' takes a file name or path, but '{ref}' is a stored payload "
+                      f"({len(_design_state.data_store[ref]):,} characters), not a name.{where} "
+                      f"Leave '{key}' out to use the default, or give a plain name such as 'mesh.su2'. "
+                      "This call was NOT sent to the server."),
+        }
     return None
 
 

@@ -280,7 +280,11 @@ def get_kb() -> KnowledgeBase | None:
 _CREATE_LOCK = threading.Lock()
 
 
-_no_record = threading.local()
+# B267: a ContextVar, not a thread-local: call_watchdog.bounded runs a call on a worker thread with a copy of
+# the caller's context, and the heartbeat's not_recorded must travel with it.
+from contextvars import ContextVar as _ContextVar
+
+_no_record_on: _ContextVar[bool] = _ContextVar("avion_kb_no_record", default=False)
 
 
 class not_recorded:
@@ -293,11 +297,11 @@ class not_recorded:
     """
 
     def __enter__(self):
-        _no_record.on = True
+        self._token = _no_record_on.set(True)
         return self
 
     def __exit__(self, *exc):
-        _no_record.on = False
+        _no_record_on.reset(self._token)
         return False
 
 
@@ -305,7 +309,7 @@ def record_tool_result(tool_name: str, server: str, resolved: dict, result: Any 
                        *, error: BaseException | None = None, design_fingerprint: str | None = None,
                        status: str | None = None, note: str = "") -> dict | None:
     """Write one KB entry for a completed (or failed/refused) MCP tool call."""
-    if getattr(_no_record, "on", False):
+    if _no_record_on.get():
         return None
     kb = get_kb()
     if kb is None or not server:

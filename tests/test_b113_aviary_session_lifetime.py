@@ -148,7 +148,7 @@ def test_the_heartbeat_is_not_written_to_the_knowledge_base():
     with kb.not_recorded():
         assert kb.record_tool_result("check_constraints", "aviary", {}, {"ok": True}) is None
     # and recording works again afterwards
-    assert not getattr(kb._no_record, "on", False)
+    assert not kb._no_record_on.get()
 
 
 def test_an_auto_create_that_is_not_a_replacement_stays_blank(fresh, monkeypatch):
