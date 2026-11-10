@@ -118,10 +118,11 @@ def test_a_session_closed_with_no_deck_says_what_to_do(plane):
     assert "was closed" in error and "run_cycle" in error
 
 
-def test_closing_some_other_session_does_nothing(plane):
+def test_closing_an_engine_not_sized_on_this_design_builds_no_deck(plane):
     state, stubs, _ = plane
     _sized_engine(state)
-    dp.resolve_request("close_cycle_model", {"session_id": "other"})
+    coupling.put_var(state, "aero.cd_cruise", 0.0250, source_tool="run_su2_solver")  # the drag changed since
+    dp.resolve_request("close_cycle_model", {"session_id": "cyc1"})
     assert stubs["generate_engine_deck"].calls == []
 
 
