@@ -501,7 +501,7 @@ def set_aside_design_json(link_dir, attempt: int) -> None:
 
 
 def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
-                     params: dict | None, design_space: dict | None = None) -> Path | None:
+                     params: dict | None, design_space: dict | None = None, previous_dir=None) -> Path | None:
     """What a new link (iteration) inherits, for verbatim prompt assembly (Jessica, 2026-10-05).
 
     Verbatim mode drops the runner's task text, which is where the previous link's
@@ -522,7 +522,13 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
     # Graph-routed v2 pre-initialization (2026-10-12) starts a link from the previous link's end-state: its
     # whole design.json (discipline results included), from the sibling folder repeat_<link-1>/<combo>.
     # B265: as its last flown mission flew it (link_design), not as design.json was left.
-    previous_design = link_design(link_dir.parent.parent / f"repeat_{link - 1:03d}" / link_dir.name)
+    # B268: from the last COMPLETED link (*previous_dir*, given by the runner): the folder of a failed link holds a
+    # design the chain did not advance to (its geometry file and aviary inputs are not carried). None = no
+    # completed link yet ("") , so the link starts like link 1. Without *previous_dir*, the sibling repeat_<link-1>.
+    if previous_dir is None:
+        previous_design = link_design(link_dir.parent.parent / f"repeat_{link - 1:03d}" / link_dir.name)
+    else:
+        previous_design = link_design(Path(previous_dir)) if str(previous_dir) else None
     # B180: the recommendation the previous link's integrator RECORDED (record_recommendation), if it did.
     recorded = [s for s in ((previous_design or {}).get("coordination_signals") or [])
                 if isinstance(s, dict) and s.get("kind") == "recommendation"]
@@ -1411,6 +1417,7 @@ def run_stat_batch(
         # The previous link's mdo_integrator DESIGN_STATE as it wrote it (verbatim carry-over).
         chain_integrator: str | None = None
         chain_design_space: dict | None = None      # the previous link's design.json design_space
+        chain_design_dir = ""      # B268: folder of the last COMPLETED link ("" = none yet); previous_design comes from it
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
             if done and done.get("chain_end_params"):
@@ -1420,6 +1427,7 @@ def run_stat_batch(
                 chain_feedback = done.get("chain_feedback") or chain_feedback
                 chain_integrator = done.get("chain_integrator_text") or chain_integrator
                 chain_design_space = done.get("chain_design_space") or chain_design_space
+                chain_design_dir = str(out_path / f"repeat_{prev:03d}" / combo.name)
                 if done.get("kb_link_summary"):
                     chain_kb_seed = {"summary": done["kb_link_summary"],
                                      "end_state": done["chain_end_params"]}
@@ -1496,7 +1504,7 @@ def run_stat_batch(
             base_task = base_task_for(combo.name, chain_cpacs)
             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
             write_carry_over(out_path / f"repeat_{repeat_idx:03d}" / combo.name, repeat_idx,
-                             chain_integrator, chain_cpacs, params, chain_design_space)
+                             chain_integrator, chain_cpacs, params, chain_design_space, previous_dir=chain_design_dir)
 
             # Retry loop
             result = None
@@ -1770,6 +1778,7 @@ def run_stat_batch(
                     chain_design_space = (design_space_of(out_path / f"repeat_{repeat_idx:03d}" / combo.name)
                                           or chain_design_space)
                     result_dict["chain_design_space"] = chain_design_space
+                    chain_design_dir = str(out_path / f"repeat_{repeat_idx:03d}" / combo.name)   # B268
 
                     if _integrator or _num:
                         chain_feedback = (
@@ -1894,10 +1903,14 @@ def run_stat_batch(
                 # link set these.
                 _failed_text = integrator_text(result) if result is not None else ""
                 chain_integrator = _failed_text or chain_integrator
-                chain_design_space = (design_space_of(out_path / f"repeat_{repeat_idx:03d}" / combo.name)
-                                      or chain_design_space)
+                # B268 (l20 networked_graph_routed, 2026-11-11): the next link starts from the design THIS link
+                # started from. chain_params and chain_cpacs are not advanced by a failed link, so advancing
+                # chain_design_space alone (to this link's flown AR 11 wing) started link 2 with an AR 11 design
+                # table and mission over the AR 9.36 geometry file and AR 9.37 aviary inputs; links 2 and 3 flew
+                # AR 11 on a 9.36 wing. Only the assessment text is handed on; the design is recorded, not used.
                 checkpoint["failed"][key]["chain_integrator_text"] = _failed_text
-                checkpoint["failed"][key]["chain_design_space"] = chain_design_space
+                checkpoint["failed"][key]["failed_link_design_space"] = design_space_of(
+                    out_path / f"repeat_{repeat_idx:03d}" / combo.name)
                 save_checkpoint(ckpt_path, checkpoint)
                 if wb_run:
                     wandb.log(
