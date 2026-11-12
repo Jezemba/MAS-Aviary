@@ -799,13 +799,22 @@ def baseline_refs(baseline: dict, df_link1_kb_old: dict) -> dict:
 
 
 def session_defaults_from_kb(kb_path: Path, names: list[str]) -> dict:
-    """old_value of each name in the first successful set_aircraft_parameters on a fresh link-1 session."""
+    """old_value of each name in the first successful set_aircraft_parameters on a fresh link-1 session.
+
+    Reads a knowledge_base.jsonl (outputs) or a tool_calls_attempt<k>.jsonl (result). The 2026-11-12 study's
+    knowledge bases shorten lists ("<list 12 items>"); its tool_calls files keep them, so pass one of those."""
     for line in kb_path.read_text().splitlines():
         e = json.loads(line)
-        if e.get("tool") == "set_aircraft_parameters" and e.get("status") == "success":
-            applied = {a["name"]: a.get("old_value") for a in (e.get("outputs") or {}).get("applied", [])}
-            if all(applied.get(n) is not None for n in names):
-                return {n: float(applied[n]) for n in names}
+        out = e.get("outputs") if "outputs" in e else e.get("result")
+        ok = e.get("status") == "success" if "status" in e else bool((out or {}).get("success"))
+        if e.get("tool") != "set_aircraft_parameters" or not ok or not isinstance(out, dict):
+            continue
+        listed = out.get("applied")
+        if not isinstance(listed, list):
+            continue
+        applied = {a["name"]: a.get("old_value") for a in listed}
+        if all(applied.get(n) is not None for n in names):
+            return {n: float(applied[n]) for n in names}
     return {}
 
 

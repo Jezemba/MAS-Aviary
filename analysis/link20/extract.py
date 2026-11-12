@@ -36,6 +36,21 @@ SOURCES = [
         "mdo_f25_networked_graph_routed"]),
 ]
 
+# The re-run after the B3 / B231 / B241 ... B271 fixes (Avion cb20c60 .. 2e0b5e8), launched 2026-11-10. Each
+# combination ran on its own machine; the run folders were copied unchanged to aipexws8 /data on 2026-11-12.
+L20_20261112_ROOT = Path("/data/Jessica/l20_20261112/runs")
+SOURCES_20261112 = [
+    ("l20_seq_staged", L20_20261112_ROOT / "l20_seq_staged", ["mdo_f25_sequential_staged_pipeline"]),
+    ("l20_seq_iter", L20_20261112_ROOT / "l20_seq_iter", ["mdo_f25_sequential_iterative_feedback"]),
+    ("l20_seq_graph", L20_20261112_ROOT / "l20_seq_graph", ["mdo_f25_sequential_graph_routed"]),
+    ("l20_orch_staged_iter", L20_20261112_ROOT / "l20_orch_staged_iter", [
+        "mdo_f25_orchestrated_staged_pipeline", "mdo_f25_orchestrated_iterative_feedback"]),
+    ("l20_orch_graph", L20_20261112_ROOT / "l20_orch_graph", ["mdo_f25_orchestrated_graph_routed"]),
+    ("l20c_net_iter", L20_20261112_ROOT / "l20c_net_iter", ["mdo_f25_networked_iterative_feedback"]),
+    ("l20c_net_graph", L20_20261112_ROOT / "l20c_net_graph", ["mdo_f25_networked_graph_routed"]),
+]
+STUDIES = {"20261028": SOURCES, "20261112": SOURCES_20261112}
+
 # Same floor the runner uses to call a mission "zero fuel" (scripts/stat_batch_runner.py).
 ZERO_FUEL_FLOOR_KG = 100.0
 
@@ -341,9 +356,11 @@ def build_table(sources=SOURCES) -> pd.DataFrame:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--study", choices=sorted(STUDIES), default="20261028",
+                    help="20261028 = the first 20-link study; 20261112 = the re-run after the fixes")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    df = build_table()
+    df = build_table(STUDIES[args.study])
     df.to_csv(args.out / "links.csv", index=False)
     print(f"wrote {len(df)} rows to {args.out / 'links.csv'}")
 
