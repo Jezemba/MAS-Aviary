@@ -201,10 +201,25 @@ def test_an_input_already_set_in_this_link_is_not_overwritten(monkeypatch):
 
     state = DesignState()
     state.data_store["design_space_engine"] = {"splitter.BPR": 7.0}
+    state.data_store["engine_inputs_set"] = {"splitter.BPR": True}       # B270: set by set_inputs in this link
     dp.init_data_plane(state, {"set_inputs": "pycycle"})
     monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: {"starting_design": {"engine": {"splitter.BPR": 10.0}}})
     out = dp.resolve_request("set_inputs", {"session_id": "c1", "values": {"Fn_DES": 8144.6}})
     assert "splitter.BPR" not in out["values"]
+
+
+def test_b270_defaults_read_with_get_design_inputs_do_not_block_the_carried_engine(monkeypatch):
+    """l20 orchestrated_iterative_feedback link 13: get_design_inputs (pyCycle defaults) came before the first
+    set_inputs, so the carried BPR 10 / HPC PR 12 engine was skipped and the link flew the baseline engine."""
+    from src.coordination import prompt_assembly
+
+    dp.init_data_plane(DesignState(), {"set_inputs": "pycycle", "get_design_inputs": "pycycle"})
+    dp._capture_design_space("get_design_inputs", {"design_inputs": [
+        {"name": n, "current_value": v} for n, v in (("splitter.BPR", 5.105), ("fan.PR", 1.685), ("hpc.PR", 9.369))]})
+    carried = {"splitter.BPR": 10.0, "fan.PR": 1.5, "hpc.PR": 12.0}
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: {"starting_design": {"engine": carried}})
+    out = dp.resolve_request("set_inputs", {"session_id": "c1", "values": {"Fn_DES": 9038.6, "fc.MN": 0.78}})
+    assert out["values"]["splitter.BPR"] == 10.0 and out["values"]["hpc.PR"] == 12.0
 
 
 def test_link_1_has_nothing_to_carry(monkeypatch):

@@ -1236,6 +1236,7 @@ def _capture_design_space(tool_name: str, data: dict) -> None:
         engine = store.setdefault("design_space_engine", {})
         for name in updated:
             if name in _ENGINE_INPUTS:
+                store.setdefault("engine_inputs_set", {})[name] = True      # B270: set in THIS link
                 try:
                     engine[name] = float(sent[name])
                 except (KeyError, TypeError, ValueError):
@@ -2922,7 +2923,10 @@ def _inject_carried_engine(resolved: dict) -> None:
         values = {}
     if not isinstance(values, dict):
         return
-    already = _design_state.data_store.get("design_space_engine") or {}
+    # B270 (l20 orchestrated_iterative_feedback link 13, 2026-11-12): only inputs SET in this link (set_inputs) win.
+    # design_space_engine also holds the pyCycle defaults get_design_inputs reports, so calling it first made the
+    # carried BPR 10 / HPC PR 12 engine count as already set, and the link flew the baseline engine.
+    already = _design_state.data_store.get("engine_inputs_set") or {}
     added = {k: v for k, v in carried.items() if k in _ENGINE_INPUTS and k not in values and k not in already}
     if added:
         values.update(added)
