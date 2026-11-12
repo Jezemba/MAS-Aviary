@@ -65,7 +65,10 @@ def ok(row: dict) -> bool:
     # "Unknown session_id" reply was read as the link's first wing measurement, all None).
     if isinstance(result, str) and result.lstrip().startswith("Error calling tool"):
         return False
-    return not (isinstance(result, dict) and (result.get("success") is False or result.get("error_code")))
+    # l20 orch_graph links 2 and 6 (2026-11-12): mass-mcp answers a failed estimate with status "error" and every
+    # mass 0.0; that is not a wing mass (the framework ignored it and the mission flew the previous estimate).
+    return not (isinstance(result, dict) and (result.get("success") is False or result.get("error_code")
+                                              or result.get("status") == "error"))
 
 
 class Link:

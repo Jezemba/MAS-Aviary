@@ -173,3 +173,16 @@ def test_checker_skips_an_mcp_error_text_as_a_measurement(tmp_path):
     _link(tmp_path, 0, end)
     _link(tmp_path, 1, start)
     assert _status(tmp_path, "link -> link wing", 1) == PASS
+
+
+def test_checker_a_mass_reply_with_status_error_is_not_a_mass(tmp_path):
+    """l20 orch_graph link 2: the 4th estimate_mass (num_engines 4) failed with status "error" and all masses 0.0."""
+    good = {"status": "success", "mass_breakdown": {"components": {"mWing_kg": 8735.3}}}
+    bad = {"status": "error", "mass_breakdown": {"components": {"mWing_kg": 0.0}}}
+    rows = [_row("open_cpacs", {"source": "/start.xml"}, {"session_id": "e442"}),
+            _row("estimate_mass", {"cpacs_file_path": "/start.xml"}, good),
+            _row("estimate_mass", {"cpacs_file_path": "/start.xml", "num_engines": 4}, bad),
+            _row("set_aircraft_parameters", {"parameters": {"Aircraft.Wing.MASS": 8735.3}}, {"valid": True}),
+            _row("run_simulation", {}, {"summary": {"fuel_burned_kg": 23192.0}})]
+    _link(tmp_path, 0, rows)
+    assert _status(tmp_path, "mass -> aviary", 0) == PASS
