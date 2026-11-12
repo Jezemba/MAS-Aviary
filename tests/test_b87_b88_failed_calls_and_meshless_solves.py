@@ -242,3 +242,58 @@ def test_no_redirect_is_recorded_when_the_session_was_right():
     state.sessions["su2"] = "36105fb1"
     dp.resolve_request("run_su2_solver", {"session_id": "36105fb1"})
     assert not (state.data_store.get("_session_redirects") or [])
+
+
+# ---- B271: no solve on the mesh of an earlier geometry -------------------------------------------
+
+MESH_A = "TkRJTUU9IDMgYQ==" * 60
+MESH_B = "TkRJTUU9IDMgYg==" * 60
+
+
+def _mesh_made(payload):
+    dp.get_design_state().data_store["generate_volume_mesh__mesh_base64"] = payload
+    dg.observe("generate_volume_mesh", {"session_id": "t1"}, {"format": "su2"}, "success", {"seq": 9})
+
+
+def _reshaped():
+    dg.observe("set_high_level_parameters", {"session_id": "t1", "component_uid": "Wing1"},
+               {"geometry_morph": {"rebuilt": True}}, "success", {"seq": 10})
+
+
+def test_b271_a_solve_on_the_mesh_of_an_earlier_geometry_is_refused():
+    """l20 orchestrated_graph_routed links 5/7/8: reshape, new mesh, but the SU2 session kept the old one."""
+    dg.observe("open_cpacs", {"source": "/x/D150.xml"}, {"session_id": "t1"}, "success",
+               {"seq": 1, "design_fingerprint": "geo:f"})
+    _mesh_made(MESH_A)
+    dg.observe("create_su2_session", {"initial_mesh": MESH_A}, {"session_id": "s1"}, "success", {"seq": 3})
+    assert mesh_guard.mesh_stale("run_su2_solver", {"session_id": "s1"}) is None        # mesh of this geometry
+
+    _reshaped()
+    refusal = mesh_guard.mesh_stale("run_su2_solver", {"session_id": "s1"})
+    assert refusal["error_code"] == "STALE_MESH" and "generate_volume_mesh" in refusal["error"]
+
+    _mesh_made(MESH_B)                                                                   # the new mesh exists
+    refusal = mesh_guard.mesh_stale("run_su2_solver", {"session_id": "s1"})
+    assert refusal["error_code"] == "STALE_MESH"
+    assert "set_mesh(session_id='s1', mesh_base64='generate_volume_mesh__mesh_base64')" in refusal["error"]
+
+    dg.observe("set_mesh", {"session_id": "s1", "mesh_base64": MESH_B}, {"mesh_path": "/w/mesh.su2"}, "success",
+               {"seq": 12})
+    assert mesh_guard.mesh_stale("run_su2_solver", {"session_id": "s1"}) is None        # loaded: solve
+
+
+def test_b271_a_mesh_this_run_never_saw_generated_is_not_judged():
+    sid = _su2_session(mesh="unknownhash")
+    _reshaped()
+    assert mesh_guard.mesh_stale("run_su2_solver", {"session_id": sid}) is None
+
+
+def test_b271_the_refusal_reaches_the_agent_through_the_middleware():
+    dg.observe("open_cpacs", {"source": "/x/D150.xml"}, {"session_id": "t1"}, "success",
+               {"seq": 1, "design_fingerprint": "geo:f"})
+    _mesh_made(MESH_A)
+    dg.observe("create_su2_session", {"initial_mesh": MESH_A}, {"session_id": "s1"}, "success", {"seq": 3})
+    _reshaped()
+    solver = _tool("run_su2_solver", {"success": True}, args=("session_id",))
+    out = json.loads(_call(solver, "aerodynamics_analyst", session_id="s1"))
+    assert out["error_code"] == "STALE_MESH"

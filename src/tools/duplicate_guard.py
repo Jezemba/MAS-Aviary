@@ -388,6 +388,13 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
             gs["active_design"] = {"session": parsed["session_id"], "fp": fp}
         elif tool == "close_cpacs":
             gs["open_cpacs"].pop(args.get("session_id"), None)
+        elif tool == "generate_volume_mesh":
+            # B271: which geometry each mesh was made for, so a solve on an older mesh is caught.
+            mesh_hash = _latest_mesh_hash()
+            if mesh_hash:
+                from src.tools.coupling_contract import current_design_fingerprint
+
+                gs.setdefault("mesh_design", {})[mesh_hash] = current_design_fingerprint()
         elif tool == "create_su2_session" and parsed.get("session_id"):
             mesh = _payload_hash(args.get("initial_mesh"))
             gs["su2"][parsed["session_id"]] = {

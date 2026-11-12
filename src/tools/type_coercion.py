@@ -307,7 +307,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             _kb_record(tool.name, resolved, _stale, status="refused")
             return _json.dumps(_stale)
         from src.tools import mesh_guard
-        _no_mesh = mesh_guard.mesh_missing(tool.name, resolved)
+        _no_mesh = mesh_guard.mesh_missing(tool.name, resolved) or mesh_guard.mesh_stale(tool.name, resolved)   # B271
         if _no_mesh is not None:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, _no_mesh, status="refused")
