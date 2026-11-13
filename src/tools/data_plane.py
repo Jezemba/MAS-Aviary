@@ -2141,6 +2141,38 @@ def _reapply_current_engine(resolved: dict) -> None:
         logger.warning("[B187] could not re-apply the current engine to %s: %s", sid, exc)
 
 
+def _reapply_current_wing_mass(resolved: dict) -> None:
+    """B272: before a mission flies, aviary's wing mass must be mass-mcp's current estimate.
+
+    l20 networked_graph_routed link 6 (2026-11-12): the wing was reshaped and mass-mcp estimated 9,235 kg, but the
+    agent's next set_aircraft_parameters also named the derived Aircraft.Wing.SPAN, so aviary refused the WHOLE call
+    (READ_ONLY_PARAMETER) and the mission flew the previous wing's 9,008 kg. As B187 does for the engine, the
+    framework re-applies the design (settable parameters only) through the full middleware, which injects the
+    current wing mass. Nothing to do when mass-mcp has not run or aviary already holds that mass.
+    """
+    if _design_state is None:
+        return
+    store = _design_state.data_store
+    wing_kg = store.get("mass_wing_kg")
+    if not isinstance(wing_kg, (int, float)):
+        return
+    applied = (store.get("design_params_applied") or {}).get("Aircraft.Wing.MASS")
+    if isinstance(applied, (int, float)) and abs(float(applied) - float(wing_kg)) <= 0.01:
+        return
+    setter = (_registered_tools or {}).get("set_aircraft_parameters")
+    if setter is None:
+        return
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    try:
+        derived = set(store.get("design_params_derived") or ())
+        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
+        setter.forward(session_id=sid, parameters=params)
+        logger.info("[B272] re-applied the design to aviary session %s: wing mass %s -> %.1f kg (mass-mcp) before "
+                    "run_simulation", sid, applied, float(wing_kg))
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[B272] could not re-apply the current wing mass to %s: %s", sid, exc)
+
+
 # B3: the framework, not an agent, turns the designed cycle into the mission's engine. These tools are
 # registered for the data plane even when no agent's allowed_tools lists them (tool_loader).
 ENGINE_DECK_TOOLS = ("generate_engine_deck", "set_engine_deck")
@@ -2518,6 +2550,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _ensure_takeoff_mass(resolved)         # B239: the climb starts at V2 for this take-off mass
         _ensure_engine_deck(resolved)          # B3: the designed cycle becomes the mission engine
         _reapply_current_engine(resolved)
+        _reapply_current_wing_mass(resolved)   # B272
     if tool_name == "close_cycle_model" and _design_state:
         _deck_before_close(resolved)           # B259: the deck needs the session, so build it before it goes
     if tool_name in ("run_cycle", "get_outputs") and _design_state and mcp_name == "pycycle":
