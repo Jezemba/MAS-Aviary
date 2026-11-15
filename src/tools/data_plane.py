@@ -873,7 +873,21 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
                 _design_state.data_store["design_params_derived"] = sorted(derived | {str(item["name"])})
     if current:
         _design_state.data_store["design_params_applied"] = current
-    # B272: the coupled results aviary now holds (a refused call reports no "applied" list and changes nothing).
+    _mark_coupled_applied()
+
+
+def _mark_coupled_applied(reply=None) -> None:
+    """B272: aviary now holds the coupled results captured so far.
+
+    Called for a successful set_aircraft_parameters (an "applied" list; a refused call has none) and after the
+    framework's own re-applies (B187, B272) when their reply is not an error.
+    """
+    if _design_state is None:
+        return
+    if reply is not None:
+        data = _as_dict(reply)
+        if data.get("success") is False or data.get("error_code") or data.get("error"):
+            return
     _design_state.data_store["_coupled_version_applied"] = int(_design_state.data_store.get("_coupled_version") or 0)
 
 
@@ -2136,7 +2150,7 @@ def _reapply_current_engine(resolved: dict) -> None:
         # and the mission then flew the previous engine scale (B3 smoke test 2026-11-01: 1.6589 flown, 1.6690 meant).
         derived = set(store.get("design_params_derived") or ())
         params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
-        setter.forward(session_id=sid, parameters=params)
+        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
         logger.info("[B187] re-applied the design to aviary session %s with the current engine before "
                     "run_simulation", sid)
     except Exception as exc:  # pragma: no cover - never break a run on this
@@ -2173,7 +2187,7 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
     try:
         derived = set(store.get("design_params_derived") or ())
         params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
-        setter.forward(session_id=sid, parameters=params)
+        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
         logger.info("[B272] re-applied the design to aviary session %s before run_simulation (wing mass %s -> %s, "
                     "coupled results %s, aviary had %s)", sid, applied, wing_kg, version, store.get("_coupled_version_applied"))
     except Exception as exc:  # pragma: no cover - never break a run on this
