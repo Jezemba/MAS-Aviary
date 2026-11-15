@@ -102,7 +102,7 @@ def test_run_simulation_reapplies_the_current_engine_after_a_cycle_rerun(plane):
     dp.resolve_request("run_cycle", {"session_id": "cyc1"})
     dp._capture_cycle_outputs("run_cycle", _cycle(fn=8041.0))
     dp.resolve_request("set_aircraft_parameters", {"session_id": "av1", "parameters": {"Aircraft.Wing.AREA": 125.0}})
-    state.data_store["design_params_applied"] = {"Aircraft.Wing.AREA": 125.0}
+    dp._capture_applied_design("set_aircraft_parameters", {"applied": [{"name": "Aircraft.Wing.AREA", "new_value": 125.0}]})
     stubs["set_aircraft_parameters"].calls.clear()
     dp.resolve_request("run_simulation", {"session_id": "av1"})
     assert stubs["set_aircraft_parameters"].calls == []                 # aviary already has this engine
