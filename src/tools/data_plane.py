@@ -873,6 +873,8 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
                 _design_state.data_store["design_params_derived"] = sorted(derived | {str(item["name"])})
     if current:
         _design_state.data_store["design_params_applied"] = current
+    # B272: the coupled results aviary now holds (a refused call reports no "applied" list and changes nothing).
+    _design_state.data_store["_coupled_version_applied"] = int(_design_state.data_store.get("_coupled_version") or 0)
 
 
 
@@ -2154,10 +2156,15 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
         return
     store = _design_state.data_store
     wing_kg = store.get("mass_wing_kg")
-    if not isinstance(wing_kg, (int, float)):
-        return
     applied = (store.get("design_params_applied") or {}).get("Aircraft.Wing.MASS")
-    if isinstance(applied, (int, float)) and abs(float(applied) - float(wing_kg)) <= 0.01:
+    mass_behind = isinstance(wing_kg, (int, float)) and not (
+        isinstance(applied, (int, float)) and abs(float(applied) - float(wing_kg)) <= 0.01)
+    # l20c networked_iterative_feedback link 11 (2026-11-14): the parameters were set BEFORE SU2 finished (no CL or
+    # drag factor to inject yet), SU2 then solved, and the mission flew aviary's default drag (16,602 kg). Any coupled
+    # result captured after aviary's last successful set call is re-applied the same way.
+    version = int(store.get("_coupled_version") or 0)
+    results_behind = version > 0 and store.get("_coupled_version_applied") != version
+    if not (mass_behind or results_behind):
         return
     setter = (_registered_tools or {}).get("set_aircraft_parameters")
     if setter is None:
@@ -2167,8 +2174,8 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
         derived = set(store.get("design_params_derived") or ())
         params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
         setter.forward(session_id=sid, parameters=params)
-        logger.info("[B272] re-applied the design to aviary session %s: wing mass %s -> %.1f kg (mass-mcp) before "
-                    "run_simulation", sid, applied, float(wing_kg))
+        logger.info("[B272] re-applied the design to aviary session %s before run_simulation (wing mass %s -> %s, "
+                    "coupled results %s, aviary had %s)", sid, applied, wing_kg, version, store.get("_coupled_version_applied"))
     except Exception as exc:  # pragma: no cover - never break a run on this
         logger.warning("[B272] could not re-apply the current wing mass to %s: %s", sid, exc)
 

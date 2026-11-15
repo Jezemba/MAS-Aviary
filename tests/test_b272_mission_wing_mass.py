@@ -61,3 +61,28 @@ def test_it_runs_on_every_mission():
     src = (Path(__file__).resolve().parents[1] / "src" / "tools" / "data_plane.py").read_text()
     block = src.split('if tool_name == "run_simulation" and _design_state and mcp_name == "aviary":')[1].split("\n    if ")[0]
     assert "_reapply_current_wing_mass(resolved)" in block
+
+
+def test_aero_solved_after_the_last_set_is_applied_before_the_mission(state):
+    """l20c networked_iterative_feedback link 11: set_aircraft_parameters ran before SU2 finished, SU2 then solved,
+    and the mission flew aviary's default drag. A coupled result newer than aviary's last set triggers a re-apply."""
+    from src.tools import coupling_contract as cc
+
+    s, setter = state
+    dp._capture_applied_design("set_aircraft_parameters", {"applied": [{"name": "Aircraft.Wing.AREA", "new_value": 130.0}]})
+    dp._reapply_current_wing_mass({"session_id": "av1"})
+    assert setter.calls == []                                   # nothing newer than what aviary holds
+    cc.note_capture("su2", {"cl": 0.509})                        # SU2 solves after the set call
+    dp._reapply_current_wing_mass({"session_id": "av1"})
+    assert len(setter.calls) == 1
+
+
+def test_a_successful_set_marks_the_results_applied_and_a_refused_one_does_not(state):
+    from src.tools import coupling_contract as cc
+
+    s, _ = state
+    cc.note_capture("mass", {"mWing_kg": 9235.5})
+    dp._capture_applied_design("set_aircraft_parameters", {"success": False, "error_code": "READ_ONLY_PARAMETER"})
+    assert s.data_store.get("_coupled_version_applied") != s.data_store["_coupled_version"]
+    dp._capture_applied_design("set_aircraft_parameters", {"applied": [{"name": "Aircraft.Wing.MASS", "new_value": 9235.5}]})
+    assert s.data_store["_coupled_version_applied"] == s.data_store["_coupled_version"]

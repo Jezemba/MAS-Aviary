@@ -200,6 +200,9 @@ def note_capture(producer: str, detail: Any = None) -> None:
         return
     started = (getattr(_call_start, "fp", None) or {}).pop(producer, None)
     state.data_store[f"_coupled_fp_{producer}"] = started or current_design_fingerprint()
+    # B272: a new coupled result (SU2 aero, wing mass, engine) that aviary has not received yet triggers a re-apply
+    # before the next mission (data_plane._reapply_current_wing_mass).
+    state.data_store["_coupled_version"] = int(state.data_store.get("_coupled_version") or 0) + 1
     if detail is not None:
         state.data_store[f"_coupled_detail_{producer}"] = detail
 
