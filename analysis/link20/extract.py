@@ -59,6 +59,13 @@ STUDIES = {"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, "final": 
 # Which study the report scripts read (they import SOURCES): LINK20_STUDY=final for the finished re-run.
 STUDY = os.environ.get("LINK20_STUDY", "20261028")
 SOURCES = STUDIES[STUDY]
+# Each study's own baseline mission (the unchanged anchor design, flown once): report scripts compare against this.
+# 20261028: flown 2026-10-22 (~/Jessica/avion_analysis/baseline/baseline_run1.json); re-run: flown 2026-11-12
+# (/data/Jessica/l20_20261112/baseline/baseline_run1.json), same anchor and mission, aviary-mcp a5ef294.
+_BASE_OLD = {"fuel_kg": 18197.0, "gtow_kg": 91660.6, "wing_mass_kg": 8815.2}
+_BASE_NEW = {"fuel_kg": 16390.5, "gtow_kg": 89682.6, "wing_mass_kg": 8664.2}
+BASELINES = {"20261028": _BASE_OLD, "20261112": _BASE_NEW, "final": _BASE_NEW}
+BASELINE = BASELINES[STUDY]
 
 # Same floor the runner uses to call a mission "zero fuel" (scripts/stat_batch_runner.py).
 ZERO_FUEL_FLOOR_KG = 100.0

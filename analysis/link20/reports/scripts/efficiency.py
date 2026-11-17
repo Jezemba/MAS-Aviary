@@ -29,7 +29,8 @@ from scipy.stats import spearmanr
 
 from analysis.link20.extract import SOURCES, counted_step_log, read_json, read_jsonl
 
-BASELINE_FUEL_KG = 18197.0          # unchanged anchor design, flown 2026-10-22 (shared brief)
+from analysis.link20.extract import BASELINE as _BASELINE
+BASELINE_FUEL_KG = _BASELINE["fuel_kg"]   # the selected study's baseline (LINK20_STUDY)
 TIMEOUT_S = 480 * 60                # runner's per-link timeout
 COMBOS = [("sequential", "staged_pipeline"), ("sequential", "iterative_feedback"), ("sequential", "graph_routed"),
           ("orchestrated", "staged_pipeline"), ("orchestrated", "iterative_feedback"),

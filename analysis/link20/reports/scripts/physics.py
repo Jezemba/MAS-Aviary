@@ -21,7 +21,7 @@ import pandas as pd
 from analysis.link20.extract import SOURCES, ZERO_FUEL_FLOOR_KG, read_jsonl
 
 # Baseline: the unchanged anchor design flown 2026-10-22 on a separate aviary server (SLSQP not converged).
-BASELINE = {"fuel_kg": 18197.0, "gtow_kg": 91660.6, "wing_mass_kg": 8815.2}
+from analysis.link20.extract import BASELINE  # the selected study's baseline (LINK20_STUDY)
 # Limits from the agents' prompts.
 FUEL_LIMIT_KG = 15000.0
 GTOW_LIMIT_KG = 90000.0
