@@ -462,7 +462,9 @@ def main() -> None:
     print("MTOM == 78126 kg link-ends:", int((num("structures.mtom_kg") == 78126.0).sum()), "of",
           int(num("structures.mtom_kg").notna().sum()))
     ex = extremes(df)
-    for f, g in ex.groupby("flag"):
+    if ex.empty:                       # no extreme value in this study (the re-run): nothing to group
+        print("extreme link-ends: none")
+    for f, g in (ex.groupby("flag") if not ex.empty else []):
         print(f"{f}: {len(g)} link-ends, flew {int(g.flew.sum())}")
     print("N_GR link-20 thrust repr:", repr(df[(df.abbrev == "N_GR") & (df.link == 20)]["propulsion.fn_lbf"].iloc[0]))
     v = num("Aircraft.Engine.SCALE_FACTOR")

@@ -135,6 +135,8 @@ def retry_reasons() -> dict:
     wanted = {ds: set(combos) for ds, _, combos in SOURCES}
     out = defaultdict(list)
     for ds, files in LOGS.items():
+        if ds not in wanted:          # logs of another study (LINK20_STUDY)
+            continue
         for f in files:
             if not f.is_file():
                 continue
