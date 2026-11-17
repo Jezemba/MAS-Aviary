@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -25,7 +26,7 @@ HOME = Path.home()
 
 # (dataset, root folder, combinations to take from it). The older 7-link networked graph-routed run in
 # v3combos was hit by B187 on links 2-7 and is not used (handoff 3.1).
-SOURCES = [
+SOURCES_20261028 = [
     ("v2full", HOME / "Jessica/Avion/MAS-Aviary/logs/stat_results/v2full_qwen_nothink_aipexws8", [
         "mdo_f25_sequential_staged_pipeline", "mdo_f25_sequential_iterative_feedback",
         "mdo_f25_sequential_graph_routed", "mdo_f25_orchestrated_staged_pipeline",
@@ -49,7 +50,15 @@ SOURCES_20261112 = [
     ("l20c_net_iter", L20_20261112_ROOT / "l20c_net_iter", ["mdo_f25_networked_iterative_feedback"]),
     ("l20c_net_graph", L20_20261112_ROOT / "l20c_net_graph", ["mdo_f25_networked_graph_routed"]),
 ]
-STUDIES = {"20261028": SOURCES, "20261112": SOURCES_20261112}
+# The finished re-run (all 8 combinations, 20 iterations each; the networked chains are the l20c relaunch after
+# B268/B269), assembled unchanged on aipexws8 /data/Jessica/l20_final on 2026-11-17: the five non-networked runs from
+# the 2026-11-12 copy (already finished then), the two networked runs from /data/avion_study/code, console logs in logs/.
+L20_FINAL = Path("/data/Jessica/l20_final")
+SOURCES_FINAL = [(ds, L20_FINAL / "runs" / root.name, combos) for ds, root, combos in SOURCES_20261112]
+STUDIES = {"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, "final": SOURCES_FINAL}
+# Which study the report scripts read (they import SOURCES): LINK20_STUDY=final for the finished re-run.
+STUDY = os.environ.get("LINK20_STUDY", "20261028")
+SOURCES = STUDIES[STUDY]
 
 # Same floor the runner uses to call a mission "zero fuel" (scripts/stat_batch_runner.py).
 ZERO_FUEL_FLOOR_KG = 100.0
@@ -356,7 +365,7 @@ def build_table(sources=SOURCES) -> pd.DataFrame:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--study", choices=sorted(STUDIES), default="20261028",
+    ap.add_argument("--study", choices=sorted(STUDIES), default=STUDY,
                     help="20261028 = the first 20-link study; 20261112 = the re-run after the fixes")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)

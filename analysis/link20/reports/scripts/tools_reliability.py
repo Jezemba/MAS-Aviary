@@ -69,6 +69,10 @@ LOGS = {
     "v2full": [HOME / "Jessica/Avion/MAS-Aviary/logs/v2full_qwen_nothink_20261014_083911.log"],
     "v3combos": sorted((HOME / "Jessica/avion_analysis/data/v3combos_from_ws3/logs").glob("v3combos_*.log")),
     "v4net": sorted((HOME / "Jessica/Avion/MAS-Aviary/logs").glob("v4net_graph_qwen_nothink_*.log")),
+    # The re-run (LINK20_STUDY=final): one console log per run folder, in /data/Jessica/l20_final/logs.
+    **{tag: sorted(Path("/data/Jessica/l20_final/logs").glob(f"{tag}_*.log")) for tag in (
+        "l20_seq_staged", "l20_seq_iter", "l20_seq_graph", "l20_orch_staged_iter", "l20_orch_graph", "l20c_net_iter",
+        "l20c_net_graph")},
 }
 HEADER_RE = re.compile(r"^\[(\d+)/(\d+)\] repeat=(\d+) combo=(\S+) \(chain link (\d+)/20\)")
 ATTEMPT_RE = re.compile(r"^\s+attempt (\d+)/(\d+): (.*)$")
