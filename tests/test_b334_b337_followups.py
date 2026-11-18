@@ -72,38 +72,45 @@ def _zero():
     return [dict(r, outputs=dict(r["outputs"], success=False, converged=False)) for r in ZERO]
 
 
-def test_b335_engine_thrust_without_aviary_ld_is_an_error_not_a_skip():
+@pytest.fixture
+def engine_basis(monkeypatch):
+    """B338: rule 4 uses the trim mass basis, a current engine and the attached deck's reference (bench here)."""
+    from src.tools import coupling as _c
+
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
+    monkeypatch.setattr(dp, "engine_is_current", lambda: True)
+    monkeypatch.setattr(dp, "engine_scale_reference", lambda session_id=None: (_c.BENCH_ENGINE_CRUISE_FN_LBF, "bench"))
+
+
+def test_b335_engine_thrust_without_aviary_ld_is_an_error_not_a_skip(engine_basis):
     d = gr.route_after_simulation(_zero(), dict(TRIMMED, **{"prop.fn_lbf": 8100.0}), None, gr.SIMPLE)
     assert (d.next_node, d.rule) == (gr.PROPULSION, "4")
     assert "cannot be checked" in d.reason and "not recorded" in d.reason
 
 
-def test_b335_an_unusable_ld_is_named():
+def test_b335_an_unusable_ld_is_named(engine_basis):
     d = gr.route_after_simulation(_zero(), dict(TRIMMED, **{"prop.fn_lbf": 8100.0,
                                                               "aviary.cruise_l_over_d": -3.0}), None, gr.SIMPLE)
     assert (d.next_node, d.rule) == (gr.PROPULSION, "4") and "not usable" in d.reason
 
 
-def test_b335_with_ld_the_rule_is_evaluated_as_before():
+def test_b335_with_ld_the_rule_is_evaluated_as_before(engine_basis):
     reg = dict(TRIMMED, **{"prop.fn_lbf": 8100.0, "aviary.cruise_l_over_d": 13.0})
     d = gr.route_after_simulation(_zero(), reg, None, gr.SIMPLE)
     assert (d.next_node, d.rule) == (gr.MISSION, "9") and "not evaluated" not in d.reason
 
 
-def test_b335_no_engine_records_that_the_rule_was_not_evaluated():
+def test_b335_no_engine_records_that_the_rule_was_not_evaluated(engine_basis):
     d = gr.route_after_simulation(_zero(), dict(TRIMMED), None, gr.SIMPLE)
     assert (d.next_node, d.rule) == (gr.MISSION, "9")
     assert "rule 4 not evaluated: no engine thrust (prop.fn_lbf)" in d.reason
 
 
-def test_b335_graph_preinit_seeds_the_ld_the_engine_was_sized_on(fresh, monkeypatch):
-    from src.coordination import graph_preinit
-    from src.tools import coupling
-
-    monkeypatch.setattr(dp, "_cycle_sizing_key", lambda: ["k"])
-    graph_preinit.seed_from_design({"propulsion": {"sfc_cruise": 0.55, "fn_lbf": 8100.0},
-                                    "aviary_cruise_point": {"lift_to_drag": 17.2}})
-    assert coupling.get_var(fresh, "aviary.cruise_l_over_d") == 17.2
+def test_b335_rule_4_is_not_evaluated_on_a_stale_engine_and_says_so(engine_basis, monkeypatch):
+    """B338 (review #9 superseded B335's L/D seed: pre-init re-sizes the engine instead)."""
+    monkeypatch.setattr(dp, "engine_is_current", lambda: False)
+    d = gr.route_after_simulation(_zero(), dict(TRIMMED, **{"prop.fn_lbf": 8100.0}), None, gr.SIMPLE)
+    assert (d.next_node, d.rule) == (gr.MISSION, "9") and "the engine is not current" in d.reason
 
 
 # ---- B336: what aviary holds is per aviary session ------------------------------------------------------------

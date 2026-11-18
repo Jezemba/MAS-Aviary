@@ -12,6 +12,7 @@ import pytest
 from src.coordination.design_state import DesignState
 from src.tools import coupling
 from src.tools.data_plane import get_design_state, init_data_plane, intercept_response, resolve_request
+from tests.cruise_point_helper import stamp
 
 TOOL_SERVER_MAP = {"set_inputs": "pycycle", "run_cycle": "pycycle", "set_aircraft_parameters": "aviary"}
 
@@ -39,6 +40,7 @@ def _seed(ld=None, mtom=78126.0, fn=None, monkeypatch=None):
                                                       "cd_depends_on_engine_scale": False,
                                                       "design_fingerprint": "fp"},
                               "aviary_design_fingerprint": "fp"})
+        stamp(ds)    # B338
     if fn is not None:
         coupling.put_var(ds, "prop.fn_lbf", fn)
         # B187: a cycle result the framework sized on this mass and drag.

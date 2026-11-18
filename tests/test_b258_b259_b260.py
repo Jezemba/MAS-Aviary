@@ -9,6 +9,7 @@ import pytest
 from scripts.check_coupling import FAIL, PASS, check_sweep
 from src.coordination.design_state import DesignState
 from src.tools import coupling, data_plane as dp
+from tests.cruise_point_helper import stamp
 
 # -- B258: an agent's export cannot replace a recorded result -----------------------------------------------
 
@@ -68,6 +69,7 @@ def plane(monkeypatch):
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/deck_abc.deck", 1.0, "test"))
     state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0, "cd_depends_on_engine_scale": False,
                                                      "design_fingerprint": "fp"}, "aviary_design_fingerprint": "fp"})
+    stamp(state)    # B338
     dp._call_ctx.__dict__.clear()
     open_sessions = {"cyc1"}
 

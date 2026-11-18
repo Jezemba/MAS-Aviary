@@ -11,6 +11,7 @@ import json
 import pytest
 
 import src.tools.data_plane as dp
+from tests.cruise_point_helper import stamp
 from src.coordination.design_state import DesignState
 from src.tools import coupling
 from src.tools import geometry_guard as gg
@@ -34,6 +35,7 @@ def fresh(monkeypatch):
     dp._design_state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0,
                                                                "design_fingerprint": "fp"},
                                         "aviary_design_fingerprint": "fp"})
+    stamp(dp._design_state)    # B338
     yield
     dp._call_ctx.__dict__.clear()
 
@@ -47,7 +49,8 @@ def _sized_cycle():
     from src.tools import coupling
 
     coupling.put_var(dp._design_state, "mass.mtom_kg", 78126.0, source_tool="estimate_mass")
-    _store()["cycle_sizing"] = {"session": None, "key": dp._cycle_sizing_key()}
+    # B338: "ran" -- a run_cycle has run on this sizing, so a get_outputs read is of this engine.
+    _store()["cycle_sizing"] = {"session": None, "key": dp._cycle_sizing_key(), "ran": True}
 
 
 # ---- B130: the whole aircraft is always meshed ------------------------------------------------------

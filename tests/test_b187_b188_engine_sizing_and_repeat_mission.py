@@ -114,14 +114,17 @@ def test_run_simulation_reapplies_the_current_engine_after_a_cycle_rerun(plane):
     assert applied["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(8900.0 / coupling.BENCH_ENGINE_CRUISE_FN_LBF)
 
 
-def test_graph_preinit_seed_counts_as_sized(plane):
+def test_graph_preinit_seed_is_not_a_current_engine(plane):
+    """B338 (review #9, was test_graph_preinit_seed_counts_as_sized): the engine RESULT is not seeded; pre-init
+    re-sizes and runs the cycle on the link, so a seeded engine is never half-current."""
     from src.coordination import graph_preinit
 
     state, _ = plane
     graph_preinit.seed_from_design({"aero": {"cl_cruise": 0.5587, "cd_cruise": 0.0223},
                                     "structures": {"wing_mass_kg": 9000.0, "mtom_kg": 78126.0},
                                     "propulsion": {"sfc_cruise": 0.55, "fn_lbf": 8041.0, "cycle_converged": True}})
-    assert dp.engine_is_current() and dp.cycle_is_sized("cyc1")
+    assert not dp.engine_is_current() and coupling.get_var(state, "prop.fn_lbf") is None
+    assert "re-sized" in state.data_store["engine_seed_note"]
 
 
 # -- B188 ---------------------------------------------------------------------------------------------

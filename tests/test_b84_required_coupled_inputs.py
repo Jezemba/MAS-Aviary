@@ -14,6 +14,7 @@ import json
 import pytest
 
 import src.tools.data_plane as dp
+from tests.cruise_point_helper import stamp
 from src.coordination.design_state import DesignState
 from src.tools import coupling
 from src.tools import coupling_contract as cc
@@ -32,6 +33,7 @@ def fresh(monkeypatch):
     dp.get_design_state().data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 72000.0,
                                                                      "design_fingerprint": "fp"},
                                              "aviary_design_fingerprint": "fp"})
+    stamp()    # B338: the point belongs to the current design
     yield
 
 
@@ -164,6 +166,7 @@ def test_re_running_the_discipline_clears_the_staleness():
     _morph_the_geometry()
     assert _call("run_simulation") is not None
 
+    stamp()                    # B338: aviary reports the cruise point of the new geometry (the engine is re-sized on it)
     _everything_ran()          # solved again, for the geometry as it is now
     assert _call("run_simulation") is None
 

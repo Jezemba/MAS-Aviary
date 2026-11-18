@@ -134,26 +134,13 @@ def seed_from_design(design: dict) -> list[str]:
     elif st:
         store["mass_seed_skipped"] = (f"structures not seeded: sizing_converged {st.get('sizing_converged')!r}, "
                                       f"mtom_kg {st.get('mtom_kg')!r}")
-    prop = design.get("propulsion") or {}
-    if prop.get("sfc_cruise") is not None:
-        store["prop_cycle_outputs"] = {"prop.sfc_cruise": prop.get("sfc_cruise"), "prop.fn_lbf": prop.get("fn_lbf")}
-        store["prop_cycle_converged"] = prop.get("cycle_converged")
-        coupling.put_var(ds, "prop.sfc_cruise", prop["sfc_cruise"], source_tool="graph pre-init")
-        if prop.get("fn_lbf") is not None:
-            coupling.put_var(ds, "prop.fn_lbf", prop["fn_lbf"], source_tool="graph pre-init")
-        # B187: the seeded engine was sized on the seeded mass and drag (seeded above).
-        from src.tools.data_plane import _cycle_sizing_key
-
-        # B335: and the aviary cruise L/D that engine was sized on (design.json aviary_cruise_point), so the router's
-        # thrust-vs-drag rule can be evaluated on a seeded link; a design.json without it seeds none (the rule then
-        # routes to re-sizing the engine instead of skipping).
-        point = design.get("aviary_cruise_point") if isinstance(design.get("aviary_cruise_point"), dict) else {}
-        if isinstance(point.get("lift_to_drag"), (int, float)) and point["lift_to_drag"] > 0:
-            coupling.put_var(ds, "aviary.cruise_l_over_d", point["lift_to_drag"], source_tool="graph pre-init")
-        store["prop_cycle_key"] = _cycle_sizing_key()
-        store["cycle_sizing"] = {"session": (ds.sessions or {}).get("pycycle"), "key": store["prop_cycle_key"]}
-        seeded.append("propulsion")
-        producers.append("pycycle")
+    # B338 (review #9): the engine RESULT is not seeded. Its sizing key (mass basis, aviary cruise point of THIS
+    # geometry session) cannot be reproduced from design.json, so a seeded result was never current (prop_cycle_key
+    # None) yet still sat in the registry -- a half state. The engine INPUTS are seeded (design_space.engine below) and
+    # prepare() re-sizes and runs the cycle on this link (_resize_engine): the engine is then either current, with
+    # its cruise point and key recorded, or explicitly not current with the reason (engine_seed_note).
+    if (design.get("propulsion") or {}).get("sfc_cruise") is not None:
+        store["engine_seed_note"] = "engine result not seeded: re-sized and run on this link by graph pre-init (B338)"
     if producers:
         from src.tools.coupling_contract import current_design_fingerprint
 
@@ -206,6 +193,54 @@ def _open_sessions(cpacs: str, mission: dict) -> dict:
     return report
 
 
+def _resize_engine(design: dict | None, report: dict) -> None:
+    """B338 (review #9): size the engine on this link's design and run the cycle, through the middleware.
+
+    set_inputs gets Fn_DES from the carried mass and aviary's cruise point of the current geometry (the framework asks
+    aviary for it); run_cycle records the result with its sizing key. When that is not possible (no mass basis, no
+    cruise point) the engine is explicitly not current and the reason is recorded -- the agents' run_cycle re-sizes.
+    """
+    from src.tools.data_plane import engine_is_current, get_design_state
+
+    _size_engine_session(design)
+    _call("run_cycle", session_id=(get_design_state().sessions or {}).get("pycycle"))
+    current = engine_is_current()
+    report["engine_current"] = current
+    if not current:
+        store = get_design_state().data_store
+        why = store.get("engine_sizing_error") or "the cycle was not sized or did not converge"
+        store["engine_seed_note"] = f"engine not current after graph pre-init: {why}; the link must re-size it"
+        report["engine_not_current"] = store["engine_seed_note"]
+
+
+def _seed_source(carry_over: dict, cpacs: str) -> tuple[dict | None, str]:
+    """B338 (review #5): the recorded design whose results may be seeded on this link, or None with the reason.
+
+    The last link that FLEW (carry_over.last_flown_design, as trim_mass_basis / carried_engine use), and only when it
+    flew THIS link's geometry: when an unflown link exported another wing (G2), the flown design's mass, tails and aero
+    belong to G1 and stamping them with G2's fingerprint made them count as G2's results. Then nothing is seeded and
+    the results are computed on G2 (cache / baseline path). A carry_over of an older runner (no last_flown_design)
+    seeds its previous_design as before.
+    """
+    if "last_flown_design" not in carry_over:
+        previous = carry_over.get("previous_design")
+        return (previous, "previous link's end-state") if isinstance(previous, dict) and previous.get("aero") \
+            else (None, "no previous design")
+    design = carry_over.get("last_flown_design")
+    if not (isinstance(design, dict) and design.get("aero")):
+        return None, "no link has flown yet"
+    flown_geometry = carry_over.get("last_flown_geometry") or baseline_cpacs()
+    try:
+        same = hashlib.md5(Path(flown_geometry).read_bytes()).hexdigest() == \
+            hashlib.md5(Path(cpacs).read_bytes()).hexdigest()
+    except OSError as exc:
+        return None, f"the last flown geometry {flown_geometry} cannot be compared ({exc}); nothing seeded"
+    if not same:
+        return None, (f"the last flown link flew {flown_geometry}, this link starts from {cpacs}: its results are not "
+                      "this geometry's, so they are computed here (B338)")
+    return design, "last flown link's end-state"
+
+
 def _compute_baseline(cpacs: str, mission: dict) -> None:
     """The discipline results on this design, through the same tools and middleware an agent would use."""
     from src.tools.data_plane import get_design_state
@@ -230,26 +265,26 @@ def prepare(carry_over: dict | None) -> dict:
         start = carry_over.get("starting_design") or {}
         cpacs = start.get("CPACS_FILE") if start.get("CPACS_FILE") and Path(start["CPACS_FILE"]).is_file() \
             else baseline_cpacs()
-        previous = carry_over.get("previous_design")
-        if isinstance(previous, dict) and previous.get("aero"):
+        previous, seed_note = _seed_source(carry_over, cpacs)
+        report["seed_source"] = seed_note
+        if previous is not None:
             # B276 (l20_final Case 3.3): the SU2 session below takes its cruise-lift target from the mass on record.
             # It used to be created BEFORE seed_from_design put the carried mass there, so the target fell back to the
             # CPACS-declared 78,126 kg while any later re-configure used the carried, sized mass (O_GR 13/17/19: CL
             # 0.715 against 0.624 on the same wing, +9.5 t fuel). Seed the carried mass first.
             report["mass_seeded_before_su2"] = seed_mass_from_design(previous)
         report.update(_open_sessions(cpacs, mission))
-        previous = carry_over.get("previous_design")
-        if isinstance(previous, dict) and previous.get("aero"):
-            report["results"] = "previous link's end-state"
+        if previous is not None:
+            report["results"] = seed_note
             report["seeded"] = seed_from_design(previous)
-            _size_engine_session(previous)
+            _resize_engine(previous, report)
         else:
             cache = _cache_path(cpacs)
             if cache.is_file():
                 report["results"] = f"cached baseline {cache.name}"
                 cached = json.loads(cache.read_text())
                 report["seeded"] = seed_from_design(cached)
-                _size_engine_session(cached)
+                _resize_engine(cached, report)
             else:
                 report["results"] = "baseline computed now (first run for this CPACS)"
                 _compute_baseline(cpacs, mission)

@@ -87,17 +87,29 @@ def test_rule_6_untrimmed_aero():
     assert (d.next_node, d.level, d.rule) == (gr.AERO, gr.MODERATE, "6")
 
 
-def test_rule_4_thrust_short_of_drag_scales_the_engine():
+def _engine_basis(monkeypatch, mass=78126.0):
+    """B338 (review #10): rule 4 uses the trim mass basis, a current engine and the attached deck's reference."""
+    from src.tools import coupling as _c, data_plane as _dp
+
+    monkeypatch.setattr(_dp, "trim_mass_basis", lambda: (mass, "test basis"))
+    monkeypatch.setattr(_dp, "engine_is_current", lambda: True)
+    monkeypatch.setattr(_dp, "engine_scale_reference", lambda session_id=None: (_c.BENCH_ENGINE_CRUISE_FN_LBF, "bench deck"))
+
+
+def test_rule_4_thrust_short_of_drag_scales_the_engine(monkeypatch):
+    _engine_basis(monkeypatch)
     d = gr.route_after_node(gr.SIMULATION, ZERO, "", gr.SIMPLE, 0, dict(TRIMMED, **{"prop.fn_lbf": 6336.0}))
     assert (d.next_node, d.level, d.rule) == (gr.PROPULSION, gr.MODERATE, "4")
 
 
-def test_rule_6_engine_already_huge_means_the_drag_is_suspect():
+def test_rule_6_engine_already_huge_means_the_drag_is_suspect(monkeypatch):
+    _engine_basis(monkeypatch)
     d = gr.route_after_node(gr.SIMULATION, ZERO, "", gr.SIMPLE, 0, dict(TRIMMED, **{"prop.fn_lbf": 13000.0}))
     assert (d.next_node, d.rule) == (gr.AERO, "6")
 
 
-def test_rule_7_mass_residual_and_rule_9_nothing_implicated():
+def test_rule_7_mass_residual_and_rule_9_nothing_implicated(monkeypatch):
+    _engine_basis(monkeypatch)
     reg = dict(TRIMMED, **{"prop.fn_lbf": 8100.0})
     mass_fail = {"violated_constraints": [{"constraint": "mission:constraints:mass_residual", "violation": 12455.9}]}
     assert gr.route_after_node(gr.SIMULATION, ZERO, "", gr.SIMPLE, 0, reg, mass_fail).next_node == gr.MASS

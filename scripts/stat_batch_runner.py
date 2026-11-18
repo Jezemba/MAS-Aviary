@@ -481,6 +481,21 @@ def link_design(link_dir) -> dict | None:
     return flown
 
 
+def last_flown_of(link_dir) -> dict | None:
+    """B338 (review #4): a link's design_flown.json when it can carry the mass basis and the engine, else None.
+
+    Only a mission that converged writes design_flown.json (B306/F3); it must also hold a converged mass-mcp sizing and
+    the engine it flew (data_plane.flown_basis_problem). A link that ended without such a flight carries nothing.
+    """
+    try:
+        flown = json.loads((Path(link_dir) / "design_flown.json").read_text())
+    except (OSError, ValueError):
+        return None
+    from src.tools.data_plane import flown_basis_problem
+
+    return flown if flown_basis_problem(flown) is None else None
+
+
 def design_space_of(link_dir) -> dict | None:
     """The design_space a link hands on (see link_design), or None."""
     return (link_design(link_dir) or {}).get("design_space") or None
@@ -501,7 +516,8 @@ def set_aside_design_json(link_dir, attempt: int) -> None:
 
 
 def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: str | None,
-                     params: dict | None, design_space: dict | None = None, previous_dir=None) -> Path | None:
+                     params: dict | None, design_space: dict | None = None, previous_dir=None,
+                     flown_dir=None, flown_cpacs=None) -> Path | None:
     """What a new link (iteration) inherits, for verbatim prompt assembly (Jessica, 2026-10-05).
 
     Verbatim mode drops the runner's task text, which is where the previous link's
@@ -532,7 +548,17 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
     # B180: the recommendation the previous link's integrator RECORDED (record_recommendation), if it did.
     recorded = [s for s in ((previous_design or {}).get("coordination_signals") or [])
                 if isinstance(s, dict) and s.get("kind") == "recommendation"]
+    # B338 (review #4, #5): the LAST link that flew (not the last completed one) carries the mass basis and the engine;
+    # its geometry is recorded so graph pre-init seeds its results only on that same geometry. "" = no link flew yet
+    # (-> canonical baseline). None (not given) = an older caller: the keys are left out.
+    flown_keys = {}
+    if flown_dir is not None:
+        flown_design = last_flown_of(flown_dir) if str(flown_dir) else None
+        flown_keys = {"last_flown_design": flown_design,
+                      "last_flown_dir": str(flown_dir) if flown_design else None,
+                      "last_flown_geometry": (str(flown_cpacs) if flown_cpacs else None) if flown_design else None}
     path.write_text(json.dumps({
+        **flown_keys,
         "recommendation": recorded[-1] if recorded else None,
         "previous_design": previous_design,
         "link": link,
@@ -1432,8 +1458,13 @@ def run_stat_batch(
         chain_integrator: str | None = None
         chain_design_space: dict | None = None      # the previous link's design.json design_space
         chain_design_dir = ""      # B268: folder of the last COMPLETED link ("" = none yet); previous_design comes from it
+        # B338: folder and geometry of the last link that FLEW and can carry mass + engine ("" = none yet).
+        chain_flown_dir, chain_flown_cpacs = "", None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
+            if done and done.get("chain_end_params") and last_flown_of(out_path / f"repeat_{prev:03d}" / combo.name):
+                chain_flown_dir = str(out_path / f"repeat_{prev:03d}" / combo.name)
+                chain_flown_cpacs = done.get("chain_cpacs_out")
             if done and done.get("chain_end_params"):
                 chain_params = dict(done["chain_end_params"])
                 if done.get("chain_cpacs_out"):
@@ -1518,7 +1549,8 @@ def run_stat_batch(
             base_task = base_task_for(combo.name, chain_cpacs)
             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
             write_carry_over(out_path / f"repeat_{repeat_idx:03d}" / combo.name, repeat_idx,
-                             chain_integrator, chain_cpacs, params, chain_design_space, previous_dir=chain_design_dir)
+                             chain_integrator, chain_cpacs, params, chain_design_space, previous_dir=chain_design_dir,
+                             flown_dir=chain_flown_dir, flown_cpacs=chain_flown_cpacs)
 
             # Retry loop
             result = None
@@ -1795,6 +1827,8 @@ def run_stat_batch(
                                           or chain_design_space)
                     result_dict["chain_design_space"] = chain_design_space
                     chain_design_dir = str(out_path / f"repeat_{repeat_idx:03d}" / combo.name)   # B268
+                    if last_flown_of(chain_design_dir):           # B338: this link flew; it carries mass + engine
+                        chain_flown_dir, chain_flown_cpacs = chain_design_dir, chain_cpacs
 
                     if _integrator or _num:
                         chain_feedback = (

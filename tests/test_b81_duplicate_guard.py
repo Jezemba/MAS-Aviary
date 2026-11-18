@@ -13,6 +13,7 @@ import pytest
 from smolagents import Tool
 
 import src.tools.data_plane as dp
+from tests.cruise_point_helper import stamp
 from src.coordination.design_state import DesignState
 from src.tools import duplicate_guard as dg
 from src.tools import knowledge_base as kbm
@@ -33,12 +34,17 @@ def _coupled_inputs_available():
     from src.tools.coupling_contract import note_capture
 
     state = dp.get_design_state()
+    # G1: the measured CPACS tails, and aviary holds them (set before the cruise point: B338 binds the point to them).
+    tails = {k: 1.0 + i for i, k in enumerate(dp.TAIL_KEYS)}
+    state.data_store["geometry_tails"] = dict(tails)
+    state.data_store["design_params_applied"] = {**(state.data_store.get("design_params_applied") or {}), **tails}
     # B306: a trimmed, converged solve (audit F7) and aviary's cruise point, on which the engine is sized.
     state.data_store.update({"aero_solve_trimmed": True, "aero_solve_target_cl": 0.52, "aero_solve_converged": True,
                              "aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0,
                                                      "cd_depends_on_engine_scale": False, "design_fingerprint": "fp"},
                              "aviary_design_fingerprint": "fp",
                              "takeoff_mass_applied": {"a": 78126.0}})      # aviary already holds the take-off mass
+    stamp(state)    # B338
     for name, value in (("aero.cl_cruise", 0.52), ("aero.cd_cruise", 0.0182),
                         ("mass.wing_kg", 8100.0), ("mass.mtom_kg", 72000.0),
                         ("prop.sfc_cruise", 0.58)):
@@ -48,10 +54,6 @@ def _coupled_inputs_available():
     for producer in ("su2", "mass", "pycycle"):
         note_capture(producer)
     state.data_store["_coupled_version_applied"] = state.data_store["_coupled_version"]   # and aviary holds them (B306)
-    # G1: the measured CPACS tails, and aviary holds them.
-    tails = {k: 1.0 + i for i, k in enumerate(dp.TAIL_KEYS)}
-    state.data_store["geometry_tails"] = dict(tails)
-    state.data_store["design_params_applied"] = {**(state.data_store.get("design_params_applied") or {}), **tails}
     # B3: and its deck is on the aviary session these tests fly (as the framework attaches it).
     state.data_store["engine_deck"] = {"file": "/decks/d.deck", "key": "d", "reference_fn_des_lbf": 5900.0,
                                      "cycle_key": state.data_store["prop_cycle_key"]}
@@ -293,7 +295,10 @@ def test_estimate_mass_once_per_geometry_and_mass_config_even_after_g1_write_bac
     def write_back(kw):
         with open(kw["cpacs_file_path"], "a") as h:   # mass-mcp writes its breakdown into the file it is given
             h.write("<massBreakdown/>")
-        return {"status": "success"}
+        # B338: a success reply carries its breakdown (one without is not a result and is withdrawn).
+        return {"status": "success", "mass_breakdown": {
+            "components": {"mWing_kg": 7833.0}, "mTOM_sized_kg": 88066.0, "sizing_converged": True,
+            "sizing_report": {"driver": {"converged": True}}}}
     srv.responses["estimate_mass"] = write_back
     assert call(mass, "agent_1", cpacs_file_path=str(f), wing_mass_method="flops")["status"] == "success"
     assert "massBreakdown" not in f.read_text()                                     # G1 held

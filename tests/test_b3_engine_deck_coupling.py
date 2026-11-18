@@ -12,6 +12,7 @@ import pytest
 
 from src.coordination.design_state import DesignState
 from src.tools import coupling, coupling_contract, data_plane as dp
+from tests.cruise_point_helper import stamp
 
 SERVERS = {"set_inputs": "pycycle", "run_cycle": "pycycle", "get_outputs": "pycycle",
            "generate_engine_deck": "pycycle", "set_engine_deck": "aviary",
@@ -47,6 +48,7 @@ def plane(monkeypatch):
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/deck_abc.deck", 1.0, "test"))
     state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0, "cd_depends_on_engine_scale": False,
                                                      "design_fingerprint": "fp"}, "aviary_design_fingerprint": "fp"})
+    stamp(state)    # B338
     dp._call_ctx.__dict__.clear()
     stubs = {n: _Stub(n) for n in ("set_inputs", "set_aircraft_parameters", "set_engine_deck")}
     stubs["generate_engine_deck"] = _Stub("generate_engine_deck", dict(DECK))

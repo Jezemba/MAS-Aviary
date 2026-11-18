@@ -601,6 +601,8 @@ def _cruise(fresh, monkeypatch, ld=17.5, fp="fp-1", mass=90000.0, scale=1.33, de
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/d.deck", 1.33, "carried"))
     monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle", "get_cruise_point": "aviary",
                                                  "set_aircraft_parameters": "aviary", "run_cycle": "pycycle"})
+    fresh.sessions["aviary"] = "av"
+    dp._call_ctx.cruise_basis = dp.design_basis()       # B338: as current_cruise_point asks for it
     dp.intercept_response("get_cruise_point", json.dumps({
         "success": True, "design_fingerprint": fp,
         "cruise_point": {"mach": 0.78, "altitude_ft": 33000, "mass_kg": mass, "cl": 0.62, "cd": 0.62 / ld,
@@ -630,7 +632,7 @@ def test_fn_des_is_deterministic_whatever_the_tool_order(fresh, monkeypatch):
 
 def test_a_cruise_point_of_another_design_or_mass_is_not_used(fresh, monkeypatch):
     _cruise(fresh, monkeypatch, fp="fp-old")
-    fresh.data_store["aviary_design_fingerprint"] = "fp-new"          # aviary now holds another design
+    fresh.data_store["aviary_held_fingerprint_by_session"]["av"] = "fp-new"   # aviary now holds another design (B338)
     point, why = dp.current_cruise_point()
     assert point is None and "has not reported a cruise point" in why
     _cruise(fresh, monkeypatch, mass=80000.0)
@@ -700,9 +702,9 @@ def test_fn_des_is_not_clamped_and_only_the_impossible_fails():
 
 def test_the_engine_key_is_the_mass_basis_and_the_cruise_point(fresh, monkeypatch):
     _cruise(fresh, monkeypatch)
-    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1"]
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1", dp.design_basis()]        # B338: + the design
     fresh.data_store["mass_mtom_kg"] = 95000.0                    # this iteration's estimate does not enter
-    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1"]
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1", dp.design_basis()]
 
 
 def test_take_off_mass_is_the_one_mass_basis(fresh, monkeypatch):
@@ -731,9 +733,10 @@ def test_m3_a_stale_deck_or_no_engine_refuses(fresh, monkeypatch, tmp_path):
     dp.take_refusal()
     dp.resolve_request("estimate_mass", {"cpacs_file_path": "x.xml"})
     assert dp.take_refusal()["error_code"] == "ENGINE_NOT_ON_RECORD"
+    # B338 (H5): this iteration's deck is never used -- a stale one no longer refuses (that deadlocked with run_cycle).
     fresh.data_store["engine_deck"] = {"file": "/decks/old.deck", "cycle_key": "old"}
     dp.resolve_request("estimate_mass", {"cpacs_file_path": "x.xml"})
-    assert dp.take_refusal()["error_code"] == "ENGINE_NOT_CURRENT"
+    assert dp.take_refusal()["error_code"] == "ENGINE_NOT_ON_RECORD"
 
 
 def test_m3_an_unreadable_deck_refuses(fresh, monkeypatch):
