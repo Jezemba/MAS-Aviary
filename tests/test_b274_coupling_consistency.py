@@ -28,7 +28,7 @@ def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})
     dp._PLANFORM_CACHE.clear()
-    for name in ("su2_session", "morph", "wing_uid"):
+    for name in ("su2_session", "su2_config_override", "morph", "wing_uid"):
         if hasattr(dp._call_ctx, name):
             delattr(dp._call_ctx, name)
     yield state
@@ -401,3 +401,78 @@ def test_the_deck_reference_is_recorded_per_file(fresh, monkeypatch):
     dp._ensure_engine_deck({"session_id": "av"})
     assert fresh.data_store["engine_deck_references"] == {"d1.deck": {"reference_fn_des_lbf": 5900.0, "key": "k1"}}
     assert fresh.data_store["engine_deck_attached"] == {"av": "d1.deck"}
+
+
+# ---- B275: every path that sets the SU2 lift target -------------------------------------------------------
+
+def test_o_gr_17_a_lowercase_target_cl_in_create_overrides_is_the_frameworks(fresh):
+    """su2-mcp takes `target_cl` inside overrides as the argument (B173, any case); the framework's wins."""
+    _ready(fresh)
+    want = coupling.cruise_lift_coefficient(79560.0, 0.78, 33000, 122.78)
+    resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": "x.xml",
+                                                         "overrides": {"target_cl": 0.7148, "MACH_NUMBER": 0.78}})
+    assert resolved["target_cl"] == pytest.approx(want)
+    assert not any(str(k).upper() in ("TARGET_CL", "FIXED_CL_MODE") for k in resolved["overrides"])
+    assert fresh.data_store["_target_cl_asked"]["asked"] == 0.7148
+
+
+def test_a_trim_in_initial_config_text_is_removed(fresh):
+    _ready(fresh)
+    cfg = "SOLVER= EULER\nFIXED_CL_MODE= NO\ntarget_cl = 0.3\nMACH_NUMBER= 0.78\n"
+    resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": "x.xml", "initial_config": cfg})
+    assert resolved["initial_config"] == "SOLVER= EULER\nMACH_NUMBER= 0.78\n"
+    assert fresh.data_store["_target_cl_asked"]["overrides_removed"] == {
+        "initial_config:FIXED_CL_MODE": "NO", "initial_config:TARGET_CL": "0.3"}
+
+
+def test_update_config_entries_cannot_change_the_trim(fresh):
+    resolved = dp.resolve_request("update_config_entries", {"session_id": "s", "updates": {
+        "TARGET_CL": 0.56, "fixed_cl_mode": "NO", "CFL_NUMBER": 5}})
+    assert resolved["updates"] == {"CFL_NUMBER": 5}
+
+
+def test_a_solve_on_another_config_file_is_untrimmed(fresh):
+    dp.note_su2_trim("configure_from_cpacs", {"session_id": "s", "target_cl": 0.559},
+                     json.dumps({"trim": {"target_cl": 0.559}}))
+    dp.resolve_request("run_su2_solver", {"session_id": "s", "config_override_path": "my.cfg"})
+    dp.intercept_response("run_su2_solver", json.dumps({"success": True, "final_coefficients": {"CL": 0.56, "CD": 0.03}}))
+    assert fresh.data_store["aero_solve_trimmed"] is False
+    dp.resolve_request("run_su2_solver", {"session_id": "s"})
+    dp.intercept_response("run_su2_solver", json.dumps({"success": True, "final_coefficients": {"CL": 0.56, "CD": 0.03}}))
+    assert fresh.data_store["aero_solve_trimmed"] is True
+
+
+# ---- B279: the 16 l20_final iterations, as a flow ---------------------------------------------------------
+
+def test_the_second_mission_of_an_iteration_keeps_the_deck_reference(fresh, monkeypatch):
+    """All 16 flagged iterations (S_GR 1,2,3,5,9,12,14,15,19; O_GR 5,6,8,17; N_GR 1,19; N_IF 5) follow one KB pattern
+    (b279_scan.py): deck attached at the first mission -> run_cycle re-sizes (new cycle key) -> set_aircraft_parameters
+    -> the next mission regenerates the SAME cached deck file and re-attaches nothing. The scale must be Fn/5900."""
+    monkeypatch.setattr(dp, "engine_is_current", lambda: True)
+    attach_calls = []
+
+    class Gen:
+        def forward(self, **kw):
+            return json.dumps({"success": True, "deck_file": "deck_7815057d6edc9732.deck",
+                               "design_key": "7815057d6edc9732", "reference_fn_des_lbf": 5900.0, "cached": True})
+
+    class Attach:
+        def forward(self, **kw):
+            attach_calls.append(kw)
+            return json.dumps({"success": True})
+
+    dp._registered_tools.update({"generate_engine_deck": Gen(), "set_engine_deck": Attach()})
+    fresh.sessions.update({"aviary": "av", "pycycle": "pc"})
+    fresh.data_store["prop_cycle_session"] = "pc"
+    fresh.data_store["prop_cycle_key"] = "k1"
+    dp._ensure_engine_deck({"session_id": "av"})                     # first mission: deck attached
+    assert len(attach_calls) == 1
+    fresh.data_store["prop_cycle_key"] = "k2"                        # run_cycle re-sized the engine
+    coupling.put_var(fresh, "prop.fn_lbf", 7716.79, source_tool="run_cycle")
+    assert dp.engine_deck_current("av") is False
+    resolved = {"session_id": "av", "parameters": {}}
+    dp._inject_engine_scale(resolved)                                # the agent's / framework's set call
+    assert resolved["parameters"]["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(7716.79 / 5900.0)
+    dp._ensure_engine_deck({"session_id": "av"})                     # second mission: same cached file
+    assert len(attach_calls) == 1                                    # nothing re-attached ...
+    assert fresh.data_store["engine_injected_key"]["av"] == dp._engine_scale_key("av")   # ... and no re-apply needed

@@ -1075,6 +1075,22 @@ def _inject_target_cl(resolved: dict) -> None:
                            "will be refused by run_simulation", mass_kg, area)
         return
     resolved["target_cl"] = target
+    # B275: a trim written into create_su2_session's initial_config text is the framework's too (su2-mcp's configure
+    # step overwrites it when a target is given, but the record must not say otherwise).
+    if isinstance(resolved.get("initial_config"), str):
+        import re as _re
+
+        kept_lines = []
+        for line in resolved["initial_config"].splitlines():
+            m = _re.match(r"\s*(TARGET_CL|FIXED_CL_MODE)\s*=\s*(.*?)\s*$", line, flags=_re.I)
+            if m:
+                trim_in_overrides[f"initial_config:{m.group(1).upper()}"] = m.group(2)
+                if asked is None and m.group(1).upper() == "TARGET_CL":
+                    asked = m.group(2)
+                continue
+            kept_lines.append(line)
+        if len(kept_lines) != len(resolved["initial_config"].splitlines()):
+            resolved["initial_config"] = "\n".join(kept_lines) + ("\n" if resolved["initial_config"].endswith("\n") else "")
     if asked is not None or trim_in_overrides:
         _note_coupled_override("target_cl", asked, target)
         if trim_in_overrides or "target_cl" in (store.get("_coupled_override_last") or {}):
@@ -1748,7 +1764,11 @@ def _note_solve_trim() -> None:
     store = _design_state.data_store
     sid = getattr(_call_ctx, "su2_session", None)
     trims = store.get("su2_session_trim") or {}
-    if sid is not None and str(sid) in trims:
+    if getattr(_call_ctx, "su2_config_override", None):
+        # B275: solved on a config file the framework did not configure: its lift target is not the framework's.
+        store["aero_solve_target_cl"] = None
+        store["aero_solve_trimmed"] = False
+    elif sid is not None and str(sid) in trims:
         store["aero_solve_target_cl"] = trims[str(sid)]
         store["aero_solve_trimmed"] = trims[str(sid)] is not None
     else:
@@ -3117,6 +3137,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     elif tool_name in ("run_su2_solver", "read_history_csv"):
         # B277: which SU2 session the captured CL/CD come from, so its trim (or its absence) goes with them.
         _call_ctx.su2_session = resolved.get("session_id") or (_design_state.sessions or {}).get("su2")
+        # B275: run_su2_solver(config_override_path=...) solves another config file, not the one the framework trimmed.
+        _call_ctx.su2_config_override = resolved.get("config_override_path") if tool_name == "run_su2_solver" else None
     elif tool_name == "set_high_level_parameters":
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
                            "session_id": resolved.get("session_id"),
