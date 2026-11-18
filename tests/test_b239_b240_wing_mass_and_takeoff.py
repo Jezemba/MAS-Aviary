@@ -1,5 +1,6 @@
 """B240: the mission flies mass-mcp's wing (Aircraft.Wing.MASS, not MASS_SCALER); B239: the climb starts at V2 for
-this aircraft's take-off mass (mass-mcp MTOM passed to aviary as configure_mission's takeoff_mass_kg).
+this aircraft's take-off mass, passed to aviary as configure_mission's takeoff_mass_kg -- since A8 / B306 / B340 the one
+mass basis, mass-mcp's sized mass CARRIED from the last flown iteration (trim_mass_basis), not this iteration's MTOM.
 
 Measured on the B3 baseline (2026-11-03): MASS_SCALER 1.50 flew a 12,400 kg wing where mass-mcp said 8,995 kg, and the
 climb started at the stall speed; the mission did not converge. No servers: registered tools are stubs that go through
@@ -62,33 +63,54 @@ def test_contract_names_the_wing_mass_parameter():
     assert not hasattr(coupling, "wing_mass_to_aviary_scaler")     # the 5,998 kg transform is gone
 
 
+def _carried(monkeypatch, mass):
+    """A8 / B306 / B340: the take-off mass is the ONE mass basis -- the sized mass carried from the last flown
+    iteration (iteration 1: canonical baseline.sized_mtom_kg), not this iteration's estimate."""
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (mass, "carried sized mass (test)"))
+
+
 def test_agent_configure_mission_gets_the_takeoff_mass(plane):
     state, _ = plane
-    _mass_ran(state)
+    _mass_ran(state)                                                   # this iteration's estimate: 92,210.7 kg
+    carried, _ = dp.trim_mass_basis()                                  # no flown link yet: the canonical baseline
+    assert carried is not None and carried != pytest.approx(92210.7)
     out = dp.resolve_request("configure_mission", {"session_id": "av1", "range_nmi": 2500,
                                                    "takeoff_mass_kg": 70000.0})
-    assert out["takeoff_mass_kg"] == pytest.approx(92210.7)          # framework value wins (B143)
+    assert out["takeoff_mass_kg"] == pytest.approx(round(carried, 1))  # framework value wins (B143), carried basis
+    assert dp._call_notes()["_coupled_override_last"]["takeoff_mass_kg"]["asked"] == 70000.0
     assert out["range_nmi"] == 2500
 
 
-def test_mission_gets_the_takeoff_mass_once_per_mtom(plane):
+def test_mission_gets_the_takeoff_mass_once_per_mtom(plane, monkeypatch):
+    """B239: before the mission flies, aviary gets the take-off mass its V2 climb start is computed for -- once per
+    mass basis, re-sent when the basis changes, not when only this iteration's estimate changes (A8)."""
     state, stubs = plane
+    _carried(monkeypatch, 90298.7)
     _mass_ran(state)
     dp.resolve_request("run_simulation", {"session_id": "av1"})
     sent = stubs["configure_mission"].calls[-1]
-    assert sent["session_id"] == "av1" and sent["takeoff_mass_kg"] == pytest.approx(92210.7)
+    assert sent["session_id"] == "av1" and sent["takeoff_mass_kg"] == pytest.approx(90298.7)
     assert sent["range_nmi"] == 2500                                   # the canonical mission stays as configured
     dp.resolve_request("run_simulation", {"session_id": "av1"})
-    assert len(stubs["configure_mission"].calls) == 1                # unchanged MTOM: not re-sent
-    _mass_ran(state, mtom=95000.0)
+    assert len(stubs["configure_mission"].calls) == 1                # unchanged basis: not re-sent
+    _mass_ran(state, mtom=95000.0)                                     # a new estimate this iteration ...
     dp.resolve_request("run_simulation", {"session_id": "av1"})
-    assert stubs["configure_mission"].calls[-1]["takeoff_mass_kg"] == pytest.approx(95000.0)
+    assert len(stubs["configure_mission"].calls) == 1                # ... is not the take-off mass (A8)
+    _carried(monkeypatch, 91000.0)                                     # the carried basis changed
+    dp.resolve_request("run_simulation", {"session_id": "av1"})
+    assert len(stubs["configure_mission"].calls) == 2
+    assert stubs["configure_mission"].calls[-1]["takeoff_mass_kg"] == pytest.approx(91000.0)
 
 
-def test_no_takeoff_mass_without_a_mass_result(plane):
+def test_no_takeoff_mass_without_a_mass_basis(plane, monkeypatch):
+    """No carried sized mass on record: nothing is sent (no default mass), the mission contract refuses elsewhere."""
     state, stubs = plane
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (None, "no converged sized mass (test)"))
+    _mass_ran(state)
     dp.resolve_request("run_simulation", {"session_id": "av1"})
     assert stubs["configure_mission"].calls == []
+    out = dp.resolve_request("configure_mission", {"session_id": "av1", "takeoff_mass_kg": 70000.0})
+    assert out["takeoff_mass_kg"] == 70000.0 and not (state.data_store.get("takeoff_mass_applied") or {})
 
 
 def test_missing_configure_mission_is_recorded_not_raised(plane, monkeypatch):
@@ -99,8 +121,9 @@ def test_missing_configure_mission_is_recorded_not_raised(plane, monkeypatch):
     assert state.data_store["takeoff_mass_error"] == "configure_mission is not loaded"
 
 
-def test_aviary_refusal_of_the_takeoff_mass_is_recorded(plane):
+def test_aviary_refusal_of_the_takeoff_mass_is_recorded(plane, monkeypatch):
     state, stubs = plane
+    _carried(monkeypatch, 250000.0)
     stubs["configure_mission"].reply = {"success": False, "error_code": "OUT_OF_BOUNDS",
                                         "error": "takeoff_mass_kg must be between 20000 and 200000, got 250000.0."}
     _mass_ran(state, mtom=250000.0)

@@ -51,9 +51,15 @@ def test_the_mesh_ref_is_not_expanded_into_the_file_name():
     assert out["mesh_file_name"] == MESH_KEY
 
 
-def test_the_live_call_is_refused_before_the_server_and_names_the_right_argument():
+def test_the_live_call_is_refused_before_the_server_and_names_the_right_argument(_state):
+    # The design has a measured wing, so the framework can compute the SU2 lift target (B275/B306: without one the
+    # call is refused NO_TRIM_TARGET first) and the call reaches the payload-in-name check. The tool declares what
+    # the real create_su2_session takes (the recorded baseline flight's arguments), so nothing injected is dropped.
+    _state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.8287, "Aircraft.Wing.ASPECT_RATIO": 9.3632}
     calls = []
-    tool = _tool("create_su2_session", ["mesh_file_name", "initial_mesh", "cpacs_file_path"], calls)
+    tool = _tool("create_su2_session", ["mesh_file_name", "initial_mesh", "cpacs_file_path", "cruise_mach",
+                                        "cruise_altitude_ft", "target_cl", "aspect_ratio", "ref_area", "overrides"],
+                 calls)
     out = json.loads(tool.forward(mesh_file_name=MESH_KEY, cpacs_file_path="/tmp/a.xml"))
     assert out["error_code"] == "PAYLOAD_IN_NAME_ARGUMENT"
     assert "'initial_mesh'" in out["error"] and "NOT sent to the server" in out["error"]
