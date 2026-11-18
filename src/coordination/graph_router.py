@@ -214,6 +214,11 @@ def recommendation_target(rec: dict) -> str | None:
     return next((n for key, n in _ROLE_NODE.items() if key in to), None)
 
 
+# The rule name of a REVIEW that ends the link because nothing it said could be routed (C2); "complete" is kept for
+# the integrator's COMPLETE verdict only.
+NO_RECOMMENDATION_RULE = "no-recommendation"
+
+
 def route_after_review(output: str, level: str, recorded: dict | None = None,
                        requested_level: str | None = None) -> Decision:
     """REVIEW: COMPLETE when the integrator is satisfied or gave nothing to act on; else rules 10-13."""
@@ -234,7 +239,15 @@ def route_after_review(output: str, level: str, recorded: dict | None = None,
         rec = parse_recommendation(output)
     target = recommendation_target(rec) if rec else None
     if not target:
-        return Decision(COMPLETE, level, "complete", "the integrator gave no recommendation to act on")
+        # C2 (l20_final Case 6.4): this ends the link as COMPLETE does, but it is not the integrator's COMPLETE
+        # verdict, so it has its own rule name and the handler its own stop reason. Routing is unchanged.
+        said = (recorded or {}).get("verdict") if recorded else None
+        if said is None:
+            found = re.search(r"VERDICT\W*[:=]\s*\W*(COMPLETE|CONTINUE|RETRY)", output or "", re.I)
+            said = found.group(1).upper() if found else None
+        how = "recorded" if recorded else "in its text"
+        return Decision(COMPLETE, level, NO_RECOMMENDATION_RULE,
+                        f"the integrator gave no recommendation to act on (verdict {how}: {said or 'none'})")
     asked = requested_level or complexity_request(output)
     new_level = higher(level, LEVEL_OF_NODE[target])
     if asked:

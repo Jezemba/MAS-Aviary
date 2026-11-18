@@ -117,6 +117,10 @@ class TestLedgerReportsDistinctMode:
     def test_coupled_run_unaffected(self):
         ds = get_design_state()
         ds.data_store["aero_coupling_status"] = "injected"
+        # C5: coupled once aviary accepted the values (its "applied" list), not when a call was only prepared.
+        assert _aero_coupled({})["coupled"] is False
+        ds.data_store["design_params_applied"] = {"Mission.Design.LIFT_COEFFICIENT": 0.56,
+                                                  "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 1.2}
         out = _aero_coupled({})
         assert out["coupled"] is True
         assert out["status"] == "coupled"

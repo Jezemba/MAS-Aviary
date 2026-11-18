@@ -27,6 +27,9 @@ from src.logging.design_ledger import _aero_coupled
 from src.tools.data_plane import init_data_plane
 
 TOOL_SERVER_MAP = {"set_aircraft_parameters": "aviary"}
+# C5: what aviary accepted (its "applied" list); the ledger counts a run coupled only when both reached aviary.
+APPLIED = {"design_params_applied": {"Mission.Design.LIFT_COEFFICIENT": 0.0922051,
+                                     "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 0.91814506}}
 
 # cruise_cd_avg actually flown by the coupled staged link 0.
 COUPLED_RUN_TRACES = {
@@ -60,6 +63,7 @@ class TestAuthoritativeDetection:
             aero_injected_cd=0.0018375,
             aero_injected_drag_factor=0.91814506,
             aero_coupling_source="typed_registry",
+            **APPLIED,
         )
         out = _aero_coupled(COUPLED_RUN_TRACES)
         assert out["coupled"] is True
@@ -81,6 +85,7 @@ class TestAuthoritativeDetection:
         _install_state(
             aero_coupling_status="injected",
             aero_coupling_source="legacy_fallback",
+            **APPLIED,
         )
         out = _aero_coupled({})
         assert out["coupled"] is True
@@ -113,7 +118,7 @@ class TestHeuristicFallback:
 
 class TestRetryCounting:
     def test_uncoupled_advisories_are_counted(self):
-        _install_state(aero_coupling_status="injected")
+        _install_state(aero_coupling_status="injected", **APPLIED)
         traces = {
             "mission_architect": {
                 "steps": [
@@ -130,6 +135,6 @@ class TestRetryCounting:
 
 class TestNeverRaises:
     def test_bad_traces_do_not_raise(self):
-        _install_state(aero_coupling_status="injected")
+        _install_state(aero_coupling_status="injected", **APPLIED)
         for bad in ({}, None, {"a": "not-a-dict"}, {"a": {"steps": None}}):
             assert isinstance(_aero_coupled(bad), dict)

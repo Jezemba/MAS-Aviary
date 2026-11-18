@@ -169,9 +169,16 @@ class TestLedgerReportsDistinctMode:
     def test_coupled_run_reports_coupled(self):
         from src.logging.design_ledger import _aero_coupled
 
+        from src.tools.data_plane import intercept_response
+
         _publish_bounds()
         _capture(0.1802433149, -0.004643166003)
-        _inject()
+        resolved = _inject()
+        # C5: prepared is not injected -- the ledger counts it once aviary confirms the call ("applied").
+        assert _aero_coupled({})["coupled"] is False
+        params = resolved["parameters"]
+        intercept_response("set_aircraft_parameters", {"success": True, "applied": [
+            {"name": k, "old_value": None, "new_value": v} for k, v in params.items()]})
         out = _aero_coupled({})
         assert out["coupled"] is True
         assert out["injected_cl"] == pytest.approx(0.1802433149)

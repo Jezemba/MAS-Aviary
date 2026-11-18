@@ -1635,6 +1635,8 @@ def run_stat_batch(
                     # B31: did the run produce a real volume mesh, and did any agent
                     # try to finish without one?
                     _store = (_ds.data_store if _ds else {}) or {}
+                    # C1/C7: how the coordinator loop ended (termination rule, strategy completion, terminate).
+                    result_dict["coordination_stop"] = _store.get("coordination_stop")
                     result_dict["volume_mesh_generated"] = _store.get("_volume_mesh_generated")
                     result_dict["final_answer_refused_no_mesh"] = int(_store.get("final_answer_refused_no_mesh") or 0)
                     result_dict["finished_without_mesh"] = list(_store.get("finished_without_mesh") or [])

@@ -274,7 +274,12 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
         store = getattr(ds, "data_store", None) if ds is not None else None
         status = (store or {}).get("aero_coupling_status")
         if status is not None:
-            coupled = status == "injected"
+            from src.tools.design_json import aero_in_aviary
+
+            held = aero_in_aviary(store or {})
+            # C5: "injected" is set when the framework PREPARES a set_aircraft_parameters call; the call may then be
+            # refused (N_IF 11/17/20 flew aviary's default drag). Coupled only when aviary accepted both values.
+            coupled = status == "injected" and None not in held.values()
             # Distinguish the failure MODES — they need different fixes:
             #   MISSING_no_su2_aero : aero never ran (or ran after the mission)
             #   SU2_NO_FORCE_OUTPUT : aero DID run and history WAS read, but SU2
@@ -286,6 +291,10 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
                 ledger_status = "coupled"
             elif status == "SU2_NO_FORCE_OUTPUT":
                 ledger_status = "uncoupled_su2_no_force_output"
+            elif status == "solved_not_coupled_to_drag":
+                # Drag model decision 2026-11-18 (B324): SU2 solved and recorded, the mission flies aviary's FLOPS
+                # drag by design -- not "default drag" from a failed coupling.
+                ledger_status = "solved_not_coupled_to_drag"
             else:
                 ledger_status = "uncoupled_default_drag"
             record.update({
@@ -295,9 +304,16 @@ def _aero_coupled(traces: dict[str, Any]) -> dict[str, Any]:
                 "aero_coupling_status": status,
                 "aero_capture_failure": (store or {}).get("aero_capture_failure"),
                 "aero_capture_columns": (store or {}).get("aero_capture_columns"),
-                "injected_cl": (store or {}).get("aero_injected_cl"),
-                "injected_cd": (store or {}).get("aero_injected_cd"),
-                "injected_drag_factor": (store or {}).get("aero_injected_drag_factor"),
+                # C5: what aviary accepted (its "applied" list), not what a possibly refused call carried.
+                "injected_cl": held.get("LIFT_COEFFICIENT"),
+                # The SU2 CD behind the drag factor, only when aviary holds the CL it was prepared with.
+                "injected_cd": ((store or {}).get("aero_injected_cd")
+                                if held.get("LIFT_COEFFICIENT") is not None
+                                and held.get("LIFT_COEFFICIENT") == (store or {}).get("aero_injected_cl") else None),
+                "injected_drag_factor": held.get("SUBSONIC_DRAG_COEFF_FACTOR"),
+                # The values the framework last put into a set_aircraft_parameters call, accepted or not.
+                "prepared_cl": (store or {}).get("aero_injected_cl"),
+                "prepared_drag_factor": (store or {}).get("aero_injected_drag_factor"),
                 # typed_registry | legacy_fallback — which capture path supplied the aero.
                 "aero_coupling_source": (store or {}).get("aero_coupling_source"),
             })

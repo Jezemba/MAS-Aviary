@@ -273,7 +273,9 @@ def recommendation_block(carry_over: dict | None, previous_outputs: list, stage_
                 lines.append("It is in the DESIGN_STATE from the previous iteration (mdo_integrator) above.")
     if rec.get("RECOMMENDATION_TO"):
         # B180 gate: the role it is addressed to will be asked to answer it (artifact_checks).
-        rt.activate(rec["RECOMMENDATION_TO"], str(rec.get("RECOMMENDED_CHANGE") or ""))
+        in_link = isinstance(recorded, dict) and recorded.get("in_link") and recorded.get("seq") is not None
+        rt.activate(rec["RECOMMENDATION_TO"], str(rec.get("RECOMMENDED_CHANGE") or ""),
+                    recorded_seq=int(recorded["seq"]) if in_link else None)    # C6: a new pass is a new activation
     # B176: role/agent wording -- "stage" belongs to the staged pipeline; this text is shared.
     addressed = ("the role named in RECOMMENDATION_TO" if rec.get("RECOMMENDATION_TO")
                  else "the role it names")

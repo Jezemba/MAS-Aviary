@@ -36,7 +36,7 @@ mdo_f25_pipeline:
       completion_criteria:
         type: "tool_attempted"
         check: "tool_called"
-        tool_name: "run_simulation"
+        tool_name: "run_su2_solver"
         description: "aerodynamics_analyst ran a CFD simulation via su2-mcp"
       stage_prompt: ""   # sequential-prompts-v2: the role in mdo_f25_sequential_agents.yaml carries the whole stage prompt
 

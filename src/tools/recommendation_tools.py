@@ -115,17 +115,23 @@ def complexity_requests_since(seq: int = 0) -> list[dict]:
     return [s for s in signals("complexity") if s["seq"] > seq]
 
 
-def activate(recommendation_to: str | None, recommended_change: str = "") -> None:
-    """The framework shows a recommendation to the agents: remember it, so the addressed role is asked to answer."""
+def activate(recommendation_to: str | None, recommended_change: str = "", recorded_seq: int | None = None) -> None:
+    """The framework shows a recommendation to the agents: remember it, so the addressed role is asked to answer.
+
+    recorded_seq: the seq of the in-link record it comes from (graph-routed). C6: the integrator may now record the
+    same recommendation again on a later visit; that new record is a new pass, so it is activated afresh and the
+    addressed role owes a new response. Without recorded_seq (or the same one) a repeat is not re-activated.
+    """
     state = _state()
     role = _role(recommendation_to)
     if state is None or not role:
         return
     current = state.data_store.get("active_recommendation") or {}
-    if current.get("recommendation_to") == role and current.get("recommended_change") == recommended_change:
+    if (current.get("recommendation_to") == role and current.get("recommended_change") == recommended_change
+            and (recorded_seq is None or recorded_seq == current.get("recorded_seq"))):
         return
     state.data_store["active_recommendation"] = {"recommendation_to": role, "recommended_change": recommended_change,
-                                                 "activated_at": last_seq()}
+                                                 "activated_at": last_seq(), "recorded_seq": recorded_seq}
 
 
 def active_recommendation() -> dict | None:
@@ -136,6 +142,35 @@ def active_recommendation() -> dict | None:
 def last_seq() -> int:
     s = _signals()
     return s[-1]["seq"] if s else 0
+
+
+# C6 (l20_final, S_GR iterations 4, 6, 7, 8, 10, 11, 12, 18, 20): the graph-routed handler runs the integrator once
+# per pass and owes a record per visit (B180 gate, artifact_checks), but record_recommendation refused a repeat of
+# the integrator's PREVIOUS visit's record as "Already recorded". The gate then refused final_answer twice, let it
+# through, and the review routed as "no recommendation" -> COMPLETE. The handler now marks where each visit
+# starts; a repeat is refused only within the same visit. Strategies that mark no visit keep the old rule.
+_VISIT_KEY = "_recommendation_visit_since"
+
+
+def begin_visit(agent_names, seq: int) -> None:
+    """The graph-routed handler starts a visit of these agent names: signals after `seq` belong to it."""
+    state = _state()
+    if state is None:
+        return
+    marks = dict(state.data_store.get(_VISIT_KEY) or {})
+    for name in agent_names:
+        if name:
+            marks[str(name)] = int(seq)
+    state.data_store[_VISIT_KEY] = marks
+
+
+def visit_start(agent_name: str | None) -> int | None:
+    """The seq after which the agent's current visit began, or None when no visit was marked."""
+    state = _state()
+    if state is None:
+        return None
+    mark = (state.data_store.get(_VISIT_KEY) or {}).get(str(agent_name or ""))
+    return int(mark) if mark is not None else None
 
 
 # -- tools -------------------------------------------------------------------------------------------
@@ -187,8 +222,9 @@ class RecordRecommendation(Tool):
         # 16 times to its step cap and never gave its final answer. The result now says what comes next, and
         # a repeat of the same record is refused with that instruction.
         last = latest_recommendation()
-        if last and last.get("agent") == current_agent_name() and (last.get("verdict"), last.get("recommendation_to"),
-                                                                    last.get("recommended_change")) == (v, role, change):
+        since = visit_start(agent)
+        if last and last.get("agent") == current_agent_name() and (since is None or last["seq"] > since) and (
+                last.get("verdict"), last.get("recommendation_to"), last.get("recommended_change")) == (v, role, change):
             return _err(f"Already recorded (seq {last['seq']}); do not call record_recommendation again. "
                         f"{_FINISH}")
         entry = _record("recommendation", verdict=v, recommendation_to=role, recommended_change=change)

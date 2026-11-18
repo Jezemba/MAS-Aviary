@@ -23,6 +23,17 @@ def _public(record: dict | None) -> dict:
     return {k: v for k, v in (record or {}).items() if not str(k).startswith("_")}
 
 
+AVIARY_AERO_KEYS = {"LIFT_COEFFICIENT": "Mission.Design.LIFT_COEFFICIENT",
+                    "SUBSONIC_DRAG_COEFF_FACTOR": "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"}
+
+
+def aero_in_aviary(store: dict) -> dict:
+    """The SU2 lift coefficient and drag factor aviary holds (C5): taken from aviary's own confirmation of a
+    successful set_aircraft_parameters, never from a call the framework only prepared."""
+    applied = (store or {}).get("design_params_applied") or {}
+    return {short: applied.get(full) for short, full in AVIARY_AERO_KEYS.items()}
+
+
 def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
     """The design document from the data plane's store. Only captured values, never defaults."""
     from src.config.canonical import load_canonical
@@ -64,6 +75,12 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
             "solve_residual": store.get("aero_solve_residual"),
             # Drag model decision 2026-11-18: SU2 is solved and recorded; the mission flies aviary's FLOPS drag.
             "drag_coupling": "solved, not coupled to drag (the mission flies aviary's FLOPS drag)",
+            # C5 (B284) + drag decision (B324), merged: what aviary ACCEPTED for the design CL and the drag factor,
+            # read from aviary's own "applied" list of a successful set_aircraft_parameters (design_params_applied),
+            # never from a call the framework only prepared. Since B324 the framework injects neither and refuses
+            # an agent's set of either (DRAG_FROM_AVIARY_MODEL), so both are None: aviary received no SU2 value and
+            # computed its own design CL and drag.
+            "injected_into_aviary": aero_in_aviary(store),
         },
         "aviary_cruise_point": store.get("aviary_cruise_point"),
         "engine_sizing": {"fn_des_basis": store.get("engine_fn_des_basis"),
@@ -84,6 +101,8 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         "coordination_signals": list(store.get("coordination_signals") or []),
         # Graph-routed v2 on the networked board: level, role runs, how the link ended, the route events.
         **({"graph_route": store["graph_route"]} if store.get("graph_route") else {}),
+        # C1/C7: how the coordinator loop ended; written once, when the link's coordination stops.
+        **({"coordination_stop": store["coordination_stop"]} if store.get("coordination_stop") else {}),
     }
 
 

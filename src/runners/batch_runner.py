@@ -1126,6 +1126,18 @@ def _register_networked_graph_aliases(agents: dict, roles: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _eval_success_input(classification) -> bool | None:
+    """The eval-success input of convergence_classification: True / False, or None when there was no eval.
+
+    C4 (l20_final Case 6.3, N_IF iteration 12): an eval that was skipped (no metrics extracted) was counted as a
+    failed eval, so the iteration was labelled incoherent_team instead of low_convergence. A skipped eval is
+    missing, not failed.
+    """
+    if classification is None or classification.result == "eval_skipped":
+        return None
+    return classification.result == "success"
+
+
 def run_combination(
     combo: CombinationConfig,
     task: str,
@@ -1222,7 +1234,7 @@ def run_combination(
         # Compute org theory metrics.
         ot_config: dict = dict(combo.handler_config)
         ot_config["pipeline_template"] = combo.strategy_config.get("pipeline_template")
-        ot_config["_eval_success"] = classification.result == "success" if classification else None
+        ot_config["_eval_success"] = _eval_success_input(classification)
 
         # Inject stage allowed_tools for sequential modularity metrics.
         if combo.org_structure == "sequential":

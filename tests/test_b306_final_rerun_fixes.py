@@ -580,7 +580,8 @@ def test_drag_design_json_says_solved_not_coupled(fresh):
 
     doc = build_design({"aero_cl_cruise": 0.559, "aero_cd_cruise": 0.025})
     assert doc["aero"]["drag_coupling"].startswith("solved, not coupled to drag")
-    assert "injected_into_aviary" not in doc["aero"]
+    # Integration with B284 (C5): the key says what aviary accepted -- no SU2 value under the drag decision.
+    assert doc["aero"]["injected_into_aviary"] == {"LIFT_COEFFICIENT": None, "SUBSONIC_DRAG_COEFF_FACTOR": None}
 
 
 def test_drag_the_mission_still_needs_the_su2_solve():
