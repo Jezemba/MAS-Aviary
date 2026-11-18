@@ -288,7 +288,7 @@ def test_c6_a_new_in_link_record_of_the_same_recommendation_is_a_new_activation(
 
 def _stage_criteria(path):
     doc = yaml.safe_load(open(path))
-    sp = doc.get("staged_pipeline", doc)
+    sp = doc["mdo_f25_pipeline"]
     return {s["name"]: s.get("completion_criteria") or {} for s in sp["stages"]}
 
 
