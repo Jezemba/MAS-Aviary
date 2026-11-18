@@ -372,7 +372,7 @@ def test_c5_a_refused_set_is_not_recorded_as_injected():
     assert doc["aero"]["drag_coupling"].startswith("solved, not coupled to drag")
 
 
-# test_c5_a_later_refused_set_leaves_the_earlier_accepted_values removed (B336, 2026-11-18): it set an SU2 design CL and
+# test_c5_a_later_refused_set_leaves_the_earlier_accepted_values removed (B337, 2026-11-18): it set an SU2 design CL and
 # drag factor in aviary's applied list, which cannot happen since B324 (the framework injects neither and refuses an
 # agent's set of either, DRAG_FROM_AVIARY_MODEL). The refused-set rule is covered by the test above.
 

@@ -144,7 +144,7 @@ def seed_from_design(design: dict) -> list[str]:
         # B187: the seeded engine was sized on the seeded mass and drag (seeded above).
         from src.tools.data_plane import _cycle_sizing_key
 
-        # B334: and the aviary cruise L/D that engine was sized on (design.json aviary_cruise_point), so the router's
+        # B335: and the aviary cruise L/D that engine was sized on (design.json aviary_cruise_point), so the router's
         # thrust-vs-drag rule can be evaluated on a seeded link; a design.json without it seeds none (the rule then
         # routes to re-sizing the engine instead of skipping).
         point = design.get("aviary_cruise_point") if isinstance(design.get("aviary_cruise_point"), dict) else {}

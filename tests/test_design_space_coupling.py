@@ -113,7 +113,7 @@ def test_set_inputs_gets_the_mission_flight_condition():
 
 
 def test_an_explicit_other_flight_condition_is_refused():
-    """B333 (coordinator 2026-11-18): the design table's cruise condition is fixed; was 'an explicit value is kept'."""
+    """B334 (coordinator 2026-11-18): the design table's cruise condition is fixed; was 'an explicit value is kept'."""
     dp.take_refusal()
     dp.resolve_request("set_inputs", {"session_id": "p", "values": {"fc.alt": 36000.0}})
     refusal = dp.take_refusal()

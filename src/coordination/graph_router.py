@@ -158,7 +158,7 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
             return Decision(AERO, higher(level, MODERATE), "6",
                             f"the mission did not fly and the engine is already at scale {scale:.2f}: the drag is suspect")
         # Drag model decision 2026-11-18: the thrust the drag needs is from aviary's cruise L/D, not SU2 CL/CD.
-        # B334: under that contract an engine thrust (prop.fn_lbf) exists only when Fn_DES was sized from aviary's
+        # B335: under that contract an engine thrust (prop.fn_lbf) exists only when Fn_DES was sized from aviary's
         # cruise point, which records aviary.cruise_l_over_d (data_plane._capture_cruise_point; run_cycle is refused
         # without it, DESIGN_THRUST_NOT_AVAILABLE), and graph pre-init seeds that L/D with the engine. A thrust without
         # a usable L/D is therefore an inconsistent record, not a case to skip: the engine is re-sized.
@@ -176,7 +176,7 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
             return Decision(PROPULSION, higher(level, MODERATE), "4",
                             f"the mission did not fly: thrust {float(fn):.0f} lbf < {needed:.0f} lbf needed for this drag")
     else:
-        # B334: recorded, not skipped silently. Without a sized mass or an engine the mission contract refuses
+        # B335: recorded, not skipped silently. Without a sized mass or an engine the mission contract refuses
         # run_simulation upstream (MTOM / CYCLE), so this is reached only from a refusal the rules above did not name.
         missing = [n for n, v in (("no sized mass (mass.mtom_kg)", mtom), ("no engine thrust (prop.fn_lbf)", fn)) if not v]
         not_evaluated = f" (thrust-vs-drag rule 4 not evaluated: {', '.join(missing)})"
