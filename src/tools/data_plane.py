@@ -2561,6 +2561,52 @@ def _capture_mesh_markers(tool_name: str, data: dict) -> None:
     logger.info("Using default mesh markers: aircraft, farfield")
 
 
+# B343 (B342, coordinator 2026-11-18: agents see the same mass numbers and mission outcome as in earlier runs). Since
+# mass-mcp's sizing_report (B300-B304) the estimate_mass mass_breakdown is about 5.1 kB and was replaced WHOLE by a ref
+# (> _DICT_BYTE_THRESHOLD), hiding the wing mass, sized MTOM, OEM and fuel; aviary-mcp's get_cruise_point aero_details
+# grew a 54-name fingerprint list. For these containers every other field stays inline (nested dicts under the usual
+# rules) and only the named bulky children are stored behind a ref. Whole tools are NOT passed through: a huge reply
+# would then flood the context.
+_KEEP_INLINE_EXCEPT = {
+    "mass_breakdown": ("sizing_report",),          # estimate_mass: masses inline, the sizing report by ref
+    "aero_details": ("fingerprint_covers",),       # get_cruise_point: drag, q, S, design CL inline; the name list by ref
+}
+
+
+def _inline_except(tool_name: str, key: str, value: dict) -> dict:
+    kept: dict = {}
+    for child, cv in value.items():
+        if child in _KEEP_INLINE_EXCEPT[key] and isinstance(cv, (dict, list)):
+            store_key = f"{tool_name}__{key}.{child}"
+            _design_state.data_store[store_key] = cv
+            kept[child] = {"_intercepted": True, "ref": store_key, "size_bytes": len(json.dumps(cv, default=str)),
+                           "keys" if isinstance(cv, dict) else "total_count":
+                               (sorted(cv)[:_DICT_KEY_PREVIEW_COUNT] if isinstance(cv, dict) else len(cv)),
+                           "note": "stored by the framework (bulky detail); the numbers above are the result"}
+        elif isinstance(cv, dict):
+            kept[child] = _intercept_binaries(tool_name, {child: cv})[child]
+        else:
+            kept[child] = cv
+    return kept
+
+
+def _constraints_summary(tool_name: str, key: str, value: dict) -> dict:
+    """aviary-mcp mission_constraints: the outcome inline (how many constraints, which are violated and by how much),
+    the per-constraint detail (bounds, worst value, points, units) behind a ref. mission_residuals stays inline."""
+    store_key = f"{tool_name}__{key}"
+    _design_state.data_store[store_key] = value
+    violated = {}
+    for name, detail in value.items():
+        try:
+            gap = float((detail or {}).get("violation"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if gap > 0.0:
+            violated[name] = {"violation": gap, "units": (detail or {}).get("units")}
+    return {"_intercepted": True, "ref": store_key, "constraints": len(value), "violated": violated,
+            "note": "per-constraint detail (bounds, worst value, points) stored by the framework"}
+
+
 def _intercept_binaries(tool_name: str, data: dict) -> dict:
     if _design_state is None:
         return data
@@ -2571,6 +2617,13 @@ def _intercept_binaries(tool_name: str, data: dict) -> dict:
         return data
     result = {}
     for key, value in data.items():
+        # B343 (B342): containers whose numbers the agent must see stay inline; only their bulky parts go behind a ref.
+        if isinstance(value, dict) and key in _KEEP_INLINE_EXCEPT:
+            result[key] = _inline_except(tool_name, key, value)
+            continue
+        if key == "mission_constraints" and isinstance(value, dict) and _is_large_structured_payload(value):
+            result[key] = _constraints_summary(tool_name, key, value)
+            continue
         # Binary strings (base64 meshes, CAD, raw mesh signatures)
         if isinstance(value, str) and _is_binary_payload(key, value):
             store_key = f"{tool_name}__{key}"
