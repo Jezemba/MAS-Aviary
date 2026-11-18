@@ -67,13 +67,18 @@ def test_rule_8_mission_on_a_different_wing_goes_to_geometry():
 # ---- simulation (rules 4, 6, 7, 9) ------------------------------------------------------------------
 
 ZERO = [rec("run_simulation", "failed", error_code="ZERO_FUEL", summary={"fuel_burned_kg": 4e-6})]
-TRIMMED = {"aero.cl_cruise": 0.5588, "aero.cd_cruise": 0.0229, "aero.target_cl": 0.559, "mass.mtom_kg": 78126.0}
+TRIMMED = {"aero.cl_cruise": 0.5588, "aero.cd_cruise": 0.0229, "aero.target_cl": 0.559, "mass.mtom_kg": 78126.0,
+           "aviary.cruise_l_over_d": 13.0}       # drag model decision 2026-11-18: the needed thrust is from aviary's L/D
 
 
-def test_flown_goes_to_review_even_unconverged():
-    d = gr.route_after_node(gr.SIMULATION, [rec("run_simulation", converged=False, summary={"fuel_burned_kg": 22998.6})],
+def test_flown_goes_to_review_and_an_unconverged_mission_is_not_flown():
+    """B281 (audit F3, Jessica 2026-11-18): only a converged mission is flown (was: "even unconverged")."""
+    d = gr.route_after_node(gr.SIMULATION, [rec("run_simulation", summary={"fuel_burned_kg": 22998.6})],
                             "", gr.SIMPLE, 0)
     assert (d.next_node, d.rule) == (gr.REVIEW, "flow")
+    d = gr.route_after_node(gr.SIMULATION, [rec("run_simulation", converged=False, summary={"fuel_burned_kg": 22998.6})],
+                            "", gr.SIMPLE, 0, TRIMMED)
+    assert d.next_node != gr.REVIEW
 
 
 def test_rule_6_untrimmed_aero():

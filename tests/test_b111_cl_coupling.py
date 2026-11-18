@@ -16,6 +16,8 @@ from src.tools import coupling
 def fresh(monkeypatch):
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
+    # B281 (A8): the trim mass is the carried sized mass; these tests give it as the store's MTOM.
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (state.data_store.get("mass_mtom_kg"), "mass-mcp"))
     yield state
 
 
@@ -122,13 +124,13 @@ def _cpacs(tmp_path, mtom="78126.0"):
     return str(p)
 
 
-def test_without_mass_the_cpacs_design_mtom_trims_it(fresh, tmp_path):
+def test_without_mass_the_cpacs_design_mtom_is_not_used(fresh, tmp_path):
+    """B281 (audit F4 / A8): was "the CPACS design mTOM trims it". No fallback mass: the configuration is refused."""
     fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.33, "Aircraft.Wing.ASPECT_RATIO": 9.4}
+    dp.take_refusal()
     resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": _cpacs(tmp_path)})
-    assert resolved["target_cl"] == pytest.approx(
-        coupling.cruise_lift_coefficient(78126.0, 0.78, 33000, 122.33), rel=1e-9)
-    assert 0.5 < resolved["target_cl"] < 0.6
-    assert fresh.data_store["aero_target_cl_basis"]["mass_source"] == "cpacs designMasses/mTOM"
+    assert "target_cl" not in resolved
+    assert dp.take_refusal()["error_code"] == "NO_TRIM_TARGET"
 
 
 def test_a_mass_mcp_result_still_wins_over_the_cpacs(fresh, tmp_path):

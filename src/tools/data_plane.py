@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import os
 import re
 from typing import Any
@@ -526,6 +527,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
                 _capture_mission_engine(tool_name, data)
+                _capture_cruise_point(tool_name, data)
                 _capture_param_bounds(tool_name, data)
                 _capture_geometry_wing(tool_name, data)
                 _capture_geometry_fuselage(tool_name, data)
@@ -562,6 +564,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
         _capture_mission_engine(tool_name, response)
+        _capture_cruise_point(tool_name, response)
         _capture_param_bounds(tool_name, response)
         _capture_geometry_wing(tool_name, response)
         _capture_geometry_fuselage(tool_name, response)
@@ -901,13 +904,13 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
     """
     if _design_state is None or tool_name != "set_aircraft_parameters":
         return
-    applied = data.get("applied")
-    if not isinstance(applied, list):
-        return
     pending = getattr(_call_ctx, "engine_pending", None)
     _call_ctx.engine_pending = None
     if pending and not (data.get("success") is False or data.get("error_code")):
         _design_state.data_store.setdefault("engine_injected_key", {})[pending[0]] = pending[1]
+    applied = data.get("applied")
+    if not isinstance(applied, list):
+        return
     current = dict(_design_state.data_store.get("design_params_applied") or {})
     for item in applied:
         if isinstance(item, dict) and item.get("name") is not None and "new_value" in item:
@@ -1590,11 +1593,11 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
         return
     data["framework_applied"] = {
         "overridden": last,
-        "note": ("Mission.Design.LIFT_COEFFICIENT and Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR come from the "
-                 "SU2 result, Aircraft.Wing.MASS from the mass estimate, pycycle's Fn_DES from the "
-                 "mass and the SU2 drag (thrust sized to drag), and Aircraft.Engine.SCALE_FACTOR from "
-                 "pycycle's thrust; the framework sets them. Values you passed for them were replaced. "
-                 "read_design_json shows the values applied."),
+        "note": ("Aircraft.Wing.MASS comes from the mass estimate, pycycle's Fn_DES from the mass and aviary's "
+                 "cruise lift-to-drag (thrust sized to drag), Aircraft.Engine.SCALE_FACTOR from pycycle's thrust, "
+                 "the take-off mass from the mass basis, and the fixed cycle inputs from the design table; the "
+                 "framework sets them. Values you passed for them were replaced. read_design_json shows the "
+                 "values applied."),
     }
 
 
@@ -1925,7 +1928,7 @@ def _store_aero(cl_f: float, cd_f: float, source: str) -> None:
 
     Capture records what SU2 MEASURED -- no judgement here. SU2's inviscid CD is
     legitimately near-zero or slightly negative (d'Alembert); the friction term
-    is added later by aero_cd_to_aviary_drag_factor. Validation belongs at the
+    was added later by the (removed) drag factor. Validation belongs at the
     injection point, against the consumer's declared bounds.
 
     ``source`` is the tool the values actually came from, so the registry's
@@ -2165,10 +2168,7 @@ def _capture_geometry_ref(tool_name: str, data: dict) -> None:
         if not _is_main_wing(getattr(_call_ctx, "wing_uid", None)):
             return
         coupling.put_var(_design_state, "geom.mac_length", data.get("mac_length"), source_tool=tool_name)
-        coupling.put_var(_design_state, "geom.wing_wetted_area", data.get("wetted_area"), source_tool=tool_name)
         coupling.put_var(_design_state, "geom.reference_area", data.get("reference_area"), source_tool=tool_name)
-    elif tool_name == "get_fuselage_summary":
-        coupling.put_var(_design_state, "geom.fuselage_wetted_area", data.get("wetted_area"), source_tool=tool_name)
     elif tool_name == "set_high_level_parameters":
         # B99: these two values are what the data plane INJECTS into create_su2_session /
         # configure_from_cpacs as ref_area / ref_length. They were captured once, from the baseline
@@ -2665,15 +2665,16 @@ FRAMEWORK_CALLED_TOOLS = ("configure_mission",)
 
 
 def _takeoff_mass_kg() -> float | None:
-    """The take-off mass the climb start is computed for: mass-mcp's MTOM (B239)."""
+    """The take-off mass the climb start is computed for (B239): the one mass basis (B281, A8 / audit F4).
+
+    mass-mcp's sized mass carried from the previous iteration (iteration 1: the baseline's), the mass the SU2 trim
+    and the engine sizing use -- one basis for trim, Fn_DES and take-off mass. It was this iteration's mass-mcp
+    MTOM, which fell back to the CPACS 78,126 kg whenever the sizing did not converge.
+    """
     if _design_state is None:
         return None
-    from src.tools import coupling as _cpl
-
-    mtom = _cpl.get_var(_design_state, "mass.mtom_kg")
-    if mtom is None:
-        mtom = _design_state.data_store.get("mass_mtom_kg")
-    return round(float(mtom), 1) if mtom is not None else None
+    mass, _ = trim_mass_basis()
+    return round(float(mass), 1) if mass is not None else None
 
 
 def _inject_takeoff_mass(resolved: dict) -> None:
@@ -3406,23 +3407,22 @@ def _inject_cycle_flight_condition(resolved: dict) -> None:
 
 
 def _cycle_sizing_key() -> list | None:
-    """What the engine is sized on: MTOM and the cruise CL/CD. None until the mass result exists."""
+    """What the engine is sized on (B187): the trim mass basis and aviary's cruise L/D of the design aviary holds.
+
+    Drag model decision 2026-11-18: Fn_DES comes from aviary's FLOPS cruise point, not SU2 CL/CD (and no friction
+    chord any more, B278 removed). None until both exist, so no engine counts as current without them.
+    """
     if _design_state is None:
         return None
-    from src.tools import coupling as _cpl
-
-    mtom = _cpl.get_var(_design_state, "mass.mtom_kg")
-    if mtom is None:
-        mtom = _design_state.data_store.get("mass_mtom_kg")
-    if mtom is None:
+    mass, _ = trim_mass_basis()
+    point = _design_state.data_store.get("aviary_cruise_point") or {}
+    if mass is None or not point:
         return None
-    cl = _cpl.get_var(_design_state, "aero.cl_cruise")
-    cd = _cpl.get_var(_design_state, "aero.cd_cruise")
-    # B281 (audit F9): the friction chord is part of what Fn_DES is sized on (B278), so it is part of the key: a
-    # carried or cached engine sized with another MAC is not current.
-    mac = _friction_mac()[0] if _design_state is not None else None
-    return [round(float(mtom), 1), None if cl is None else round(float(cl), 5),
-            None if cd is None else round(float(cd), 6), None if mac is None else round(float(mac), 5)]
+    try:
+        ld = round(float(point.get("lift_to_drag")), 6)
+    except (TypeError, ValueError):
+        return None
+    return [round(float(mass), 1), ld, point.get("design_fingerprint")]
 
 
 def engine_is_current() -> bool:
@@ -3456,93 +3456,76 @@ def _auto_size_cycle(resolved: dict) -> None:
     if _design_state is None:
         return
     sid = resolved.get("session_id") or (_design_state.sessions or {}).get("pycycle")
-    if _cycle_sizing_key() is None or cycle_is_sized(sid):
-        return
-    tool = (_registered_tools or {}).get("set_inputs")
-    if tool is None or not sid:
-        return
-    try:
-        tool.forward(session_id=sid, values={})
-    except Exception as exc:  # pragma: no cover - never break a run on this
-        logger.warning("[B187] could not size pycycle session %s before run_cycle: %s", sid, exc)
-        return
-    logger.info("[B187] sized pycycle session %s before run_cycle (no set_inputs on the current design)", sid)
+    point, why = current_cruise_point()           # drag model decision: the engine is sized on aviary's cruise L/D
+    if point is not None and _cycle_sizing_key() is not None and not cycle_is_sized(sid):
+        tool = (_registered_tools or {}).get("set_inputs")
+        if tool is not None and sid:
+            try:
+                tool.forward(session_id=sid, values={})
+                logger.info("[B187] sized pycycle session %s before run_cycle", sid)
+            except Exception as exc:  # pragma: no cover - surfaced by the refusal below
+                logger.warning("[B187] could not size pycycle session %s before run_cycle: %s", sid, exc)
+    if not cycle_is_sized(sid):
+        # B281 (drag model decision): never run the cycle on pycycle's default thrust.
+        _refuse_call("DESIGN_THRUST_NOT_AVAILABLE",
+                     "run_cycle was not run: the framework sizes the engine's design thrust (Fn_DES) from the mass "
+                     "and aviary's cruise lift-to-drag of the current design, and could not: "
+                     + (why if point is None else (_design_state.data_store.get("engine_sizing_error")
+                                                   or "the sizing set_inputs was not accepted")) + ". "
+                     "Apply the current design to aviary (set_aircraft_parameters) and run the cycle again.")
 
 
 def _inject_phase_k_b_fn_des(resolved: dict) -> None:
-    """Merge mass-mcp's MTOM into pycycle's ``set_inputs`` as Fn_DES.
+    """pycycle ``set_inputs``: Fn_DES is the framework's, sized to aviary's cruise drag (drag model decision).
 
-    The propulsion-weight snowball: heavier aircraft needs more
-    thrust, bigger engine sizes itself for that thrust, engine mass
-    feeds back into airframe mass. This closes one side of the loop
-    by sizing the design-point thrust to the externally computed
-    MTOM rather than letting the propulsion agent default to 5,900
-    lbf regardless of airframe.
-
-    No-op when:
-      - mass-mcp didn't run (no ``mass_mtom_kg`` in data_store)
-      - the agent already specified Fn_DES explicitly
-      - the set_inputs call doesn't target the pycycle MCP
+    Fn_DES = mass * g / (L/D) / 2 / 4.448 * 1.25 with the trim mass basis (A8: mass-mcp's sized mass carried from the
+    previous iteration; iteration 1 the baseline's) and aviary's FLOPS L/D at the cruise point of the design aviary
+    holds now (current_cruise_point). Not SU2's CL/CD (numerical on the study mesh, A13), and no assumed L/D 17.
+    A caller's Fn_DES is replaced (B143). Without a cruise point the value is not set and the reason is recorded;
+    run_cycle is then refused (DESIGN_THRUST_NOT_AVAILABLE) rather than run on pycycle's default thrust.
     """
     if _design_state is None:
         return
-
-    mtom_kg = _design_state.data_store.get("mass_mtom_kg")
-    if mtom_kg is None:
-        return
-
     values = resolved.get("values")
     if isinstance(values, str):
         try:
             values = json.loads(values)
         except (json.JSONDecodeError, TypeError):
             return
+    if values is None:
+        values = {}
     if not isinstance(values, dict):
         return
-
+    store = _design_state.data_store
+    point, why = current_cruise_point()
+    if point is None:
+        store["engine_sizing_error"] = why
+        if "Fn_DES" in values:
+            store.setdefault("_coupled_override_last", {})["Fn_DES"] = {
+                "asked": values.pop("Fn_DES"), "used": f"not set: {why}"}
+            resolved["values"] = values
+        return
+    mass, basis_mass = trim_mass_basis()
     from src.tools import coupling as _cpl
-    cl = _cpl.get_var(_design_state, "aero.cl_cruise")
-    cd = _cpl.get_var(_design_state, "aero.cd_cruise")
-    if cl and cd is not None and float(cl) > 0:
-        # B170: thrust sized to this design's drag (SU2 + friction), not an assumed L/D of 17.
-        # The framework's value wins over a caller's, as for the aviary coupled values (B143).
-        reynolds, swet_sref = _friction_inputs()
-        cd_total = _cpl.total_cruise_cd(cd, reynolds, swet_sref)
-        try:
-            fn_des_lbf = _cpl.fn_des_from_drag(mtom_kg, cl, cd_total)
-        except ValueError as exc:
-            # B281 (audit F2): no clamp; an impossible thrust refuses the call and names its inputs.
-            _refuse_call("DESIGN_THRUST_NOT_PHYSICAL",
-                         f"set_inputs was not run: the design thrust Fn_DES the framework computes from the mass and "
-                         f"the SU2 drag is not physical ({exc}). Check those inputs (estimate_mass and the SU2 "
-                         "result) and produce them again.")
-            return
-        if "Fn_DES" in values:
-            _note_coupled_override("Fn_DES", values["Fn_DES"], fn_des_lbf)
-        basis = f"L/D {float(cl) / cd_total:.2f} (CL {float(cl):.4f}, CD {cd_total:.4f} incl. friction)"
-    else:
-        if "Fn_DES" in values:
-            return  # no aero yet: respect explicit agent override
-        # MTOM -> pycycle Fn_DES via the named, documented transform (src/tools/coupling.py).
-        try:
-            fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
-        except ValueError as exc:
-            _refuse_call("DESIGN_THRUST_NOT_PHYSICAL",
-                         f"set_inputs was not run: the design thrust Fn_DES from the mass is not physical ({exc}). "
-                         "Check the mass estimate and produce it again.")
-            return
-        basis = "assumed L/D 17 (no SU2 result yet)"
 
+    try:
+        fn_des_lbf = _cpl.fn_des_from_lift_to_drag(mass, point["lift_to_drag"])
+    except (ValueError, TypeError, KeyError) as exc:
+        _refuse_call("DESIGN_THRUST_NOT_PHYSICAL",
+                     f"set_inputs was not run: the design thrust Fn_DES computed from the mass and aviary's cruise "
+                     f"lift-to-drag is not physical ({exc}). Check the design applied to aviary and the mass estimate.")
+        return
+    if "Fn_DES" in values:
+        _note_coupled_override("Fn_DES", values["Fn_DES"], fn_des_lbf)
     values["Fn_DES"] = fn_des_lbf
     resolved["values"] = values
-    _design_state.data_store["engine_fn_des_basis"] = basis
+    store.pop("engine_sizing_error", None)
+    basis = (f"aviary cruise L/D {float(point['lift_to_drag']):.3f} (CL {point.get('cl')}, CD {point.get('cd')}, "
+             f"engine scale used {point.get('engine_scale_used')}) at {float(mass):.1f} kg ({basis_mass})")
+    store["engine_fn_des_basis"] = basis
     # B187: which session was sized, on which inputs -- run_cycle re-sizes when either changes.
-    _design_state.data_store["cycle_sizing"] = {"session": resolved.get("session_id"), "key": _cycle_sizing_key()}
-    logger.info(
-        "Phase K-B middleware injected Fn_DES=%.0f lbf "
-        "(mass-mcp MTOM=%.1f kg, %s)",
-        fn_des_lbf, float(mtom_kg), basis,
-    )
+    store["cycle_sizing"] = {"session": resolved.get("session_id"), "key": _cycle_sizing_key()}
+    logger.info("Fn_DES=%.0f lbf from %s", fn_des_lbf, basis)
 
 
 def _inject_phase_k_wing_mass(resolved: dict) -> None:
@@ -3797,34 +3780,10 @@ def mission_coupling_error(tool_name: str, resolved: dict) -> dict | None:
     injected from the registry or set by the agent by hand. Toggle with
     AVION_ENFORCE_COUPLING=0.
     """
-    import os
-    if tool_name != "set_aircraft_parameters":
-        return None
-    if os.environ.get("AVION_ENFORCE_COUPLING", "1") != "1":
-        return None
-    params = resolved.get("parameters")
-    if isinstance(params, str):
-        try:
-            params = json.loads(params)
-        except (json.JSONDecodeError, TypeError):
-            return None
-    if not isinstance(params, dict):
-        return None
-    if "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" in params:
-        return None  # coupled — aero present (injected or agent-provided)
-    return {
-        "success": False,
-        "error_code": "UNCOUPLED_MISSION",
-        "error": (
-            "COUPLING ADVISORY (non-blocking): this mission ran on aviary's DEFAULT "
-            "drag polar because no SU2 cruise aero was captured yet — it is UNCOUPLED. "
-            "To couple it, run the AERO stage (create_su2_session -> set_mesh -> "
-            "run_su2_solver -> read_history_csv) and re-call set_aircraft_parameters; "
-            "the SU2 CL/CD are captured as typed vars (aero.cl_cruise / aero.cd_cruise) "
-            "and inject automatically — you do not need to pass them by hand. Coupling "
-            "here is optional but recommended for a fully-coupled MDO result."
-        ),
-    }
+    # Retired by the drag model decision (Jessica, 2026-11-18): the mission flies aviary's FLOPS drag, so a
+    # set_aircraft_parameters without an SU2 drag factor is not "uncoupled". (Not called by the middleware; the mission
+    # contract requires the SU2 solve as a run, coupling_contract.AERO_SOLVE.)
+    return None
 
 
 def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
@@ -3870,56 +3829,24 @@ def mass_coupling_hint(tool_name: str, resolved: dict) -> str | None:
     )
 
 
+# Drag model decision (Jessica, 2026-11-18): the mission's drag is aviary's FLOPS model only. SU2 Euler CD on the
+# study mesh is numerical (A13: negative at M0.5; dCD/dCL^2 ~0.19 on AR 9.4 and AR 13 alike), so it gave agents
+# systematically wrong signals. The SU2 -> SUBSONIC_DRAG_COEFF_FACTOR injection (Phase H, B143), the SU2 CL ->
+# Mission.Design.LIFT_COEFFICIENT injection (FLOPS computes its design CL from the geometry) and the skin-friction
+# build-up (B278 / audit F5, F6) were removed. SU2 still solves every design, trimmed and converged (B271 / B277
+# contract), and its CL/CD are recorded only.
+_FRAMEWORK_DRAG_KEYS = ("Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR", "Mission.Design.LIFT_COEFFICIENT")
+
+
 def _inject_phase_h_aero(resolved: dict) -> None:
-    """Merge SU2 cruise CL/CD into a set_aircraft_parameters call.
+    """set_aircraft_parameters: the drag keys are aviary's model's, not a caller's (drag model decision, B143 spirit).
 
-    Adds two keys to the ``parameters`` dict if they are not already
-    set by the agent:
-
-      Mission.Design.LIFT_COEFFICIENT          = aero_cl_cruise
-      Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR = scale_factor
-
-    where scale_factor is derived from the SU2 inviscid CD plus a
-    fixed skin-friction increment, divided by aviary's FLOPS-baseline
-    drag-polar estimate at the target CL. The formula matches what
-    the prompt SPECIFIED — the LLM kept skipping it. This middleware
-    closes the gap without touching the prompt path.
-
-    No-op when the aero coefficients haven't been captured yet (e.g.
-    a non-aviary set_aircraft_parameters call, or the aero stage
-    cascaded UPSTREAM_ERROR before producing data).
+    A call that sets SUBSONIC_DRAG_COEFF_FACTOR or Mission.Design.LIFT_COEFFICIENT is refused with the reason; the
+    SU2 aero of the design is recorded as "solved, not coupled to drag".
     """
     if _design_state is None:
         return
-
-    # Read from the TYPED registry first (the coupling contract); fall back to the
-    # legacy data_store keys only if the registry is empty (older capture path).
-    from src.tools import coupling
-    cl = coupling.get_var(_design_state, "aero.cl_cruise")
-    cd = coupling.get_var(_design_state, "aero.cd_cruise")
-    _aero_src = "typed_registry"
-    if cl is None or cd is None:
-        cl = _design_state.data_store.get("aero_cl_cruise")
-        cd = _design_state.data_store.get("aero_cd_cruise")
-        _aero_src = "legacy_fallback"
-    if cl is None or cd is None:
-        # COUPLING FAILURE (not a benign no-op): aviary is about to run WITHOUT the
-        # current design's SU2 aero, so it will silently fall back to its default drag
-        # polar (~CD 0.021) instead of the SU2-computed drag (~0.014). That produces a
-        # spuriously high, design-insensitive fuel and makes the objective bimodal. Record
-        # the status loudly so the runner can enforce a fully-coupled run (retry / reject)
-        # rather than scoring an uncoupled result. See [[avion-aero-coupling-fix]].
-        _design_state.data_store["aero_coupling_status"] = "MISSING_no_su2_aero"
-        logger.warning(
-            "AERO COUPLING MISSING: set_aircraft_parameters reached aviary with no SU2 "
-            "CL/CD captured this session — aviary will use its DEFAULT drag polar. Run the "
-            "aero stage (SU2 + read_history_csv) before the mission stage for a coupled run."
-        )
-        return
-
     parameters = resolved.get("parameters")
-    # ``parameters`` may arrive as a JSON string (mcpadapt anyOf gap) —
-    # coerce so we can mutate it.
     if isinstance(parameters, str):
         try:
             parameters = json.loads(parameters)
@@ -3927,136 +3854,114 @@ def _inject_phase_h_aero(resolved: dict) -> None:
             return
     if not isinstance(parameters, dict):
         return
-
-    # PHYSICS-BASED drag build-up (Option A'): total CD = SU2 inviscid pressure drag +
-    # a real Schlichting skin-friction estimate from the flight-state Reynolds number and
-    # the morphed geometry's wetted-area ratio. Re from canonical cruise Mach/altitude +
-    # MAC; Swet/Sref from wing+fuselage wetted / reference area (design-responsive), with a
-    # sane band + nominal fallback so a bad geometry read can't produce garbage drag.
-    # B281 (A9): the MEASURED aspect ratio of the current geometry -- not the AR the caller typed, and never the
-    # 11.0 aero_cd_to_aviary_drag_factor assumes without one (O_IF 4: 0.8126 with 11.0 against 0.7929 measured).
-    store = _design_state.data_store
-    wing = store.get("geometry_wing") or _wing_from_cpacs_file(_current_cpacs_file()) or {}
-    ar = wing.get("Aircraft.Wing.ASPECT_RATIO")
-    if not isinstance(ar, (int, float)) or ar <= 0:
-        store["aero_injection_error"] = ("no measured aspect ratio for the current wing (no TiGL measurement and no "
-                                         "readable geometry file), so the drag factor cannot be computed")
-        logger.warning("[B281] AERO NOT INJECTED: %s", store["aero_injection_error"])
+    asked = {k: parameters[k] for k in _FRAMEWORK_DRAG_KEYS if k in parameters}
+    if asked:
+        _refuse_call("DRAG_FROM_AVIARY_MODEL",
+                     "set_aircraft_parameters was not run: " + ", ".join(sorted(asked)) + " cannot be set. The "
+                     "mission's drag comes from aviary's own drag model of the current geometry (and its design CL "
+                     "from the geometry); SU2's results are recorded but not used for drag. Send the call again "
+                     "without " + ("this key." if len(asked) == 1 else "these keys."),
+                     asked={k: str(v) for k, v in asked.items()})
         return
-    reynolds, swet_sref = _friction_inputs()
-    try:
-        scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
-    except ValueError as exc:
-        # B281 (audit F1): no clamp; a physically impossible factor is not flown.
-        store["aero_injection_error"] = f"the drag factor computed from the SU2 result is not physical ({exc})"
-        logger.warning("[B281] AERO NOT INJECTED: %s", store["aero_injection_error"])
-        return
-    store.pop("aero_injection_error", None)
-    store["aero_drag_factor_ar"] = float(ar)
+    from src.tools import coupling
 
-    # The drag factor is already held to aviary's declared range by
-    # aero_cd_to_aviary_drag_factor's clamp; CL had no equivalent check, so a
-    # broken reference area (CL 15.18 vs a declared max of 1.0) reached aviary
-    # and diverged its trim. Validate against the bound aviary itself publishes
-    # via get_design_space — aviary reports such a value in `violations` but
-    # still returns valid=True, so it will not stop us.
-    _cl_bounds = _bounds_for("Mission.Design.LIFT_COEFFICIENT")
-    if _cl_bounds and not (_cl_bounds[0] <= float(cl) <= _cl_bounds[1]):
-        _design_state.data_store["aero_coupling_status"] = "AERO_OUT_OF_BOUNDS"
-        _design_state.data_store["aero_capture_failure"] = (
-            f"CL={float(cl):.4g} outside aviary's declared "
-            f"[{_cl_bounds[0]}, {_cl_bounds[1]}]"
-        )
-        _design_state.data_store["aero_rejected_cl"] = float(cl)
-        _design_state.data_store["aero_rejected_cd"] = float(cd)
-        store["aero_injection_error"] = (f"CL {float(cl):.4g} is outside aviary's declared range "
-                                         f"[{_cl_bounds[0]}, {_cl_bounds[1]}]")      # B281: refused, not flown
-        logger.warning(
-            "AERO NOT INJECTED: CL=%.4g is outside aviary's declared bounds "
-            "[%s, %s] for Mission.Design.LIFT_COEFFICIENT. Usually a bad SU2 "
-            "REF_AREA. Leaving aviary on its default drag polar.",
-            float(cl), _cl_bounds[0], _cl_bounds[1],
-        )
-        return
-
-    # B143: the coupled values are the framework's. A caller's own number (0.5, 1.02, or the
-    # literal "from su2") used to win here and fly the mission on invented aero.
-    injected: list[str] = []
-    for _key, _val in (("Mission.Design.LIFT_COEFFICIENT", float(cl)),
-                       ("Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR", float(scale_factor))):
-        if _key in parameters:
-            _note_coupled_override(_key, parameters[_key], _val)
-        parameters[_key] = _val
-        injected.append(_key.split(".")[-1])
-
-    # Record that this aviary run IS coupled to SU2 aero, with the exact CL/CD used —
-    # lets the runner confirm a fully-coupled run and (future) detect stale aero if the
-    # design changed after the SU2 solve that produced these coefficients.
-    _design_state.data_store["aero_coupling_status"] = "injected"
-    _design_state.data_store["aero_coupling_source"] = _aero_src  # typed_registry | legacy_fallback
-    _design_state.data_store["aero_injected_cl"] = float(cl)
-    _design_state.data_store["aero_injected_cd"] = float(cd)
-    _design_state.data_store["aero_injected_drag_factor"] = float(scale_factor)
-    if _aero_src == "legacy_fallback":
-        logger.warning("AERO COUPLING via LEGACY fallback (typed registry empty) — check SU2 capture.")
-
-    if injected:
-        resolved["parameters"] = parameters
-        logger.info(
-            "Phase H middleware injected %s into set_aircraft_parameters "
-            "(CL=%.4f, scale_factor=%.3f)",
-            ", ".join(injected), float(cl), float(scale_factor),
-        )
+    if coupling.get_var(_design_state, "aero.cl_cruise") is not None:
+        _design_state.data_store["aero_coupling_status"] = "solved_not_coupled_to_drag"
 
 
-def _friction_mac() -> tuple[float | None, str]:
-    """The MAC the friction Reynolds number uses, from the geometry (B278).
+def _capture_cruise_point(tool_name: str, data: dict) -> None:
+    """Record aviary's FLOPS cruise point of the current design, which sizes the engine (drag model decision).
 
-    l20_final Case 3 cause A: the MAC defaulted to 4.0 m unless an agent happened to call get_wing_summary or
-    morph the wing in that iteration, so one design flew two drag factors (O_SP 22,914 / 23,006 kg; S_IF 18 vs
-    19-20, 404 kg). Now: a morph not yet written to a file is measured only in the TiGL session, so its
-    measured MAC is used; otherwise the MAC of the current geometry FILE (the export or the opened, possibly
-    carried CPACS), which is the same number every time for the same file. Nothing is defaulted: with neither,
-    the caller gets None (aviary's nominal Reynolds, coupling._NOMINAL_REYNOLDS) and the source says so.
+    Contract with aviary-mcp (coordinator, 2026-11-18; field names to be confirmed by the aviary-mcp agent): a reply
+    -- of set_aircraft_parameters or of a dedicated cruise-point tool -- carries ``cruise_point: {mach, altitude_ft,
+    mass_kg, cl, cd, lift_to_drag, engine_scale_used, design_fingerprint}``: FLOPS aerodynamics of the session's
+    current design at the stated condition, no trajectory and no optimizer. Recorded with the aviary-reported
+    fingerprint of the design it belongs to. Any aviary reply's top-level ``design_fingerprint`` updates which design
+    aviary holds now.
     """
-    from src.tools import coupling
-
+    if _design_state is None or _tool_server_map.get(tool_name) != "aviary" or not isinstance(data, dict):
+        return
+    if data.get("success") is False or data.get("error_code"):
+        return
     store = _design_state.data_store
-    captured = coupling.get_var(_design_state, "geom.mac_length")
-    if store.get("morph_unexported") and captured:
-        return float(captured), "measured on the unexported morph (tigl)"
-    path = _current_cpacs_file()
-    plan = _cpacs_planform(path) if path else None
-    if plan and isinstance(plan.get("mac_length"), (int, float)) and plan["mac_length"] > 0:
-        return float(plan["mac_length"]), f"cpacs file {path}"
-    if captured:
-        return float(captured), "measured (tigl)"
-    return None, "none (nominal Reynolds)"
-
-
-def _friction_inputs() -> tuple:
-    """(Reynolds, Swet/Sref) for the skin-friction build-up; None for whichever is unavailable."""
-    from src.tools import coupling
-    reynolds = swet_sref = None
+    if isinstance(data.get("design_fingerprint"), str):
+        store["aviary_design_fingerprint"] = data["design_fingerprint"]
+    point = data.get("cruise_point")
+    if not isinstance(point, dict):
+        return
     try:
-        from src.config.canonical import load_canonical
-        _mis = load_canonical().get("mission", {})
-        mac, mac_source = _friction_mac()
-        if mac is not None:
-            reynolds = coupling.reynolds_number(_mis.get("cruise_mach", 0.78),
-                                                _mis.get("cruise_altitude_ft", 33000), mac)
-        _design_state.data_store["friction_mac"] = {"mac_m": mac, "source": mac_source}
-        if mac is None:
-            logger.warning("[B278] no MAC from the geometry (no CPACS file, no measurement): nominal Reynolds number")
-        _ref = coupling.get_var(_design_state, "geom.reference_area")
-        _wwet = coupling.get_var(_design_state, "geom.wing_wetted_area")
-        _fwet = coupling.get_var(_design_state, "geom.fuselage_wetted_area") or 0.0
-        if _ref and _ref > 0 and _wwet:
-            ratio = (_wwet + _fwet) / _ref
-            swet_sref = ratio if 3.0 <= ratio <= 9.0 else None  # else fall back to nominal
-    except Exception:
-        pass
-    return reynolds, swet_sref
+        ld = float(point.get("lift_to_drag"))
+        mass = float(point.get("mass_kg"))
+    except (TypeError, ValueError):
+        store["cruise_point_error"] = f"cruise_point without a usable lift_to_drag / mass_kg: {point}"
+        return
+    if not (math.isfinite(ld) and ld > 0.0 and mass > 0.0):
+        store["cruise_point_error"] = f"cruise_point lift_to_drag {ld} / mass {mass} is not physical"
+        return
+    fp = point.get("design_fingerprint")
+    store["aviary_cruise_point"] = dict(point)
+    store.pop("cruise_point_error", None)
+    if isinstance(fp, str) and not isinstance(data.get("design_fingerprint"), str):
+        store["aviary_design_fingerprint"] = fp
+    from src.tools import coupling
+
+    coupling.put_var(_design_state, "aviary.cruise_l_over_d", ld, source_tool=tool_name)
+
+
+# The aviary-mcp tool that evaluates the cruise point on demand (contract above; name to be confirmed).
+CRUISE_POINT_TOOL = "get_cruise_point"
+
+
+def current_cruise_point() -> tuple[dict | None, str]:
+    """aviary's cruise point for the design aviary holds now, at the trim mass basis, or None with the reason.
+
+    Valid only when its design_fingerprint is the one aviary reported last for the applied design and its mass is the
+    trim mass basis (one mass basis for the SU2 trim and the engine sizing, A8). When none is on record and the
+    cruise-point tool is registered, the framework asks aviary for it (recorded in the knowledge base like any call).
+    """
+    if _design_state is None:
+        return None, "no design state"
+    store = _design_state.data_store
+    mass, basis = trim_mass_basis()
+    if mass is None:
+        return None, f"no trim mass ({basis})"
+
+    def _valid(point):
+        if not isinstance(point, dict):
+            return False
+        try:
+            same_mass = abs(float(point.get("mass_kg")) - mass) <= 1e-6 * mass
+        except (TypeError, ValueError):
+            return False
+        return same_mass and point.get("design_fingerprint") is not None \
+            and point.get("design_fingerprint") == store.get("aviary_design_fingerprint")
+
+    point = store.get("aviary_cruise_point")
+    if not _valid(point):
+        tool = (_registered_tools or {}).get(CRUISE_POINT_TOOL)
+        sid = (_design_state.sessions or {}).get("aviary")
+        if tool is not None and sid:
+            try:
+                # The point must be of the CURRENT design: apply it first (geometry authority puts the measured wing and
+                # fuselage on the call, the wing-mass injection the current mass), recorded in the KB like any call.
+                setter = (_registered_tools or {}).get("set_aircraft_parameters")
+                if setter is not None and store.get("geometry_wing"):
+                    setter.forward(session_id=sid, parameters={})
+                from src.config.canonical import load_canonical
+
+                mission = load_canonical().get("mission", {}) or {}
+                tool.forward(session_id=sid, mass_kg=mass, mach=mission.get("cruise_mach"),
+                             altitude_ft=mission.get("cruise_altitude_ft"))
+            except Exception as exc:  # pragma: no cover - surfaced as the reason below
+                store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
+            point = store.get("aviary_cruise_point")
+    if _valid(point):
+        return point, f"aviary FLOPS cruise point at {mass:.1f} kg ({basis})"
+    why = store.get("cruise_point_error") or (
+        "aviary has not reported a cruise point for the design it holds now at the trim mass "
+        f"{mass:.1f} kg" + ("" if (_registered_tools or {}).get(CRUISE_POINT_TOOL) else
+                            f" (the aviary server has no {CRUISE_POINT_TOOL} tool)"))
+    return None, why
 
 
 def _inject_engine_scale(resolved: dict) -> None:
@@ -4176,8 +4081,8 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
         problems.append(f"the last mass estimate is not usable: {store['mass_estimate_error']}")
     if store.get("takeoff_mass_error"):
         problems.append(f"aviary did not take the take-off mass: {store['takeoff_mass_error']}")
-    if store.get("aero_injection_error"):
-        problems.append(f"the SU2 aero could not be applied: {store['aero_injection_error']}")
+    if store.get("engine_sizing_error") and engine_is_current() is False:
+        problems.append(f"the engine could not be sized: {store['engine_sizing_error']}")
     if engine_is_current() and (store.get("engine_injected_key") or {}).get(sid) != _engine_scale_key(sid):
         problems.append("aviary does not hold the current engine scale (the framework's set of it was not accepted)")
     version = int(store.get("_coupled_version") or 0)
@@ -4225,8 +4130,13 @@ def _pin_cycle_fixed_inputs(resolved: dict) -> None:
     if not isinstance(values, dict):
         return
     for key, value in fixed.items():
-        if key in values:
-            _note_coupled_override(key, values[key], float(value))
+        try:
+            differs = key in values and abs(float(values[key]) - float(value)) > 1e-12
+        except (TypeError, ValueError):
+            differs = key in values
+        if differs:       # any difference is reported (_note_coupled_override would accept 0.5 %)
+            _design_state.data_store.setdefault("_coupled_override_last", {})[key] = {
+                "asked": values[key], "used": float(value)}
         values[key] = float(value)
     resolved["values"] = values
 

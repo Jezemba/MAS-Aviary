@@ -18,6 +18,9 @@ def fresh(monkeypatch):
 def _aero(cl, cd):
     dp._design_state.data_store["aero_cl_cruise"] = cl
     dp._design_state.data_store["aero_cd_cruise"] = cd
+    # B281 (audit F7): a solve trimmed to this CL and converged; these tests are about CD sign and CL range.
+    dp._design_state.data_store.update({"aero_solve_trimmed": True, "aero_solve_target_cl": cl,
+                                        "aero_solve_converged": True})
     try:
         coupling.put_var(dp._design_state, "aero.cl_cruise", cl, source_tool="read_history_csv")
         coupling.put_var(dp._design_state, "aero.cd_cruise", cd, source_tool="read_history_csv")
@@ -69,6 +72,7 @@ def test_a_published_bound_still_wins():
 
 def test_an_out_of_range_cl_is_not_injected_even_without_get_design_space():
     _aero(1.4247, 0.0245)
+    dp._design_state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 10.0}
     resolved = {"session_id": "a", "parameters": {"Aircraft.Wing.ASPECT_RATIO": 10.0}}
     dp._inject_phase_h_aero(resolved)
     assert "Mission.Design.LIFT_COEFFICIENT" not in resolved["parameters"]

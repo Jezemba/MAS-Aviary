@@ -53,6 +53,8 @@ DESIGN_SPACE = {
 @pytest.fixture(autouse=True)
 def _clean():
     init_data_plane(DesignState(), TOOL_SERVER_MAP)
+    # B281 (A9): the drag factor needs the MEASURED aspect ratio; these tests are about the CL bounds.
+    get_design_state().data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 9.36}
     yield
     init_data_plane(DesignState(), TOOL_SERVER_MAP)
 

@@ -13,23 +13,19 @@ had marked them `su2_unchecked` (no aspect ratio, so no floor). They passed this
 sign of CD and the CL range, and became the study's three best iterations. The mission is now also refused when
 the aero it would fly came from a solve with no target CL, when the drag is `su2_unchecked`, or when CD is
 below CL^2 / (pi e AR).
+
+Drag model decision (Jessica, 2026-11-18): the mission flies aviary's FLOPS drag; SU2's CL/CD are recorded only. The
+guard now requires the design's SU2 solve to be trimmed to the cruise lift (within su2-mcp's 1 %) and converged;
+the CD-based rules (CD > 0, su2_unchecked, induced drag) were removed with the drag coupling.
 """
 from __future__ import annotations
 
-import math
 import os
 
 _CL_RANGE = (0.05, 1.0)       # aviary-mcp's declared Mission.Design.LIFT_COEFFICIENT range
 # B281 (audit F7): the trim tolerance su2-mcp itself applies when it reports a solve (su2-mcp fix/final-rerun
 # convergence.TRIM_TOLERANCE = 0.01, relative), so the framework and the tool agree on what "on target" means.
 TRIM_CL_REL_TOL = 0.01
-
-
-def oswald_efficiency(aspect_ratio: float) -> float:
-    """Raymer eq. 12.48 span efficiency, held to [0.5, 0.95] -- su2-mcp drag_model.oswald_efficiency, the e su2-mcp
-    uses for its own induced-drag floor (B138) when the caller passes none (MAS-Aviary passes none)."""
-    e = 1.78 * (1.0 - 0.045 * aspect_ratio ** 0.68) - 0.64
-    return min(max(e, 0.5), 0.95)
 
 
 def _latest_aero():
@@ -68,21 +64,6 @@ def _solve_record() -> dict:
             "known": True}
 
 
-def induced_drag_floor(cl, assessment: dict | None, wing_ar=None) -> tuple[float, float, float] | None:
-    """(CL^2/(pi e AR), AR, e): AR and e as su2-mcp used them for the solve, else the geometry's AR with su2-mcp's e."""
-    assessment = assessment or {}
-    ar = assessment.get("aspect_ratio")
-    e = assessment.get("oswald_efficiency")
-    if not isinstance(ar, (int, float)) or ar <= 0:
-        ar = wing_ar if isinstance(wing_ar, (int, float)) and wing_ar > 0 else None
-        e = None
-    if ar is None:
-        return None
-    if not isinstance(e, (int, float)) or e <= 0:
-        e = oswald_efficiency(float(ar))
-    return float(cl) ** 2 / (math.pi * float(ar) * float(e)), float(ar), float(e)
-
-
 def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
     """Why this CL/CD cannot be flown as a cruise solution, or None if it can."""
     try:
@@ -90,8 +71,11 @@ def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
     except (TypeError, ValueError):
         return None
     problems = []
-    if cd <= 0.0:
-        problems.append(f"CD {cd:.4g} is not positive -- no real flow has zero or negative drag")
+    # Drag model decision 2026-11-18: SU2's CD is recorded, not flown (aviary flies its FLOPS drag), so the CD-based
+    # rules (CD > 0, the B277 induced-drag rule and su2_unchecked) no longer guard the mission: on the study mesh a
+    # converged, trimmed Euler CD can be below the induced drag (A13: negative at M0.5) without that being an
+    # invalid solve. What still matters is that the solve is the trimmed, converged cruise solve of this design.
+    del cd
     if not (_CL_RANGE[0] <= cl <= _CL_RANGE[1]):
         problems.append(f"CL {cl:.4g} is outside the cruise range aviary accepts "
                         f"[{_CL_RANGE[0]}, {_CL_RANGE[1]}]")
@@ -114,13 +98,6 @@ def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
         problems.append("the SU2 solve did not reach its residual target"
                         + (f" (rms[Rho] {res.get('rms_rho')} against {res.get('target')})" if res.get("rms_rho") is not None
                            else " (or it is not known that it did)"))
-    if (record.get("assessment") or {}).get("source") == "su2_unchecked":
-        problems.append("su2-mcp could not check the drag against the induced drag (drag source su2_unchecked: the "
-                        "session had no aspect_ratio)")
-    floor = induced_drag_floor(cl, record.get("assessment"), record.get("wing_ar")) if cd > 0.0 else None
-    if floor is not None and cd < floor[0] * (1.0 - 1e-9):
-        problems.append(f"CD {cd:.4g} is below the induced drag of its own lift, CL^2/(pi e AR) = {floor[0]:.4g} "
-                        f"(AR {floor[1]:.4g}, e {floor[2]:.4g}), which an inviscid flow cannot be")
     return "; ".join(problems) or None
 
 
@@ -141,10 +118,10 @@ def aero_nonphysical(tool_name: str, resolved: dict) -> dict | None:
         "success": False,
         "error_code": "AERO_NONPHYSICAL",
         "error": (
-            f"The SU2 result this mission would fly is not physical: {reason}. Flying it would scale "
-            "the aircraft's drag by a clamped factor and report a fuel burn no aircraft achieves. The "
-            "usual cause is a solve on a session that was never configured for this aircraft (flight "
-            "condition, reference area and the cruise-lift target) or the wrong reference area. The aero owner should call "
+            f"run_simulation was not run: the design's SU2 cruise solve is not usable: {reason}. A mission needs a "
+            "current, converged SU2 solve trimmed to the cruise lift (its CL/CD are recorded; the mission flies "
+            "aviary's drag model). The usual cause is a session that was never configured for this aircraft or a "
+            "solve that stopped early. The aero owner should call "
             f"configure_from_cpacs(session_id='{sid}', cpacs_file_path=<the design's CPACS>), then "
             "run_su2_solver and read_history_csv again; then run_simulation."
         ),

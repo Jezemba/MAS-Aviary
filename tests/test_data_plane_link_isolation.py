@@ -62,6 +62,8 @@ def _simulate_link_with_su2(cl=0.19, cd=0.0141):
     )
     ds.sessions["tigl"] = "LINK0-TIGL-SESSION"
     ds.data_store["mass_wing_kg"] = 7419.8
+    # B281 (A9): the drag factor uses the measured AR of the wing (here the link's measured wing).
+    ds.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 11.0}
     return ds
 
 
@@ -172,6 +174,8 @@ class TestStaleAeroNoLongerInjects:
         intercept_response(
             "read_history_csv", json.dumps({"rows": [{"CL": 0.22, "CD": 0.0155}]})
         )
+        get_design_state().data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83,
+                                                          "Aircraft.Wing.ASPECT_RATIO": 13.5}   # B281 (A9)
         out = resolve_request(
             "set_aircraft_parameters",
             {"session_id": "s1", "parameters": {"Aircraft.Wing.ASPECT_RATIO": 13.5}},

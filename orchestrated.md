@@ -52,15 +52,15 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | from mass and su2 | set by framework | lbf |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and aviary's cruise drag (thrust sized to drag) | pycycle | from mass and aviary | set by framework | lbf |
 | Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
 | Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
 | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
-| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
-| Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
+| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it | su2 | ~0.56 | set by framework | none |
+| Drag | Derived | aviary: its own drag model of the current geometry; SU2 results are recorded, not used for drag | aviary | from aviary | set by aviary | none |
 | Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
 | Max take-off mass | Derived | mass / aviary | pycycle, su2 | from mass | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
@@ -251,7 +251,7 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the wing mass (from mass-mcp) and the engine scale (from pycycle).
 - Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
@@ -267,7 +267,7 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS, ENGINE SCALE_FACTOR, as applied>
+  FROM_DISCIPLINES: <WING MASS, ENGINE SCALE_FACTOR, as applied>
   PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
@@ -303,7 +303,7 @@ DESIGN_STATE:
   ZERO_FUEL_WEIGHT_KG: <computed>
   # Phase H: aviary's actually-flown cruise CL/CD (from
   # extract_results.cruise_cl_avg / cruise_cd_avg). Lets the
-  # MDO integrator confirm aviary matched the SU2 target.
+  # MDO integrator compare them with the SU2 solve (recorded, not used for drag).
   CRUISE_CL_AVIARY: <cruise_cl_avg from get_results>
   CRUISE_CD_AVIARY: <cruise_cd_avg from get_results>
   RUNTIME_S: <wall clock seconds>
@@ -428,15 +428,15 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | from mass and su2 | set by framework | lbf |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and aviary's cruise drag (thrust sized to drag) | pycycle | from mass and aviary | set by framework | lbf |
 | Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
 | Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
 | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
-| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
-| Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
+| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it | su2 | ~0.56 | set by framework | none |
+| Drag | Derived | aviary: its own drag model of the current geometry; SU2 results are recorded, not used for drag | aviary | from aviary | set by aviary | none |
 | Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
 | Max take-off mass | Derived | mass / aviary | pycycle, su2 | from mass | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
@@ -627,7 +627,7 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the wing mass (from mass-mcp) and the engine scale (from pycycle).
 - Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
@@ -643,7 +643,7 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS, ENGINE SCALE_FACTOR, as applied>
+  FROM_DISCIPLINES: <WING MASS, ENGINE SCALE_FACTOR, as applied>
   PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
@@ -679,7 +679,7 @@ DESIGN_STATE:
   ZERO_FUEL_WEIGHT_KG: <computed>
   # Phase H: aviary's actually-flown cruise CL/CD (from
   # extract_results.cruise_cl_avg / cruise_cd_avg). Lets the
-  # MDO integrator confirm aviary matched the SU2 target.
+  # MDO integrator compare them with the SU2 solve (recorded, not used for drag).
   CRUISE_CL_AVIARY: <cruise_cl_avg from get_results>
   CRUISE_CD_AVIARY: <cruise_cd_avg from get_results>
   RUNTIME_S: <wall clock seconds>
@@ -804,15 +804,15 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | from mass and su2 | set by framework | lbf |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and aviary's cruise drag (thrust sized to drag) | pycycle | from mass and aviary | set by framework | lbf |
 | Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
 | Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
 | Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
-| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
-| Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
+| Lift coefficient | Derived | framework: cruise lift W/(q*S), SU2 trimmed to it | su2 | ~0.56 | set by framework | none |
+| Drag | Derived | aviary: its own drag model of the current geometry; SU2 results are recorded, not used for drag | aviary | from aviary | set by aviary | none |
 | Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
 | Max take-off mass | Derived | mass / aviary | pycycle, su2 | from mass | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
@@ -1004,7 +1004,7 @@ In this role you will be doing the job of the MISSION ARCHITECT for the DLR-F25 
 
 DISCIPLINE FOCUS
 - Domain: Aviary Mission Simulator
-- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the aero results (from SU2), the wing mass (from mass-mcp) and the engine scale (from pycycle).
+- Software/Tools: Use aviary-mcp. The framework has already created the session and applied the geometry (from TiGL), the wing mass (from mass-mcp) and the engine scale (from pycycle).
 - Key Task: Check the applied values with read_design_json, set only the mission values you choose, and validate
 
 TOOLS FOR THIS ROLE: get_design_space, set_aircraft_parameters, configure_mission
@@ -1020,7 +1020,7 @@ DESIGN_STATE:
   CRUISE_MACH: 0.78
   CRUISE_ALT_FT: 33000
   FROM_GEOMETRY: <AREA, ASPECT_RATIO, SWEEP, TAPER_RATIO, fuselage, as the framework applied them>
-  FROM_DISCIPLINES: <LIFT_COEFFICIENT, SUBSONIC_DRAG_COEFF_FACTOR, WING MASS, ENGINE SCALE_FACTOR, as applied>
+  FROM_DISCIPLINES: <WING MASS, ENGINE SCALE_FACTOR, as applied>
   PARAMETERS_SET: <only the mission values you chose>
   VALIDATION_STATUS: <valid/invalid with details>
 
@@ -1056,7 +1056,7 @@ DESIGN_STATE:
   ZERO_FUEL_WEIGHT_KG: <computed>
   # Phase H: aviary's actually-flown cruise CL/CD (from
   # extract_results.cruise_cl_avg / cruise_cd_avg). Lets the
-  # MDO integrator confirm aviary matched the SU2 target.
+  # MDO integrator compare them with the SU2 solve (recorded, not used for drag).
   CRUISE_CL_AVIARY: <cruise_cl_avg from get_results>
   CRUISE_CD_AVIARY: <cruise_cd_avg from get_results>
   RUNTIME_S: <wall clock seconds>

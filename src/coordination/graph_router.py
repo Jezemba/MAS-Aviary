@@ -150,17 +150,18 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
     if cl is None or cd is None or (target and abs(float(cl) - float(target)) > 0.1 * float(target)):
         return Decision(AERO, higher(level, MODERATE), "6",
                         f"the mission did not fly and the aero is not trimmed to the cruise lift (CL {cl}, target {target})")
+    ld = registry.get("aviary.cruise_l_over_d")
     if mtom and fn:
+        # Drag model decision 2026-11-18: the thrust the drag needs is from aviary's cruise L/D, not SU2 CL/CD.
         try:
-            needed = coupling.fn_des_from_drag(float(mtom), float(cl), coupling.total_cruise_cd(float(cd)))
-        except ValueError:          # B281: no clamp any more; impossible inputs mean the aero is the problem
-            return Decision(AERO, higher(level, MODERATE), "6",
-                            f"the mission did not fly and the SU2 result gives no physical thrust (CL {cl}, CD {cd})")
+            needed = coupling.fn_des_from_lift_to_drag(float(mtom), float(ld)) if ld else None
+        except ValueError:
+            needed = None
         scale = coupling.fn_to_aviary_engine_scale(float(fn))
         if scale > ENGINE_SCALE_BOUND:
             return Decision(AERO, higher(level, MODERATE), "6",
                             f"the mission did not fly and the engine is already at scale {scale:.2f}: the drag is suspect")
-        if float(fn) < 0.95 * needed:
+        if needed is not None and float(fn) < 0.95 * needed:
             return Decision(PROPULSION, higher(level, MODERATE), "4",
                             f"the mission did not fly: thrust {float(fn):.0f} lbf < {needed:.0f} lbf needed for this drag")
     worst = ((failure or {}).get("violated_constraints") or [{}])[0] if failure else {}

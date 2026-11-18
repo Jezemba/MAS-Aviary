@@ -83,17 +83,15 @@ class CoupledInput:
     note: str = ""
 
 
-AERO_CL = CoupledInput(
-    var="aero.cl_cruise", parameter="Mission.Design.LIFT_COEFFICIENT",
-    label="SU2 cruise lift coefficient", producer="su2",
-    produced_by="create_su2_session -> set_mesh -> run_su2_solver -> read_history_csv",
-    note="Captured as aero.cl_cruise and injected for you.")
-AERO_CD = CoupledInput(
-    var="aero.cd_cruise", parameter="Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR",
-    label="SU2 cruise drag (aviary's drag polar)", producer="su2",
-    produced_by="create_su2_session -> set_mesh -> run_su2_solver -> read_history_csv",
-    note="Captured as aero.cd_cruise; the drag factor is derived and injected for you -- "
-         "without it aviary flies its own DEFAULT drag polar.")
+# Drag model decision (Jessica, 2026-11-18): the mission needs the design's SU2 cruise solve (trimmed, converged,
+# current) as a RUN; its CL/CD are recorded, not injected (aviary flies its FLOPS drag). Was AERO_CL + AERO_CD,
+# injected as Mission.Design.LIFT_COEFFICIENT and SUBSONIC_DRAG_COEFF_FACTOR.
+AERO_SOLVE = CoupledInput(
+    var="aero.cl_cruise", parameter="",
+    label="SU2 cruise solve of the current geometry (trimmed to the cruise lift)", producer="su2",
+    produced_by="create_su2_session -> set_mesh -> run_su2_solver",
+    note="Required as a RUN of the current geometry. Its CL and CD are recorded with the design; the mission's "
+         "drag comes from aviary's own drag model.")
 WING_MASS = CoupledInput(
     var="mass.wing_kg", parameter="Aircraft.Wing.MASS",
     label="structural wing mass (mass-mcp)", producer="mass",
@@ -104,8 +102,8 @@ MTOM = CoupledInput(
     var="mass.mtom_kg", parameter="Fn_DES",
     label="maximum take-off mass (mass-mcp)", producer="mass",
     produced_by="export_cpacs (the morphed geometry) -> estimate_mass",
-    note="MTOM sizes the engine's design-point thrust. Captured as mass.mtom_kg and injected "
-         "as Fn_DES for you -- without it pycycle sizes the engine on its own default thrust.")
+    note="A mass estimate of the current design is required before the cycle. The engine's design-point thrust "
+         "Fn_DES is set for you from the mass basis and aviary's cruise lift-to-drag.")
 CYCLE = CoupledInput(
     var="prop.sfc_cruise", parameter="",
     label="engine cycle run (pycycle TSFC / thrust)", producer="pycycle",
@@ -132,7 +130,7 @@ ENGINE_DECK = CoupledInput(
 # max_steps having produced nothing. run_simulation is the call that actually burns aviary's
 # default drag polar, so that is where the requirement belongs.
 REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
-    "run_simulation": (AERO_CL, AERO_CD, WING_MASS, CYCLE, ENGINE_DECK),
+    "run_simulation": (AERO_SOLVE, WING_MASS, CYCLE, ENGINE_DECK),
     "run_cycle": (MTOM,),
 }
 
@@ -477,7 +475,7 @@ def refusals_so_far(agent: str | None = None) -> int:
 def coupling_status() -> dict:
     """What actually reached each solver, for result.json."""
     out: dict[str, Any] = {
-        "aero_status": status(AERO_CD),
+        "aero_status": status(AERO_SOLVE),
         "mass_status": status(WING_MASS),
         "propulsion_status": status(CYCLE),
         "engine_sizing_status": status(MTOM),

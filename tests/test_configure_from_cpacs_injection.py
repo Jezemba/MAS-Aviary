@@ -67,7 +67,8 @@ class TestComputedReferencesInjected:
             "configure_from_cpacs",
             {"cpacs_file_path": "/tmp/f25.xml", "ref_area": 200.0, "ref_length": 6.0},
         )
-        assert out["ref_area"] == 200.0
+        # B281 (audit F10): REF_AREA is the geometry's when the framework has it (was: the caller's 200 won).
+        assert out["ref_area"] != 200.0
         assert out["ref_length"] == 6.0
 
     def test_no_geometry_captured_means_no_injection(self):
@@ -118,7 +119,7 @@ class TestCanonicalNumericsInjected:
             "configure_from_cpacs",
             {"cpacs_file_path": "/tmp/f25.xml", "overrides": {"ITER": 7}},
         )
-        assert out["overrides"]["ITER"] == 7
+        assert out["overrides"]["ITER"] == 500        # B281 (F10): ITER is protected; the canonical value
         assert "CONV_NUM_METHOD_FLOW" in out["overrides"]
 
 
@@ -171,12 +172,12 @@ class TestSessionCreationGetsTheSameInjections:
         out = resolve_request(
             "create_su2_session", {"base_name": "f25", "ref_area": 200.0, "overrides": {"ITER": 7}}
         )
-        assert out["ref_area"] == 200.0
+        assert out["ref_area"] != 200.0                # B281 (F10): the geometry's REF_AREA
         # Canonical is a floor (B41): the caller's ITER wins on its own key,
         # while the pinned numerics it did not mention survive. Asserting
         # equality here encoded the replace semantics that silently dropped the
         # cruise state.
-        assert out["overrides"]["ITER"] == 7
+        assert out["overrides"]["ITER"] == 500        # B281 (F10): protected, the canonical value
         assert "CONV_NUM_METHOD_FLOW" in out["overrides"]
 
     def test_no_su2_metadata_leaks_in(self):
@@ -271,9 +272,8 @@ class TestCanonicalIsAFloorNotAFallback:
             {"cpacs_file_path": "/tmp/f25.xml", "overrides": {"ITER": 7}},
         )
         ov = out["overrides"]
-        assert ov["ITER"] == 7, "the caller's deliberate override must win"
-        for pinned in ("CONV_NUM_METHOD_FLOW", "TIME_DISCRE_FLOW", "CFL_NUMBER",
-                       "FREESTREAM_PRESSURE", "MACH_NUMBER"):
+        assert ov["ITER"] == 500, "B281 (F10): ITER is the framework's"
+        for pinned in ("CONV_NUM_METHOD_FLOW", "TIME_DISCRE_FLOW", "CFL_NUMBER", "MACH_NUMBER"):
             assert pinned in ov, f"{pinned} was dropped by a caller override"
 
     def test_the_observed_override_no_longer_drops_the_cruise_state(self):
@@ -283,7 +283,10 @@ class TestCanonicalIsAFloorNotAFallback:
              "overrides": {"MACH": 0.78, "SOLVER": "EULER"}},
         )
         ov = out["overrides"]
-        assert "FREESTREAM_PRESSURE" in ov and "FREESTREAM_TEMPERATURE" in ov
+        # B281: FREESTREAM_* left the canonical settings (F18; su2-mcp sets ISA from cruise_altitude_ft), and the
+        # caller's MACH is a protected key (F10): the canonical MACH_NUMBER stands.
+        assert "FREESTREAM_PRESSURE" not in ov and "MACH" not in ov and ov["MACH_NUMBER"] == 0.78
+        assert out["cruise_altitude_ft"] == 33000.0
         assert ov["SOLVER"] == "EULER"
 
     def test_same_floor_applies_to_session_creation(self):
@@ -291,7 +294,7 @@ class TestCanonicalIsAFloorNotAFallback:
             "create_su2_session", {"base_name": "f25", "overrides": {"ITER": 3}}
         )
         ov = out["overrides"]
-        assert ov["ITER"] == 3
+        assert ov["ITER"] == 500                      # B281 (F10)
         assert "CONV_NUM_METHOD_FLOW" in ov
 
     def test_no_caller_overrides_still_gets_canonical(self):

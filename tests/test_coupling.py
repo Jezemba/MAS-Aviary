@@ -46,13 +46,15 @@ def test_aero_transform_no_longer_clamps_near_zero_cd():
     assert 0.6 < f < 1.2
 
 
-def test_aero_transform_still_clamps_extremes():
-    assert C.aero_cd_to_aviary_drag_factor(1.0, 0.4, 11.0) == 2.0   # huge CD clamps high
+def test_aero_transform_no_longer_clamps_extremes():
+    # B281 (audit F1): was "== 2.0" (huge CD clamped high). The computed factor is flown.
+    assert C.aero_cd_to_aviary_drag_factor(1.0, 0.4, 11.0) > 2.0
 
 
 def test_fn_des_matches():
-    assert C.mtom_to_pycycle_fn_des(73000.0) == max(2000.0, min(73000.0 * 0.0811, 25000.0))
-    assert C.mtom_to_pycycle_fn_des(500000.0) == 25000.0  # clamp
+    # B281 (audit F2): no [2,000, 25,000] lbf clamp.
+    assert C.mtom_to_pycycle_fn_des(73000.0) == 73000.0 * 0.0811
+    assert C.mtom_to_pycycle_fn_des(500000.0) == 500000.0 * 0.0811
 
 
 def test_registry_enforces_schema_and_roundtrips():

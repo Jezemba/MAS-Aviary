@@ -36,10 +36,10 @@ class VarSpec:
 
 # The canonical cross-discipline variable schema. Add here, not ad hoc.
 CANONICAL_VARS: dict[str, VarSpec] = {
-    "aero.cl_cruise": VarSpec("aero.cl_cruise", "su2", "-", ("aviary",),
-                              "SU2 cruise lift coefficient (converged, AoA=2 deg)."),
-    "aero.cd_cruise": VarSpec("aero.cd_cruise", "su2", "-", ("aviary",),
-                              "SU2 cruise inviscid drag coefficient (converged)."),
+    "aero.cl_cruise": VarSpec("aero.cl_cruise", "su2", "-", (),
+                              "SU2 cruise lift coefficient of the trimmed solve (recorded; not used for drag)."),
+    "aero.cd_cruise": VarSpec("aero.cd_cruise", "su2", "-", (),
+                              "SU2 cruise inviscid drag coefficient (recorded; aviary flies its FLOPS drag)."),
     "aero.l_over_d": VarSpec("aero.l_over_d", "su2", "-", (),
                              "SU2 cruise lift-to-drag ratio (diagnostic)."),
     "mass.wing_kg": VarSpec("mass.wing_kg", "mass", "kg", ("aviary",),
@@ -54,32 +54,25 @@ CANONICAL_VARS: dict[str, VarSpec] = {
                                "the off-design table of this cycle, not a single TSFC value."),
     "prop.fn_lbf": VarSpec("prop.fn_lbf", "pycycle", "lbf", (),
                            "pycycle net thrust at design point (diagnostic)."),
-    # Geometry reference data — feeds the physics-based drag build-up (Reynolds + Swet/Sref).
+    # Geometry reference data -- SU2's reference area and length (the friction build-up that also read the wetted
+    # areas was removed with the SU2 drag coupling, drag model decision of 2026-11-18).
     "geom.mac_length": VarSpec("geom.mac_length", "tigl", "m", ("su2",),
-                               "mean aerodynamic chord — reference length for Reynolds."),
-    "geom.wing_wetted_area": VarSpec("geom.wing_wetted_area", "tigl", "m^2", ("su2",),
-                                     "wing wetted area — skin-friction drag build-up."),
-    "geom.fuselage_wetted_area": VarSpec("geom.fuselage_wetted_area", "tigl", "m^2", ("su2",),
-                                         "fuselage wetted area — skin-friction drag build-up."),
+                               "mean aerodynamic chord -- SU2 reference length."),
     "geom.reference_area": VarSpec("geom.reference_area", "tigl", "m^2", ("su2",),
-                                   "wing reference (planform) area — drag/CL normalization."),
+                                   "wing reference (planform) area -- SU2 CL/CD normalisation."),
+    "aviary.cruise_l_over_d": VarSpec("aviary.cruise_l_over_d", "aviary", "-", ("pycycle",),
+                                      "aviary's FLOPS lift-to-drag of the current design at the cruise point "
+                                      "(Mach, altitude, CL = W/(qS) for the trim mass); sizes Fn_DES."),
 }
 
 # ---------------------------------------------------------------------------
-# Named, documented transforms (extracted verbatim from the former middleware
-# formulas so behavior is unchanged; now explicit and unit-tested).
+# Named, documented transforms.
+#
+# Drag model decision (Jessica, 2026-11-18): drag is aviary's FLOPS model only. The SU2-to-aviary drag factor,
+# the skin-friction build-up and the SU2-CL design-CL injection were REMOVED (not bypassed): SU2 Euler CD on the
+# study mesh is numerical (negative at M0.5; dCD/dCL^2 the same at AR 9.4 and 13). SU2 still solves every design,
+# trimmed, and its CL/CD are recorded only.
 # ---------------------------------------------------------------------------
-
-# aviary height_energy A320-class bench references.
-FN_DES_PER_KG_LBF = 0.0811             # engine thrust per kg MTOM.
-_AVIARY_CD0 = 0.022                    # aviary FLOPS baseline zero-lift CD.
-_OSWALD = 0.85                         # span efficiency in the aviary induced-drag est.
-# Full-aircraft wetted-area ratio Swet/Sref — nominal transport value, used as a fallback
-# when the geometry-derived ratio isn't available. (Raymer: ~6 for a jet transport.)
-_NOMINAL_SWET_SREF = 6.0
-_WING_FORM_FACTOR = 1.25               # thickness/sweep form-factor on the friction drag.
-# Default cruise Reynolds (M0.78, 33 kft, MAC~4 m) if flight state isn't supplied.
-_NOMINAL_REYNOLDS = 26.0e6
 
 
 def isa_density_temperature(altitude_ft: float) -> tuple[float, float]:
@@ -94,34 +87,6 @@ def isa_density_temperature(altitude_ft: float) -> tuple[float, float]:
         p = 22632.06 * math.exp(-9.80665 * 0.0289644 * (h - 11000.0) / (8.31447 * 216.65))
     rho = p / (287.058 * T)
     return rho, T
-
-
-def sutherland_viscosity(temperature_k: float) -> float:
-    """Sutherland's law dynamic viscosity (Pa·s) of air."""
-    T = float(temperature_k)
-    return 1.716e-5 * (T / 273.15) ** 1.5 * (273.15 + 110.4) / (T + 110.4)
-
-
-def reynolds_number(mach: float, altitude_ft: float, length_m: float) -> float:
-    """Cruise Reynolds number from flight state + a reference length (MAC)."""
-    import math
-    rho, T = isa_density_temperature(altitude_ft)
-    a = math.sqrt(1.4 * 287.058 * T)          # speed of sound
-    v = float(mach) * a
-    mu = sutherland_viscosity(T)
-    return rho * v * float(length_m) / mu
-
-
-def skin_friction_cd(reynolds: float, swet_sref: float, form_factor: float = _WING_FORM_FACTOR) -> float:
-    """Turbulent flat-plate skin-friction drag coefficient (Schlichting) scaled by the
-    wetted-area ratio and a form factor. This is the PARASITE/friction drag that an
-    inviscid Euler solve physically cannot produce — real physics, not a fudge constant.
-        Cf = 0.455 / (log10 Re)^2.58 ;  CD0_friction = Cf * (Swet/Sref) * FF
-    """
-    import math
-    re = max(float(reynolds), 1.0e5)
-    cf = 0.455 / (math.log10(re)) ** 2.58
-    return cf * float(swet_sref) * float(form_factor)
 
 
 def cruise_lift_coefficient(mass_kg: float, mach: float, altitude_ft: float,
@@ -153,74 +118,30 @@ def cruise_lift_coefficient(mass_kg: float, mach: float, altitude_ft: float,
     return cl if 0.05 <= cl <= 1.2 else None
 
 
-def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: float,
-                                  reynolds: float | None = None,
-                                  swet_sref: float | None = None) -> float:
-    """Map SU2 aero to aviary's ``Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR`` via a
-    PHYSICS-BASED drag build-up (Option A′):
-
-        CD_total = cd_inviscid (SU2: real pressure/induced/wave drag)
-                   + skin_friction_cd(Re, Swet/Sref)   (real viscous friction Euler misses)
-
-    then factor = CD_total / aviary's FLOPS default drag at this CL. Re and Swet/Sref
-    come from the actual flight state + morphed geometry (design-responsive); they fall
-    back to nominal transport values if unavailable. Replaces the old fixed +0.005 fudge,
-    which underestimated friction (the dominant drag) and produced fake near-zero drag.
-    """
-    ar_eff = max(float(aspect_ratio) if aspect_ratio is not None else 11.0, 8.0)
-    re = reynolds if reynolds else _NOMINAL_REYNOLDS
-    swr = swet_sref if swet_sref else _NOMINAL_SWET_SREF
-    cd_total = float(cd_inviscid) + skin_friction_cd(re, swr)
-    cd_aviary_default = _AVIARY_CD0 + (float(cl) ** 2) / (3.14159 * ar_eff * _OSWALD)
-    factor = cd_total / cd_aviary_default
-    # B281 (audit F1, Jessica 2026-11-18): no clamp. This was max(0.5, min(factor, 2.0)), a silent cap on a
-    # framework-computed value: 22 counted l20_final flights flew 2.0 for computed factors up to ~3.8. Only a
-    # physically impossible value fails.
-    if not math.isfinite(factor) or cd_total <= 0.0 or factor <= 0.0:
-        raise ValueError(f"drag factor {factor!r} from CD {cd_inviscid!r} (total {cd_total!r}) at CL {cl!r}")
-    return factor
-
-
-def mtom_to_pycycle_fn_des(mtom_kg: float) -> float:
-    """Map mass-mcp MTOM to pycycle's ``Fn_DES`` (design thrust, lbf). No clamp (B281, audit F2)."""
-    fn = float(mtom_kg) * FN_DES_PER_KG_LBF
-    if not math.isfinite(fn) or fn <= 0.0:
-        raise ValueError(f"design thrust {fn!r} lbf from MTOM {mtom_kg!r} kg")
-    return fn
-
-
-# Engine sized to the design's drag (B170, Jessica 2026-10-10). FN_DES_PER_KG_LBF is
-#   0.0811 = 9.81 / 17.0 / 2 / 4.448 * 1.25   (g / assumed L/D / engines / N->lbf * climb margin);
-# the coupled form keeps that formula and puts the design's measured L/D in place of the assumed 17.
+# Engine sized to the design's cruise drag: Fn_DES = mass * g / (L/D) / engines / N-per-lbf * climb margin.
+# Since the drag model decision of 2026-11-18 L/D is aviary's FLOPS lift-to-drag at the cruise point of the current
+# design (aviary-mcp cruise_point), not SU2's. The old FN_DES_PER_KG_LBF 0.0811 = 9.81 / 17 / 2 / 4.448 * 1.25 was
+# this formula at an assumed L/D of 17; it is gone (no assumed L/D).
 _G = 9.81
 _N_PER_LBF = 4.448
 _N_ENGINES = 2
 _CLIMB_THRUST_MARGIN = 1.25
 # aviary bench engine (models/engines/turbofan_28k.deck, SCALE_FACTOR 1.0): maximum net thrust
 # (gross - ram drag, throttle 50) at the mission cruise point M0.78 / 33,000 ft, interpolated from
-# the deck rows M0.75/0.79 x 30,000/35,000 ft (6714.4, 6808.3, 5314.1, 5387.9 lbf). The L/D-17
-# formula above gives 5,920 lbf at 73 t, so engine scale 1.0 is the old assumption.
+# the deck rows M0.75/0.79 x 30,000/35,000 ft (6714.4, 6808.3, 5314.1, 5387.9 lbf).
 BENCH_ENGINE_CRUISE_FN_LBF = 5936.0
 
 
-def total_cruise_cd(cd_inviscid: float, reynolds: float | None = None,
-                    swet_sref: float | None = None) -> float:
-    """SU2's (Euler) CD plus the skin friction Euler misses -- the drag aviary is given."""
-    return float(cd_inviscid) + skin_friction_cd(reynolds or _NOMINAL_REYNOLDS,
-                                                 swet_sref or _NOMINAL_SWET_SREF)
+def fn_des_from_lift_to_drag(mass_kg: float, lift_to_drag: float) -> float:
+    """pycycle ``Fn_DES`` (lbf per engine) = mass * g / (L/D) / engines / 4.448 * 1.25.
 
-
-def fn_des_from_drag(mtom_kg: float, cl: float, cd_total: float) -> float:
-    """pycycle ``Fn_DES`` (lbf per engine) = MTOM*g / (L/D * engines) * climb margin, L/D = CL/CD."""
-    # B281 (audit F2): no clamp (was [2,000, 25,000] lbf; S_GR 12 flew exactly 25,000). Only a physically
-    # impossible value fails: non-positive lift, drag or mass, or a non-finite result.
-    if not (float(cl) > 0.0 and float(cd_total) > 0.0 and float(mtom_kg) > 0.0):
-        raise ValueError(f"design thrust from MTOM {mtom_kg!r} kg, CL {cl!r}, CD {cd_total!r}")
-    l_over_d = float(cl) / float(cd_total)
-    fn = float(mtom_kg) * _G / l_over_d / _N_ENGINES / _N_PER_LBF * _CLIMB_THRUST_MARGIN
-    if not math.isfinite(fn):
-        raise ValueError(f"design thrust {fn!r} lbf from MTOM {mtom_kg!r} kg, CL {cl!r}, CD {cd_total!r}")
-    return fn
+    No clamp (B281, audit F2: was [2,000, 25,000] lbf). Only a physically impossible value fails: a non-positive
+    mass or L/D, or a non-finite result.
+    """
+    mass, ld = float(mass_kg), float(lift_to_drag)
+    if not (mass > 0.0 and ld > 0.0 and math.isfinite(mass) and math.isfinite(ld)):
+        raise ValueError(f"design thrust from mass {mass_kg!r} kg and L/D {lift_to_drag!r}")
+    return mass * _G / ld / _N_ENGINES / _N_PER_LBF * _CLIMB_THRUST_MARGIN
 
 
 def fn_to_aviary_engine_scale(fn_lbf: float, reference_fn_lbf: float = BENCH_ENGINE_CRUISE_FN_LBF) -> float:

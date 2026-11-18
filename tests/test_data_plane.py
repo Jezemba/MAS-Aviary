@@ -23,6 +23,8 @@ from src.tools.data_plane import (
 def fresh_state():
     state = DesignState()
     init_data_plane(state, tool_server_map={})
+    # B281 (A9): the drag factor uses the MEASURED aspect ratio of the current wing.
+    state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 130.1, "Aircraft.Wing.ASPECT_RATIO": 9.4}
     return state
 
 
@@ -512,6 +514,7 @@ class TestPhaseHAeroInjection:
                     "mWing_source": "flops",
                     "mFuselage_kg": 3557.0,
                 },
+                "sizing_converged": True, "mTOM_sized_kg": 90000.0,     # B281 (F4): a converged estimate
             },
         }
         intercept_response("estimate_mass", response)
@@ -601,13 +604,15 @@ class TestPhaseHAeroInjection:
         response = {
             "mass_breakdown": {
                 "mTOM_kg": 73000.0,
+                "mTOM_sized_kg": 91000.0, "sizing_converged": True,
                 "components": {
                     "mWing_kg": 7677.4, "mWing_source": "flops"
                 },
             },
         }
         intercept_response("estimate_mass", response)
-        assert fresh_state.data_store["mass_mtom_kg"] == pytest.approx(73000.0)
+        # B281 (audit F4): the SIZED mass, never the starting mTOM_kg (the CPACS 78,126 kg in the study)
+        assert fresh_state.data_store["mass_mtom_kg"] == pytest.approx(91000.0)
 
     def test_inject_fn_des_into_pycycle_set_inputs(self, fresh_state):
         """resolve_request on pycycle's set_inputs adds Fn_DES from

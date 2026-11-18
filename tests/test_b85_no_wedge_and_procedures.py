@@ -205,7 +205,7 @@ def test_a_completed_solve_is_captured_without_read_history_csv(tmp_path):
 
     assert coupling.get_var(dp.get_design_state(), "aero.cl_cruise") == pytest.approx(0.51)
     assert coupling.get_var(dp.get_design_state(), "aero.cd_cruise") == pytest.approx(0.0187)
-    assert cc.status(cc.AERO_CD) == "ok"
+    assert cc.status(cc.AERO_SOLVE) == "ok"
 
 
 def test_the_solvers_own_coefficients_still_win(tmp_path):
