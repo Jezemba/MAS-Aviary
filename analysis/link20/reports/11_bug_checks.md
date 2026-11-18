@@ -1077,3 +1077,43 @@ observational and never block a stage.
 9. Not investigated: why B180's per-visit reminder did not make the S_GR integrator record a recommendation on its last
    visit; N_GR 3 using all 30 board cycles for 8 role runs; N_IF 11 and 13 first attempts stopping after one cycle.
 10. Process note: the engine-deck file hashes were not checked (the decks are on ws6; deck keys were compared instead).
+
+---
+
+## Addendum (2026-11-18): measured fuel effect of the sweep start and the agent-typed lift target
+
+Nine missions flown through the full coupled chain: the optimizer's evaluator (MAS-Aviary bcf115d, unedited copy), on a
+private server slot on ws8 (stopped afterwards). All 9 converged. Records: ws8
+`/data/Jessica/l20_bugchecks/reflights/results/F01-F09.json`. Full write-up: `reflights/reflights.md`.
+
+| Experiment | Flown | Fuel (kg) | GTOW (kg) | Δ fuel |
+|---|---|---|---|---|
+| E1 sweep start | anchor, sweeps 21.65 / 28.00 / 37.20 (F03) | 21,698.9 | 98,248.1 | |
+| | anchor, sweeps 27.33 / 32.21 / 40.4 (F04) | 22,918.8 | 100,077.4 | **+1,219.9 (+5.6 %)** |
+| E3 determinism | F04 repeated with new sessions (F05) | 22,918.797727179524 | identical | 0 (bit-identical) |
+| E2 lift target, anchor | framework target 0.5592 (F01) | 21,697.8 | 98,246.6 | |
+| | agent-typed 0.56 | 21,765.6 | | +67.8 |
+| E2 lift target, S_IF it. 19 wing (105 m², AR 13) | framework target 0.6539 (F06) | 30,146.0 | 110,426.1 | |
+| | agent-typed 0.56 (F07) | 19,799.9 | 95,598.3 | **−10,346 (the 0.56 hides 10.3 t)** |
+| E2 lift target, S_SP it. 3 wing (122.8 m²) | framework target 0.5590 | 19,679.4 | | |
+| | agent-typed 0.56 | 19,770.1 | | +90.6 |
+
+- The 27.33 deg start costs about 1.2 t on the anchor, through drag (CD 0.0229 → 0.0250) and engine size (scale 1.376 →
+  1.444); the wing mass barely moves. F04 reproduces O_SP/O_IF iteration 1 (22,914.1 kg) within 4.7 kg.
+- The agent-typed 0.56 is harmless near the baseline area, but on small wings it under-trims. S_IF's low fuel on its
+  105 m² wing (19,403-19,807 kg) would be about 30,146 kg under the framework's own rule. So S_IF's (and possibly S_SP's)
+  small-wing results are optimistic by up to ~10 t. The 0.56 flights reproduce the run's S_IF 18 and S_SP 3 within 7 kg.
+- The framework target used the CPACS mTOM 78,126 kg every time, which is not the flown GTOW. A sized-mass target would
+  penalize the small wing further.
+
+### The baseline is not coupled (affects every "vs baseline" number)
+
+The unmodified anchor flown through the full coupled chain (F01) burns **21,697.8 kg** (GTOW 98,246.6 kg). The run's
+baseline of **16,390.5 kg** was flown aviary-only: engine scale 1.0 on the bench engine, aviary's own lift and drag,
+nothing from SU2/mass/pyCycle (`baseline_run1.json` anchor_params). The old study's 18,197.0 kg baseline was flown the
+same way. Every agent iteration flies the coupled chain. So "every combination's mean fuel is above the baseline" in
+report 10 compares a coupled design against an uncoupled one. Against the coupled anchor (21,697.8 kg), three
+combinations' mean fuel is below the start: S_SP 21,024.2, S_IF 21,144.9 and O_IF 20,654.0 (report 10 section 2.2).
+But S_SP and S_IF are flattered by the agent-typed 0.56 (E2), and O_IF's mean includes O_IF 4 (Case 2) and O_IF 13
+(B270). The medians of S_SP, S_IF, O_IF and N_GR (20,985-20,989 kg) are also below it. F01 matches the optimizer's own evaluation of the same design to 0.006 kg.
+**Which baseline the paper uses is Jessica's decision**; the 15,000 kg target was set against the uncoupled one.
