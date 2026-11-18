@@ -93,7 +93,7 @@ propulsion:
   BPR: 5.105                           # repo DESIGN.splitter.BPR (baked into the HBTF model)
   # OPR is a DERIVED output in pycycle (~30.5 from fan*lpc*hpc PR), NOT an input — do not pin OPR=40.
   # B306 (audit F12): the design table's "Set (fixed)" rows, pinned on every set_inputs by the framework
-  # (data_plane._pin_cycle_fixed_inputs). tests/test_b281_* check these equal the prompt tables.
+  # (data_plane._pin_cycle_fixed_inputs). tests/test_b306_* check these equal the prompt tables.
   fixed_inputs:
     fan.eff: 0.8948
     lpc.eff: 0.9243

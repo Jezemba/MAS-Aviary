@@ -52,7 +52,7 @@ def baseline_cpacs() -> str:
 # B306 (audit F9): bumped. "b254" caches were computed before B274-B306 (trim at the CPACS 78,126 kg, untrimmed
 # fallbacks, CPACS-mass Fn_DES); they are left on disk (nothing is deleted) and never read again. The trim mass is
 # part of the key too, so a changed canonical baseline.sized_mtom_kg never reuses a cache trimmed at another mass.
-BASELINE_VERSION = "b281"
+BASELINE_VERSION = "b306"
 
 
 def _cache_path(cpacs: str) -> Path:
