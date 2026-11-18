@@ -17,6 +17,8 @@ def fresh(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("AVION_CPACS_TAILS", "0")      # G1 has its own tests; one test below turns it on
     state = DesignState()
+    # Geometry authority puts the measured wing on every set (a caller's unmeasured wing key is dropped, B143).
+    state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 9.36}
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})
     monkeypatch.setattr(dp, "_presessions", {})
