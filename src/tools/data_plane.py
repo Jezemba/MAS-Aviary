@@ -1098,6 +1098,16 @@ import threading as _threading
 
 _call_ctx = _threading.local()
 
+import contextvars as _contextvars
+
+# B360: the design basis a framework-asked cruise point belongs to (B340, current_cruise_point -> _ask_cruise_point_after_set).
+# It is set by the OUTER call (set_inputs / run_cycle, whose middleware runs in a call_watchdog thread) and read by the
+# capture of the INNER get_cruise_point call, whose middleware runs in ANOTHER call_watchdog thread. A threading.local
+# (_call_ctx) does not cross that boundary, so the capture always read None and no cruise point was ever valid:
+# every set_inputs went without Fn_DES and run_cycle was refused DESIGN_THRUST_NOT_AVAILABLE. call_watchdog submits
+# every call with contextvars.copy_context(), so a ContextVar set before tool.forward reaches the inner call.
+_cruise_basis: _contextvars.ContextVar = _contextvars.ContextVar("avion_cruise_basis", default=None)
+
 
 def _refuse_call(error_code: str, message: str, **extra) -> None:
     """Refuse the call being resolved: the middleware returns this instead of calling the server (B306).
@@ -4442,9 +4452,9 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
         sid = None          # a create_session reply without its id names no session (nothing filed per session)
     else:
         sid = getattr(_call_ctx, "aviary_sid", None) or (_design_state.sessions or {}).get("aviary")
-    basis = getattr(_call_ctx, "cruise_basis", None) if tool_name == CRUISE_POINT_TOOL else None
+    basis = _cruise_basis.get() if tool_name == CRUISE_POINT_TOOL else None
     if tool_name == CRUISE_POINT_TOOL:
-        _call_ctx.cruise_basis = None
+        _cruise_basis.set(None)
     # aviary-mcp B339: every reply, success or error, names the design the session holds (a set whose validation
     # crashed is applied server-side and says so), so the fingerprints are read before any failure return.
     _note_aviary_fingerprints(tool_name, data, sid)
@@ -4580,7 +4590,7 @@ def _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_so
     wanted_basis = design_basis()
     # The point must be of the CURRENT design: apply it first (geometry authority puts the measured wing and fuselage
     # on the call, the wing-mass injection the current mass), recorded in the KB like any call.
-    _call_ctx.cruise_basis = None
+    _cruise_basis.set(None)
     set_reply = _as_dict(setter.forward(session_id=sid, parameters={}))
     set_fp = set_reply.get("design_fingerprint")
     if set_reply.get("success") is False or set_reply.get("error_code") or set_reply.get("error") \
@@ -4597,7 +4607,7 @@ def _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_so
     from src.config.canonical import load_canonical
 
     mission = load_canonical().get("mission", {}) or {}
-    _call_ctx.cruise_basis = wanted_basis      # B340: the design this point is asked for (read by the capture)
+    _cruise_basis.set(wanted_basis)     # B340: the design this point is asked for (read by the capture)
     before = store.get("aviary_cruise_point")
     tool.forward(session_id=sid, mass_kg=mass, mach=mission.get("cruise_mach"),
                  altitude_ft=mission.get("cruise_altitude_ft"), engine_scale=carried_scale)
@@ -4656,7 +4666,7 @@ def current_cruise_point() -> tuple[dict | None, str]:
             except Exception as exc:  # pragma: no cover - surfaced as the reason below
                 store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
             finally:
-                _call_ctx.cruise_basis = None
+                _cruise_basis.set(None)
             point = store.get("aviary_cruise_point")
     if _valid(point):
         return point, f"aviary FLOPS cruise point at {mass:.1f} kg ({basis})"

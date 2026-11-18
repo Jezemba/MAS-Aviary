@@ -301,7 +301,7 @@ def test_l3_a_raising_set_leaves_no_point_and_no_basis(fworld, monkeypatch):
     monkeypatch.setattr(fworld, "server", boom)
     point, why = dp.current_cruise_point()
     assert point is None and "watchdog" in why
-    assert getattr(dp._call_ctx, "cruise_basis", None) is None
+    assert dp._cruise_basis.get() is None
 
 
 def test_l3_a_point_of_another_design_than_the_set_returned_is_not_used(fworld):
