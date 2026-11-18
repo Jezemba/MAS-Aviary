@@ -185,3 +185,70 @@ def test_old_contract_leaves_the_new_flags_not_applicable(tmp_path):
     assert row["contract"] == fl.CONTRACT_V1
     for f in fl.NEW_CONTRACT_FLAGS:
         assert row[f"flag.{f}"] is None and "not applicable" in row[f"flag.{f}.detail"]
+
+
+# ---------------------------------------------------------------- B344 / B357 / B358 / B359 / aviary-mcp b934e6e
+
+TC = 0.1164
+WT = "Aircraft.Wing.THICKNESS_TO_CHORD"
+
+
+def tc_rows(flown_tc=TC):
+    rows = flops_rows()
+    rows[4]["result"]["mass_breakdown"]["sizing_report"]["wing_stations"] = {"tc_avg": TC}
+    for i in (9, 11):
+        p = rows[i]["args"]["parameters"] if i == 9 else rows[i]["result"]["design_parameters"]["aircraft_params"]
+        if flown_tc is not None:
+            p[WT] = flown_tc
+    rows[11]["result"]["passenger_compartment_length_m"] = 25.2
+    return rows
+
+
+DF_J2 = {**DESIGN_FLOWN, "structures": {**DESIGN_FLOWN["structures"], "wing_thickness_to_chord": TC},
+         "aero": {"drag_coupling": "x",
+                  "provenance": {"source": "seeded from the last flown link (graph pre-init)", "trim_mass_kg": 90000.0,
+                                 "this_link_trim_mass_kg": MASS, "solved_on_this_link": False},
+                  "solve_trim_basis": {"mass_kg": 90000.0, "wing_area_m2": 122.8}}}
+
+
+def test_wing_tc_flown_vs_measured(tmp_path):
+    row = extract(tmp_path, tc_rows(), design_flown=DF_J2)
+    assert row["flag.unmeasured_wing_tc"] is False and row[WT] == TC
+    assert "wing_stations.tc_avg" in row["flag.unmeasured_wing_tc.detail"]
+    assert extract(tmp_path / "b", tc_rows(None), design_flown=DF_J2)["flag.unmeasured_wing_tc"] is True
+    assert extract(tmp_path / "c", tc_rows(0.13), design_flown=DF_J2)["flag.unmeasured_wing_tc"] is True
+
+
+def test_wing_tc_not_decided_before_b358(tmp_path):
+    row = extract(tmp_path, flops_rows())                      # no wing stations, no structures.wing_thickness_to_chord
+    assert row["flag.unmeasured_wing_tc"] is None and "before B358" in row["flag.unmeasured_wing_tc.detail"]
+
+
+def test_seeded_aero_provenance(tmp_path):
+    row = extract(tmp_path, tc_rows(), design_flown=DF_J2)
+    assert row["flag.seeded_aero"] is True and row["aero.solved_on_this_link"] is False
+    assert row["aero.solve_trim_mass_kg"] == 90000.0 and row["this_link_trim_mass_kg"] == MASS
+    assert row["aero.provenance_source"].startswith("seeded")
+    assert row["passenger_compartment_length_m"] == 25.2
+    assert extract(tmp_path / "b", flops_rows())["flag.seeded_aero"] is None     # before B344: not recorded
+
+
+def test_run_in_progress_is_not_a_failed_mission(tmp_path):
+    """B359: RUN_IN_PROGRESS / RUN_STILL_STOPPING / INVALID_TIMEOUT mean no mission ran."""
+    rows = flops_rows()
+    busy = _row("unknown", "run_simulation", {"session_id": "A"},
+                {"success": False, "error_code": "RUN_IN_PROGRESS", "design_fingerprint": FP})
+    rows.insert(11, busy)                                     # between the counted run and its get_results
+    row = extract(tmp_path, rows)
+    assert row["fuel_kg"] == 16638.69                         # the get_results after it still counts
+    assert row["run_simulation_failed"] == 0 and row["run_simulation_not_run"] == 1
+    assert row["error_codes"] == "{}" and '"RUN_IN_PROGRESS": 1' in row["not_a_mission_codes"]
+    assert row["flag.refusal_codes"] is False and row["unconverged_or_failed_fingerprints"] == "[]"
+
+
+def test_unconverged_design_fingerprints_are_listed(tmp_path):
+    rows = flops_rows()
+    rows.insert(10, _row("unknown", "run_simulation", {"session_id": "A"},
+                         {"success": False, "error_code": "MISSION_NOT_CONVERGED", "flown_design_fingerprint": OTHER_FP}))
+    row = extract(tmp_path, rows)
+    assert row["unconverged_or_failed_fingerprints"] == f'["{OTHER_FP}"]' and row["fuel_kg"] == 16638.69

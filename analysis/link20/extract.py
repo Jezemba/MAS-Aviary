@@ -195,7 +195,8 @@ def mission_summaries(kb: list[dict], converged_only: bool = False) -> list[dict
             sid = (e.get("inputs") or {}).get("session_id")
             ok = (e.get("status") == "success" and outputs.get("success") is not False
                   and outputs.get("converged") is not False)
-            if e["tool"] == "run_simulation" and e.get("status") != "refused":
+            if e["tool"] == "run_simulation" and e.get("status") != "refused" \
+                    and error_code(e) not in flown.NOT_A_MISSION_CODES:     # B359: no mission ran
                 # a run that reached aviary decides what the session's results are, whether it counted or not
                 counted_session[sid] = ok and outputs.get("converged") is True
             if not ok or not counted_session.get(sid):
@@ -231,7 +232,8 @@ def b214_hits(kb: list[dict]) -> list[str]:
 
 
 def error_code(entry: dict) -> str:
-    code = entry.get("error_code") or (entry.get("outputs") or {}).get("error_code")
+    outputs = entry.get("outputs") if isinstance(entry.get("outputs"), dict) else {}
+    code = entry.get("error_code") or outputs.get("error_code")
     return str(code) if code else "unspecified"
 
 
@@ -286,8 +288,13 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
         "chain_start_fuel_kg": res.get("chain_start_fuel_kg"),
         "ec_gtow_kg": ec.get("gtow_kg"), "ec_converged": ec.get("converged"),
     })
-    sims = Counter(e.get("status") for e in kb if e.get("tool") == "run_simulation")
+    # B359: RUN_IN_PROGRESS / RUN_STILL_STOPPING / INVALID_TIMEOUT replies are not missions: counted apart, never as
+    # failed or refused (they never occur before the final re-run, so older studies count as before).
+    sims = Counter(e.get("status") for e in kb if e.get("tool") == "run_simulation"
+                   and error_code(e) not in flown.NOT_A_MISSION_CODES)
     row.update({f"run_simulation_{s}": sims.get(s, 0) for s in ("success", "failed", "refused")})
+    row["run_simulation_not_run"] = sum(1 for e in kb if e.get("tool") == "run_simulation"
+                                        and error_code(e) in flown.NOT_A_MISSION_CODES)
 
     # --- general ---
     out_tok = Counter()
@@ -416,8 +423,11 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     row.update(flown.flown_link(link_dir, kb, last, res, carry, steps_of,
                                 pycycle_defaults if pycycle_defaults is not None else {}, contract, design_flown))
     # Every refusal / failure code of the link (all attempts), e.g. MISSION_NOT_CONVERGED, TAIL_FROM_GEOMETRY.
-    row["error_codes"] = json.dumps(dict(Counter(error_code(e) for e in kb
-                                                 if e.get("status") in ("refused", "failed"))), sort_keys=True)
+    codes = Counter(error_code(e) for e in kb if e.get("status") in ("refused", "failed"))
+    row["error_codes"] = json.dumps({c: n for c, n in codes.items() if c not in flown.NOT_A_MISSION_CODES},
+                                    sort_keys=True)
+    row["not_a_mission_codes"] = json.dumps({c: n for c, n in codes.items() if c in flown.NOT_A_MISSION_CODES},
+                                            sort_keys=True)
 
     # --- what the link LEFT (end state, carried to the next link) and design.json's last values ---
     # Not what flew: a link may change the design after its counted mission (O_IF 13, N_GR 2 ...).
