@@ -104,6 +104,7 @@ class Coordinator:
         self.strategy = strategy
         self.history = SharedHistory()
         self.termination = TerminationChecker(config)
+        self.stop: dict | None = None  # how the last run() ended (C1)
         self.config = config
         self.logger = logger
         self.execution_handler = execution_handler
@@ -313,13 +314,24 @@ class Coordinator:
             if hasattr(self.strategy, "set_session_id"):
                 self.strategy.set_session_id(session_id)
 
-        while not self.termination.should_stop(self.history):
+        # C1/C7 (l20_final Case 6, 2026-11-18): every way this loop ends is recorded. The termination rule
+        # (stuck / keyword / max_turns / errors) used to end a link with no reason anywhere -- 17 of 20
+        # networked graph-routed iterations -- and a peer's mark_task_done ended networked attempts silently.
+        # Recording only: the order of the checks and when the loop stops are unchanged.
+        stop: dict | None = None
+        while True:
+            if self.termination.should_stop(self.history):
+                stop = self._termination_stop()
+                break
             # Let the strategy signal completion (e.g. orchestrated
             # strategy detects final_answer or delegation stall).
             if self.history and self.strategy.is_complete(
                 self.history.get_all(),
                 state,
             ):
+                stop = {"by": "strategy_complete",
+                        "reason": getattr(self.strategy, "completion_reason", None)
+                        or f"{type(self.strategy).__name__}.is_complete returned True"}
                 break
 
             action = self.strategy.next_step(
@@ -328,9 +340,12 @@ class Coordinator:
             )
 
             if action.action_type == "terminate":
+                stop = {"by": "strategy_terminate",
+                        "reason": (action.metadata or {}).get("reason") or "the strategy returned terminate"}
                 break
 
             if action.action_type == "error":
+                stop = {"by": "error", "reason": str(action.input_context or "")[:500]}
                 self._log_error(action)
                 break
 
@@ -346,6 +361,7 @@ class Coordinator:
                 continue
 
             if action.agent_name not in self.agents:
+                stop = {"by": "error", "reason": f"Agent {action.agent_name!r} not found"}
                 self._log_error(
                     CoordinationAction(
                         action_type="error",
@@ -361,6 +377,9 @@ class Coordinator:
                 if self.logger is not None:
                     self.logger.log_turn(message)
 
+        self.stop = stop
+        self._record_stop(stop)
+
         # Build result
         final_output = ""
         if len(self.history) > 0:
@@ -374,7 +393,46 @@ class Coordinator:
             final_output=final_output,
             history=self.history.get_all(),
             metrics=metrics,
+            stop=stop,
         )
+
+    # Stable codes for TerminationChecker.check_reason(), so a report can count them.
+    _TERMINATION_CODES = {"stuck": "stuck_identical_output", "keyword": "termination_keyword",
+                          "max_turns": "max_turns", "max_consecutive_errors": "max_consecutive_errors"}
+
+    def _termination_stop(self) -> dict:
+        """What the coordinator's own termination rule ended the loop on (C1)."""
+        raw = self.termination.check_reason(self.history) or "unknown"
+        code = self._TERMINATION_CODES.get(raw.split(":", 1)[0], raw)
+        stop = {"by": "termination_rule", "code": code, "reason": raw}
+        if code == "stuck_identical_output" and len(self.history) > 0:
+            last = self.history.get_recent(1)[0]
+            stop["agent"] = last.agent_name
+            stop["reason"] = (f"stuck_identical_output: {last.agent_name} gave identical output in two consecutive "
+                              "turns (coordinator stuck rule)")
+        return stop
+
+    def _record_stop(self, stop: dict | None) -> None:
+        """Write how the loop ended into the strategy's own record and the design state. Never raises."""
+        if stop is None:
+            return
+        try:
+            hook = getattr(self.strategy, "record_coordinator_stop", None)
+            if callable(hook):
+                hook(stop)
+        except Exception:  # pragma: no cover - recording must never break a run
+            pass
+        try:
+            from src.tools.data_plane import get_design_state
+
+            state = get_design_state()
+            if state is not None:
+                state.data_store["coordination_stop"] = dict(stop)
+                from src.tools.design_json import write_design
+
+                write_design(state)
+        except Exception:  # pragma: no cover
+            pass
 
     def _execute_agent(self, action: CoordinationAction) -> list[AgentMessage]:
         """Run a single agent and return AgentMessage(s).

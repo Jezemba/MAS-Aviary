@@ -23,6 +23,17 @@ def _public(record: dict | None) -> dict:
     return {k: v for k, v in (record or {}).items() if not str(k).startswith("_")}
 
 
+AVIARY_AERO_KEYS = {"LIFT_COEFFICIENT": "Mission.Design.LIFT_COEFFICIENT",
+                    "SUBSONIC_DRAG_COEFF_FACTOR": "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"}
+
+
+def aero_in_aviary(store: dict) -> dict:
+    """The SU2 lift coefficient and drag factor aviary holds (C5): taken from aviary's own confirmation of a
+    successful set_aircraft_parameters, never from a call the framework only prepared."""
+    applied = (store or {}).get("design_params_applied") or {}
+    return {short: applied.get(full) for short, full in AVIARY_AERO_KEYS.items()}
+
+
 def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
     """The design document from the data plane's store. Only captured values, never defaults."""
     from src.config.canonical import load_canonical
@@ -60,8 +71,11 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
             # B277: the lift target of the solve these came from (None and False: untrimmed, fixed AOA).
             "solve_target_cl": store.get("aero_solve_target_cl"),
             "solve_trimmed": store.get("aero_solve_trimmed"),
-            "injected_into_aviary": {"LIFT_COEFFICIENT": store.get("aero_injected_cl"),
-                                     "SUBSONIC_DRAG_COEFF_FACTOR": store.get("aero_injected_drag_factor")},
+            # C5 (l20_final Case 5, N_IF 11/17/20): what aviary ACCEPTED, from its own "applied" list of a
+            # successful set_aircraft_parameters (design_params_applied) -- not what the framework put into a set
+            # call that was then refused (READ_ONLY_PARAMETER, CLAIMED_BY_ANOTHER_AGENT). In design_flown.json
+            # (written when a mission flies) these are the values that mission flew. None: never reached aviary.
+            "injected_into_aviary": aero_in_aviary(store),
         },
         "structures": {"wing_mass_kg": store.get("mass_wing_kg"), "mtom_kg": store.get("mass_mtom_kg"),
                        "wing_mass_source": store.get("mass_wing_source")},
@@ -74,6 +88,8 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         "coordination_signals": list(store.get("coordination_signals") or []),
         # Graph-routed v2 on the networked board: level, role runs, how the link ended, the route events.
         **({"graph_route": store["graph_route"]} if store.get("graph_route") else {}),
+        # C1/C7: how the coordinator loop ended; written once, when the link's coordination stops.
+        **({"coordination_stop": store["coordination_stop"]} if store.get("coordination_stop") else {}),
     }
 
 

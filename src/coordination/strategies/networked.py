@@ -227,6 +227,7 @@ class NetworkedStrategy(CoordinationStrategy):
 
         # Graph-routed v2 on the board (D8): decided before the peers exist, they carry request_complexity.
         self._board_graph = None
+        self.completion_reason: str | None = None  # why is_complete last returned True (C7, recording only)
         self._board_graph_mode = (net_config.get("graph_router") == "board" and config.get("_graph_def") is not None)
 
         # Create initial peer agents.
@@ -517,9 +518,16 @@ class NetworkedStrategy(CoordinationStrategy):
         def _end(reason: str) -> bool:
             # Graph-routed v2: every way a link ends is recorded (live 2026-10-15: a link stopped at MODERATE
             # with no review and no reason anywhere in its outputs).
+            self.completion_reason = reason
             if bg is not None and not bg.stop_reason:
                 bg.stop_reason = reason
                 bg.record()
+            return True
+
+        def _done(reason: str) -> bool:
+            # C7 (l20_final N_IF 11/13, 2026-11-18): the non-graph exits are recorded too (a peer's mark_task_done
+            # ended two attempts after one cycle with no reason anywhere). Recording only.
+            self.completion_reason = reason
             return True
 
         if history:
@@ -541,13 +549,16 @@ class NetworkedStrategy(CoordinationStrategy):
         # SIMPLE the board holds three TODOs, and the integrator's CONTINUE reopens it (live 2026-10-15: the
         # link ended after the first review, before the recommendation could reopen the board).
         if getattr(self, "_board_graph", None) is not None:
+            if self._graph_complete:
+                self.completion_reason = (bg.stop_reason if bg is not None else None) or "graph_complete"
             return bool(self._graph_complete)
 
         # Check if any agent called mark_task_done (single-signal completion).
         if self._blackboard:
             entry = self._blackboard.get("task_complete")
             if entry is not None and "DONE" in entry.value.upper():
-                return True
+                return _done(f"task_complete: {getattr(entry, 'author', 'a peer')} called mark_task_done "
+                             f"({str(entry.value)[:300]})")
 
         # Check if all agents report DONE on blackboard (fallback).
         if self._blackboard and self._agent_order:
@@ -556,11 +567,11 @@ class NetworkedStrategy(CoordinationStrategy):
                 if "DONE" in entry.value.upper():
                     done_agents.add(entry.author)
             if done_agents >= set(self._agent_order):
-                return True
+                return _done("all_peers_done: every peer posted a DONE status")
 
         # Check if graph-driven mode completed (strategy drove the graph).
         if self._graph_complete:
-            return True
+            return _done("graph_complete")
 
         # concurrent_blackboard mode: terminate as soon as every TODO is
         # done. Peers can race; the first cycle that closes out the board
@@ -570,18 +581,30 @@ class NetworkedStrategy(CoordinationStrategy):
             and self._blackboard is not None
             and self._blackboard.all_todos_done()
         ):
-            return True
+            return _done("all_todos_done: every TODO on the board is done")
 
         # Check if graph-routed handler signalled completion (handler drove the graph).
         if history:
             for msg in reversed(history):
                 if isinstance(msg, AgentMessage):
                     if msg.metadata.get("graph_complete"):
-                        return True
+                        return _done("graph_complete (handler)")
                     if "graph_state" not in msg.metadata:
                         break
 
         return False
+
+    def record_coordinator_stop(self, stop: dict) -> None:
+        """C1 (l20_final Case 6.1): the coordinator's own termination rule ended the loop before the board graph
+        could name a stop reason (17 of 20 N_GR iterations: the stuck rule). Record it in the board graph's route
+        (design.json graph_route.stop_reason). Recording only -- Jessica 2026-11-18: keep the stuck rule."""
+        if not stop or stop.get("by") != "termination_rule":
+            return
+        self.completion_reason = stop.get("reason")
+        bg = getattr(self, "_board_graph", None)
+        if bg is not None and not bg.stop_reason:
+            bg.stop_reason = str(stop.get("reason") or stop.get("code") or "coordinator termination rule")
+            bg.record()
 
     # -- Phase gating -----------------------------------------------------------
 

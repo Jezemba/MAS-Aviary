@@ -206,6 +206,9 @@ class ConditionalGraphHandler(ExecutionHandler):
         messages: list[AgentMessage] = []
         executions, retries, feedback, turn = 0, 0, None, turn_offset
         stop_reason = "complete"
+        # C2: the reason a walk that reached COMPLETE ended -- the integrator's COMPLETE verdict ("complete") or
+        # a review with nothing routable in it ("no_actionable_recommendation").
+        end_reasons = {"complete": "complete", gr.NO_RECOMMENDATION_RULE: "no_actionable_recommendation"}
 
         while node != gr.COMPLETE:
             if executions >= gr.BUDGET[level]:
@@ -225,6 +228,9 @@ class ConditionalGraphHandler(ExecutionHandler):
                     setattr(agent, attr, value)
                 except Exception:  # pragma: no cover
                     pass
+            # C6: record_recommendation refuses a repeat only within this visit, so the record the gate above
+            # asks for can be made even when it repeats the previous visit's recommendation word for word.
+            rt.begin_visit([getattr(agent, "name", None), node], seq0)
             base = self._input(node, agent, sweep, carry_now, meta)
             context = base + "\n\n" + self._routing_text(node, level, reason, rule, feedback)
             turn += 1
@@ -261,7 +267,9 @@ class ConditionalGraphHandler(ExecutionHandler):
                                duration_seconds=time.monotonic() - t0, error=error,
                                is_retry=decision.next_node == node or retries > 0,
                                metadata={**self._message_meta(action_metadata), "graph_route": route,
-                                         "completion_met": decision.rule in ("flow", "complete")})
+                                         # C2: a review with nothing to route still counts as met, as before.
+                                         "completion_met": decision.rule in ("flow", "complete",
+                                                                             gr.NO_RECOMMENDATION_RULE)})
             messages.append(msg)
             if inst_logger is not None:
                 inst_logger.log_turn(msg)
@@ -287,6 +295,8 @@ class ConditionalGraphHandler(ExecutionHandler):
             executions += 1
             level, reason, rule = decision.level, decision.reason, decision.rule
             node = decision.next_node
+            if node == gr.COMPLETE:
+                stop_reason = end_reasons.get(rule, f"ended by rule {rule}: {reason}")
 
         logger.info("[graph] link ended: %s after %d role runs at %s", stop_reason, executions, level)
         if messages:

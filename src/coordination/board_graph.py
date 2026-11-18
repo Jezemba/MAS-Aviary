@@ -140,12 +140,20 @@ class BoardGraph:
                                       infeasible.get("failure"), self.level)
         if d.next_node == gr.REVIEW:
             return
+        # C7 (l20_final N_GR iteration 3): a suggestion at the level the board is already at told the peers to
+        # call request_complexity with that level, which the tool refuses ("already complex"); agent_1 then called
+        # it and finished, cycle after cycle, for 22 of the 30 board cycles. Only a higher level can be requested.
+        actionable = gr.LEVELS.index(d.level) > gr.LEVELS.index(self.level)
         self.log.append({"event": "suggestion", "node": d.next_node, "level": d.level, "rule": d.rule,
-                         "reason": d.reason})
-        self._post("graph_suggestion",
-                   f"GRAPH ROUTING SUGGESTION (framework rule {d.rule}, advice only): {d.reason}. The rule table "
-                   f"would re-run {TODO_OF_NODE[d.next_node]} at level {d.level.upper()}. To act on it, call "
-                   "request_complexity with that level; it is your call.", entry_type="gap")
+                         "reason": d.reason, "request_complexity_applies": actionable})
+        head = (f"GRAPH ROUTING SUGGESTION (framework rule {d.rule}, advice only): {d.reason}. The rule table "
+                f"would re-run {TODO_OF_NODE[d.next_node]} at level {d.level.upper()}. ")
+        if actionable:
+            text = head + "To act on it, call request_complexity with that level; it is your call."
+        else:
+            text = head + (f"The board is already at {self.level.upper()}, so request_complexity cannot act on "
+                           "it (the tool refuses a level that is not higher); it is your call.")
+        self._post("graph_suggestion", text, entry_type="gap")
 
     def record(self) -> None:
         """The route so far, in the design state (design.json / the run's audit)."""

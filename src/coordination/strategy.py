@@ -21,6 +21,9 @@ class CoordinationResult:
     final_output: str
     history: list  # list of AgentMessage
     metrics: dict  # computed metrics dict
+    # How the coordinator loop ended: {"by": termination_rule | strategy_complete | strategy_terminate | error,
+    # "reason": ..., "code": ... (termination_rule only)}. None when nothing ended it (C1, 2026-11-18).
+    stop: dict | None = None
 
 
 class CoordinationStrategy(ABC):
