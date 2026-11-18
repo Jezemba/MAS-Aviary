@@ -90,6 +90,9 @@ def seed_from_design(design: dict) -> list[str]:
         coupling.put_var(ds, "aero.cd_cruise", aero["cd_cruise"], source_tool="graph pre-init")
         if aero.get("drag_assessment"):
             store["aero_drag_assessment"] = aero["drag_assessment"]
+        if "solve_trimmed" in aero:                # B274: the seeded aero keeps its solve's trim record
+            store["aero_solve_trimmed"] = aero.get("solve_trimmed")
+            store["aero_solve_target_cl"] = aero.get("solve_target_cl")
         seeded.append("aero")
     st = design.get("structures") or {}
     if st.get("wing_mass_kg") is not None:
@@ -118,6 +121,20 @@ def seed_from_design(design: dict) -> list[str]:
     if space.get("engine"):
         store["design_space_engine"] = dict(space["engine"])
     return seeded
+
+
+def seed_mass_from_design(design: dict) -> float | None:
+    """Put a recorded design.json's MTOM into the data plane (the part of seed_from_design the SU2 trim reads)."""
+    from src.tools import coupling
+    from src.tools.data_plane import get_design_state
+
+    ds = get_design_state()
+    mtom = (design.get("structures") or {}).get("mtom_kg")
+    if mtom is None:
+        return None
+    ds.data_store["mass_mtom_kg"] = mtom
+    coupling.put_var(ds, "mass.mtom_kg", mtom, source_tool="graph pre-init")
+    return float(mtom)
 
 
 def _open_sessions(cpacs: str, mission: dict) -> dict:
@@ -162,6 +179,13 @@ def prepare(carry_over: dict | None) -> dict:
         start = carry_over.get("starting_design") or {}
         cpacs = start.get("CPACS_FILE") if start.get("CPACS_FILE") and Path(start["CPACS_FILE"]).is_file() \
             else baseline_cpacs()
+        previous = carry_over.get("previous_design")
+        if isinstance(previous, dict) and previous.get("aero"):
+            # B274 (l20_final Case 3.3): the SU2 session below takes its cruise-lift target from the mass on record.
+            # It used to be created BEFORE seed_from_design put the carried mass there, so the target fell back to the
+            # CPACS-declared 78,126 kg while any later re-configure used the carried, sized mass (O_GR 13/17/19: CL
+            # 0.715 against 0.624 on the same wing, +9.5 t fuel). Seed the carried mass first.
+            report["mass_seeded_before_su2"] = seed_mass_from_design(previous)
         report.update(_open_sessions(cpacs, mission))
         previous = carry_over.get("previous_design")
         if isinstance(previous, dict) and previous.get("aero"):

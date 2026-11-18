@@ -31,13 +31,13 @@ The following STARTING parameters have been applied as an initial baseline they 
 |---|---|---|---|---|---|---|
 | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.78 | 100 to 160 | m^2 |
 | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
-| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 27.33 | 15 to 40 | deg |
+| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 21.65 | 15 to 40 | deg |
 | Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1 | not set | m^2 |
 | Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.98 | not set | none |
-| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 32.21 | not set | deg |
+| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 28.00 | not set | deg |
 | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2 | 21.5 | not set | m^2 |
 | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
-| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 40.40 | not set | deg |
+| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 37.20 | not set | deg |
 | Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
@@ -407,13 +407,13 @@ The following STARTING parameters have been applied as an initial baseline they 
 |---|---|---|---|---|---|---|
 | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.78 | 100 to 160 | m^2 |
 | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
-| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 27.33 | 15 to 40 | deg |
+| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 21.65 | 15 to 40 | deg |
 | Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1 | not set | m^2 |
 | Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.98 | not set | none |
-| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 32.21 | not set | deg |
+| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 28.00 | not set | deg |
 | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2 | 21.5 | not set | m^2 |
 | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
-| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 40.40 | not set | deg |
+| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 37.20 | not set | deg |
 | Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
@@ -783,13 +783,13 @@ The following STARTING parameters have been applied as an initial baseline they 
 |---|---|---|---|---|---|---|
 | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.78 | 100 to 160 | m^2 |
 | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
-| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 27.33 | 15 to 40 | deg |
+| Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 21.65 | 15 to 40 | deg |
 | Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1 | not set | m^2 |
 | Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.98 | not set | none |
-| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 32.21 | not set | deg |
+| Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 28.00 | not set | deg |
 | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2 | 21.5 | not set | m^2 |
 | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
-| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 40.40 | not set | deg |
+| Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 37.20 | not set | deg |
 | Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
 | Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |

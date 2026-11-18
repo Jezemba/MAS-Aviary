@@ -76,10 +76,12 @@ def test_the_geometrys_wing_is_what_sizes_it(fresh):
     assert small > big
 
 
-def test_a_caller_supplied_target_is_not_overridden(fresh):
+def test_a_caller_supplied_target_is_replaced_by_the_framework(fresh):
+    # B274 (was: "is not overridden"): the lift target is the framework's, as the prompt table says.
     _ready(fresh)
     resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "target_cl": 0.42})
-    assert resolved["target_cl"] == 0.42
+    assert resolved["target_cl"] == pytest.approx(coupling.cruise_lift_coefficient(79560.0, 0.78, 33000, 122.78))
+    assert fresh.data_store["_target_cl_asked"]["asked"] == 0.42
 
 
 def test_without_mass_nothing_is_injected(fresh):

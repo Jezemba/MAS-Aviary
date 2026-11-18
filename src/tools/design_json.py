@@ -57,6 +57,9 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
             "cl_cruise": store.get("aero_cl_cruise"),
             "cd_cruise": store.get("aero_cd_cruise"),
             "drag_assessment": store.get("aero_drag_assessment"),
+            # B274: the lift target of the solve these came from (None and False: untrimmed, fixed AOA).
+            "solve_target_cl": store.get("aero_solve_target_cl"),
+            "solve_trimmed": store.get("aero_solve_trimmed"),
             "injected_into_aviary": {"LIFT_COEFFICIENT": store.get("aero_injected_cl"),
                                      "SUBSONIC_DRAG_COEFF_FACTOR": store.get("aero_injected_drag_factor")},
         },
