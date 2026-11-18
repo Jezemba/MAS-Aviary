@@ -74,17 +74,17 @@ def test_iteration_1_uses_the_canonical_baseline_sized_mass(monkeypatch):
 
 
 def test_the_shipped_canonical_baseline_is_the_measured_fixed_point():
-    """The shipped baseline is mass-mcp's converged sizing of the unchanged D150 with its own engine (2026-11-18,
-    6 explicit mass <-> engine iterations, ws8 /data/Jessica/final_fix/baseline/results/iterate_run3): all three
-    values set together, the scale = Fn_DES / the deck's 5,900 lbf reference with Fn_DES from that mass."""
+    """The shipped baseline is mass-mcp's converged sizing of the unchanged D150 with its own engine (recomputed
+    2026-11-18 on the final code, 6 explicit mass <-> engine iterations, ws8
+    /data/Jessica/final_fix/baseline2/results/iterate_b360): all three values set together, the scale = Fn_DES / the deck's 5,900 lbf reference with Fn_DES from that mass."""
     from src.config.canonical import load_canonical
 
     base = load_canonical().get("baseline") or {}
-    assert base.get("sized_mtom_kg") == 91197.1
+    assert base.get("sized_mtom_kg") == 90298.7
     assert str(base.get("engine_deck_file")).endswith("deck_7815057d6edc9732.deck")
-    assert base.get("engine_scale_factor") == pytest.approx(7371.65372055 / 5900.0, rel=1e-9)
-    # Fn_DES from the shipped mass and aviary's FLOPS cruise L/D 17.05298257 (iteration 6) gives the shipped scale.
-    assert coupling.fn_des_from_lift_to_drag(91197.1, 17.05298257065294) / 5900.0 == pytest.approx(
+    assert base.get("engine_scale_factor") == pytest.approx(7055.200944706744 / 5900.0, rel=1e-9)
+    # Fn_DES from the shipped mass and aviary's FLOPS cruise L/D 17.64234686 (iteration 6) gives the shipped scale.
+    assert coupling.fn_des_from_lift_to_drag(90298.7, 17.642346861284835) / 5900.0 == pytest.approx(
         base["engine_scale_factor"], rel=1e-9)
 
 

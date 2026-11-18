@@ -119,25 +119,29 @@ mission:
 # Until it is set, every first-iteration SU2 configuration is REFUSED (NO_TRIM_TARGET) -- deliberately: there is no
 # fallback mass (audit F4). The graph-routed baseline cache key includes this value.
 baseline:
-  # Values 2026-11-18 (ws8 /data/Jessica/final_fix/baseline/results/iterate_run3/, driver code/a16/baseline_driver.py):
-  # the unchanged D150 (mass-mcp tests/fixtures/D150_simple.xml, opened, measured, exported) through the framework
-  # at 9a4e0ac with mass-mcp dca2b1e, aviary-mcp 9d10094, pycycle-mcp 001456b, tigl-mcp 6d1a8c8 (A16-checked slot).
+  # Values recomputed 2026-11-18 on the final code (J decision: J1 phase-time bounds, J2 measured wing t/c, tigl tight
+  # fuselage box; B346 bench calibration) -- ws8 /data/Jessica/final_fix/baseline2/results/iterate_b360/, driver
+  # code/a16/baseline_driver.py. The unchanged D150 (mass-mcp tests/fixtures/D150_simple.xml, opened, measured,
+  # exported) through the framework (MAS-Aviary bef8c16 + B360 da1be5f) with mass-mcp a3429f6, aviary-mcp 36b3a53,
+  # tigl-mcp 043ba39, su2-mcp 76fdaf8, pycycle-mcp 001456b (A16-checked slot, prelaunch_check PASSED).
   # Mass <-> engine fixed point, iterated explicitly (H5): estimate_mass with deck + scale -> sized mass M (converged,
-  # sizing_report.driver residuals 0) -> aviary get_cruise_point at M (M0.78, 33,000 ft; FLOPS L/D 17.0530, CL 0.6509,
-  # CD 0.03817) -> Fn_DES = M g / (L/D) / 2 / 4.448 * 1.25 = 7,371.65 lbf -> pyCycle run_cycle Fn 7,371.65 lbf ->
-  # scale = Fn / 5,900 lbf (the deck's reference_fn_des_lbf). Start 88,066 kg / 1.3314; sized masses 92,092.7,
-  # 91,355.9, 91,224.6, 91,201.8, 91,197.8, 91,197.1 kg: converged (change < 1 kg) after 6 iterations.
-  sized_mtom_kg: 91197.1
+  # 13 evaluations, residuals 0, no phase at a duration bound; measured wing t/c 0.11644 and tails from the same
+  # sizing) -> aviary get_cruise_point at M (M0.78, 33,000 ft; FLOPS L/D 17.6423, CL 0.64453, CD 0.036533) ->
+  # Fn_DES = M g / (L/D) / 2 / 4.448 * 1.25 = 7,055.20 lbf -> pyCycle run_cycle Fn 7,055.20 lbf -> scale = Fn / 5,900 lbf
+  # (the deck's reference_fn_des_lbf). Start 91,197.1 kg / 1.2494328 (the previous values); sized masses 90,814.5,
+  # 90,368.2, 90,307.9, 90,299.9, 90,298.8, 90,298.7 kg: converged (change < 1 kg) after 6 iterations.
+  # Superseded: 91,197.1 kg / 1.2494328 (9a4e0ac code, before J1/J2/B346).
+  sized_mtom_kg: 90298.7
   # The baseline's engine (H5, coordinator 2026-11-18): the deck and SCALE_FACTOR the first iteration's mass estimate
   # and aviary cruise point use (later iterations carry the previous iteration's flown engine). Unset = refused.
   # Deck = pyCycle generate_engine_deck of the canonical cycle (prompt table: BPR 5.105, T4_MAX 2857, T4_TAKEOFF 3540,
   # T4_CLIMB 3090, fan/LPC/HPC PR 1.685/1.935/9.369, fixed efficiencies above, M0.78 / 33,000 ft), key
   # 7815057d6edc9732 (size-normalised at 5,900 lbf; SLS 29,088.2 lbf; design TSFC 0.64324), the study deck (md5
-  # b1c1e040e4abe82782e47d1ed7666ca8). L2 (second review): a FILE NAME, found in the run machine's study decks folder
-  # named by AVION_DECKS_DIR (the launcher sets it to the slot's $SLOT_HOME/decks, where start_slot.sh copies
-  # SEED_DECKS = study_decks); the md5 is checked. Missing variable, file or md5 mismatch: the first iteration's
-  # estimate_mass is refused, never another deck. It was /home/aipexws8/Jessica/Avion/study_decks/... (ws8 only).
+  # b1c1e040e4abe82782e47d1ed7666ca8); the recompute built the same key in every iteration. L2 (second review): a
+  # FILE NAME, found in the run machine's study decks folder named by AVION_DECKS_DIR (the launcher sets it to the
+  # slot's $SLOT_HOME/decks, where start_slot.sh copies SEED_DECKS = study_decks); the md5 is checked. Missing
+  # variable, file or md5 mismatch: the first iteration's estimate_mass is refused, never another deck.
   # scripts/prelaunch_check.sh verifies it on each machine before a launch.
   engine_deck_file: deck_7815057d6edc9732.deck
   engine_deck_md5: b1c1e040e4abe82782e47d1ed7666ca8
-  engine_scale_factor: 1.2494328339916752
+  engine_scale_factor: 1.1957967702892787
