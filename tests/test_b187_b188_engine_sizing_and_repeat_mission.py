@@ -43,6 +43,10 @@ class _Stub:
     def forward(self, **kwargs):
         resolved = dp.resolve_request(self.name, kwargs)
         self.calls.append(resolved)
+        if self.name == "set_aircraft_parameters":
+            # L3 fixture repair: aviary-mcp's set reply names the design the session holds (review #6 decorator); the
+            # framework stamps its cruise point only after such a successful set with the point's fingerprint.
+            return json.dumps({"success": True, "design_fingerprint": "fp-held"})
         return json.dumps({"success": True})
 
 

@@ -496,6 +496,43 @@ def last_flown_of(link_dir) -> dict | None:
     return flown if flown_basis_problem(flown) is None else None
 
 
+def replay_chain_on_resume(checkpoint: dict, combo_name: str, n_repeats: int, out_path, chain: dict) -> dict:
+    """L6 (second review): advance the chain over the links a checkpoint already holds, exactly as run_stat_batch's
+    live loop does after each link (keep the two in step).
+
+    Completed link: chain_cpacs = its chain_cpacs_out; start fuel = its fuel unless it was infeasible; end-state params
+    (and the KB seed) only when an end-state was read; assessment, design space and feedback when present; the design
+    dir always; the last-FLOWN dir/geometry whenever last_flown_of passes, whatever its end-state. Failed link: only
+    its assessment text. The replay used to require chain_end_params for everything, so a link that flew but whose
+    end-state read failed ({}) carried mass and engine in the live run and not after a resume.
+    """
+    chain = dict(chain)
+    for prev in range(n_repeats):
+        done = checkpoint["completed"].get(run_key(prev, combo_name))
+        if not done:
+            failed_prev = (checkpoint.get("failed") or {}).get(run_key(prev, combo_name))
+            if failed_prev:
+                chain["chain_integrator"] = failed_prev.get("chain_integrator_text") or chain["chain_integrator"]
+            continue
+        if "chain_cpacs_out" in done:
+            chain["chain_cpacs"] = done["chain_cpacs_out"]
+        fuel = (done.get("eval_classification") or {}).get("fuel_burned_kg")
+        if fuel is not None and not done.get("infeasible_design"):
+            chain["chain_start_fuel"] = fuel
+        end_state = done.get("chain_end_params")
+        if end_state:
+            chain["chain_params"] = dict(end_state)
+            if done.get("kb_link_summary"):
+                chain["chain_kb_seed"] = {"summary": done["kb_link_summary"], "end_state": end_state}
+        chain["chain_integrator"] = done.get("chain_integrator_text") or chain["chain_integrator"]
+        chain["chain_design_space"] = done.get("chain_design_space") or chain["chain_design_space"]
+        chain["chain_design_dir"] = str(Path(out_path) / f"repeat_{prev:03d}" / combo_name)
+        if last_flown_of(chain["chain_design_dir"]):           # B340: this link flew; it carries mass + engine
+            chain["chain_flown_dir"], chain["chain_flown_cpacs"] = chain["chain_design_dir"], chain["chain_cpacs"]
+        chain["chain_feedback"] = done.get("chain_feedback") or chain["chain_feedback"]
+    return chain
+
+
 def design_space_of(link_dir) -> dict | None:
     """The design_space a link hands on (see link_design), or None."""
     return (link_design(link_dir) or {}).get("design_space") or None
@@ -1460,26 +1497,16 @@ def run_stat_batch(
         chain_design_dir = ""      # B268: folder of the last COMPLETED link ("" = none yet); previous_design comes from it
         # B340: folder and geometry of the last link that FLEW and can carry mass + engine ("" = none yet).
         chain_flown_dir, chain_flown_cpacs = "", None
-        for prev in range(n_repeats):
-            done = checkpoint["completed"].get(run_key(prev, combo.name))
-            if done and done.get("chain_end_params") and last_flown_of(out_path / f"repeat_{prev:03d}" / combo.name):
-                chain_flown_dir = str(out_path / f"repeat_{prev:03d}" / combo.name)
-                chain_flown_cpacs = done.get("chain_cpacs_out")
-            if done and done.get("chain_end_params"):
-                chain_params = dict(done["chain_end_params"])
-                if done.get("chain_cpacs_out"):
-                    chain_cpacs = done["chain_cpacs_out"]
-                chain_feedback = done.get("chain_feedback") or chain_feedback
-                chain_integrator = done.get("chain_integrator_text") or chain_integrator
-                chain_design_space = done.get("chain_design_space") or chain_design_space
-                chain_design_dir = str(out_path / f"repeat_{prev:03d}" / combo.name)
-                if done.get("kb_link_summary"):
-                    chain_kb_seed = {"summary": done["kb_link_summary"],
-                                     "end_state": done["chain_end_params"]}
-                chain_start_fuel = (
-                    (done.get("eval_classification") or {}).get("fuel_burned_kg")
-                    or chain_start_fuel
-                )
+        _chain = replay_chain_on_resume(checkpoint, combo.name, n_repeats, out_path, {
+            "chain_params": chain_params, "chain_feedback": chain_feedback, "chain_start_fuel": chain_start_fuel,
+            "chain_kb_seed": chain_kb_seed, "chain_cpacs": chain_cpacs, "chain_integrator": chain_integrator,
+            "chain_design_space": chain_design_space, "chain_design_dir": chain_design_dir,
+            "chain_flown_dir": chain_flown_dir, "chain_flown_cpacs": chain_flown_cpacs})
+        chain_params, chain_feedback = _chain["chain_params"], _chain["chain_feedback"]
+        chain_start_fuel, chain_kb_seed = _chain["chain_start_fuel"], _chain["chain_kb_seed"]
+        chain_cpacs, chain_integrator = _chain["chain_cpacs"], _chain["chain_integrator"]
+        chain_design_space, chain_design_dir = _chain["chain_design_space"], _chain["chain_design_dir"]
+        chain_flown_dir, chain_flown_cpacs = _chain["chain_flown_dir"], _chain["chain_flown_cpacs"]
 
         for repeat_idx in range(n_repeats):
             key = run_key(repeat_idx, combo.name)

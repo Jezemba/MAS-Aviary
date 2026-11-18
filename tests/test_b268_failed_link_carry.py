@@ -48,4 +48,6 @@ def test_the_runner_advances_the_chain_design_only_on_a_completed_link():
     src = (Path(__file__).resolve().parents[1] / "scripts" / "stat_batch_runner.py").read_text()
     assert len(re.findall(r"chain_design_space = \(design_space_of\(", src)) == 1      # the success path only
     assert "previous_dir=chain_design_dir" in src
-    assert len(re.findall(r"chain_design_dir = str\(out_path", src)) == 2              # resume + success
+    assert len(re.findall(r"chain_design_dir = str\(out_path", src)) == 1              # success
+    # L6: the resume replay moved into replay_chain_on_resume (completed links only; tested in test_l_review2_fixes)
+    assert len(re.findall(r'chain\["chain_design_dir"\] = str\(Path\(out_path\)', src)) == 1

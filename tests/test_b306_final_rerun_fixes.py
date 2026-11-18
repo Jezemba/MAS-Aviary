@@ -683,8 +683,14 @@ def test_the_framework_asks_aviary_for_the_point_with_the_carried_scale(fresh, m
 
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "carried sized mass"))
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/d.deck", 1.33, "carried"))
-    monkeypatch.setattr(dp, "_tool_server_map", {"get_cruise_point": "aviary"})
+    class Set:          # L3 fixture repair: the framework applies the current design first; aviary names it
+        def forward(self, **kw):
+            return dp.intercept_response("set_aircraft_parameters",
+                                         json.dumps({"success": True, "design_fingerprint": "fp-9"}))
+
+    monkeypatch.setattr(dp, "_tool_server_map", {"get_cruise_point": "aviary", "set_aircraft_parameters": "aviary"})
     dp._registered_tools["get_cruise_point"] = Point()
+    dp._registered_tools["set_aircraft_parameters"] = Set()
     fresh.sessions["aviary"] = "av"
     point, why = dp.current_cruise_point()
     assert point["lift_to_drag"] == 16.0

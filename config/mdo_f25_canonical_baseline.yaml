@@ -133,7 +133,11 @@ baseline:
   # Deck = pyCycle generate_engine_deck of the canonical cycle (prompt table: BPR 5.105, T4_MAX 2857, T4_TAKEOFF 3540,
   # T4_CLIMB 3090, fan/LPC/HPC PR 1.685/1.935/9.369, fixed efficiencies above, M0.78 / 33,000 ft), key
   # 7815057d6edc9732 (size-normalised at 5,900 lbf; SLS 29,088.2 lbf; design TSFC 0.64324), the study deck (md5
-  # b1c1e040e4abe82782e47d1ed7666ca8). MACHINE-SPECIFIC PATH: the file must exist at this path on the run machine
-  # (data_plane refuses ENGINE_DECK_NOT_READABLE otherwise); on ws8 it is the study_decks copy.
-  engine_deck_file: /home/aipexws8/Jessica/Avion/study_decks/deck_7815057d6edc9732.deck
+  # b1c1e040e4abe82782e47d1ed7666ca8). L2 (second review): a FILE NAME, found in the run machine's study decks folder
+  # named by AVION_DECKS_DIR (the launcher sets it to the slot's $SLOT_HOME/decks, where start_slot.sh copies
+  # SEED_DECKS = study_decks); the md5 is checked. Missing variable, file or md5 mismatch: the first iteration's
+  # estimate_mass is refused, never another deck. It was /home/aipexws8/Jessica/Avion/study_decks/... (ws8 only).
+  # scripts/prelaunch_check.sh verifies it on each machine before a launch.
+  engine_deck_file: deck_7815057d6edc9732.deck
+  engine_deck_md5: b1c1e040e4abe82782e47d1ed7666ca8
   engine_scale_factor: 1.2494328339916752

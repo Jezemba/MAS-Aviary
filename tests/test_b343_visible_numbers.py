@@ -4,6 +4,7 @@ Replies are shaped like the servers' (mass-mcp fix/a7-quarter-chord-sweep dca2b1
 fix/final-rerun run_simulation mission_constraints and get_cruise_point aero_details). No network, no servers.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -59,22 +60,32 @@ def test_b343_estimate_mass_masses_stay_visible(fresh):
     assert fresh.data_store["mass_mtom_kg"] == 91197.1                     # the capture still reads the full reply
 
 
+FIXTURES = Path(__file__).parent
+
+
+def _real_constraints(name):
+    """L1: real aviary-mcp mission_constraints (no hand-made zeros). baseline_anchor2 = the coupled baseline's
+    converged run_simulation (ws8 final_fix/baseline/results/flights/B1_coupled_anchor_2.json, store
+    run_simulation__mission_constraints, fix/final-rerun server); slsqp_seed0_eval2 = optimizer_iter slsqp seed0
+    evaluation 2 (converged; 4 constraints with points beyond the server's 1e-6)."""
+    return json.loads((FIXTURES / f"fixtures_l1_mission_constraints_{name}.json").read_text())
+
+
 def test_b343_mission_outcome_stays_visible_and_the_detail_is_stored(fresh):
-    constraints = {f"traj.phase{i}.collocation_constraint.defects:state{j}": {
-        "violation": 0.0, "worst_value": 1e-9, "equals": 0.0, "points": 20, "points_violated": 0, "units": "m"}
-        for i in range(3) for j in range(4)}
-    constraints["mission:constraints:mass_residual"] = {"violation": 725.0, "worst_value": 725.0, "equals": 0.0,
+    # The converged baseline's real constraints with the mass residual of the unconverged S_GR 19 mission put in.
+    constraints = _real_constraints("baseline_anchor2")
+    constraints["mission:constraints:mass_residual"] = {"violation": 725.44, "worst_value": 725.44, "equals": 0.0,
                                                         "points": 1, "points_violated": 1, "units": "lbm"}
     reply = {"success": False, "error_code": "MISSION_NOT_CONVERGED", "error": "no valid result",
-             "mission_residuals": {"range_residual": 0.0, "mass_residual": 725.0}, "mission_constraints": constraints,
+             "mission_residuals": {"range_residual": 0.0, "mass_residual": 725.44}, "mission_constraints": constraints,
              "unconverged_last_iterate": {"fuel_burned_kg": 35735.0}}
     assert len(json.dumps(constraints)) > dp._DICT_BYTE_THRESHOLD
     out = _out("run_simulation", reply)
     mc = out["mission_constraints"]
-    assert mc["constraints"] == 13 and mc["violated"] == {"mission:constraints:mass_residual":
-                                                              {"violation": 725.0, "units": "lbm"}}
+    assert mc["constraints"] == 17 and mc["violated"] == {"mission:constraints:mass_residual": {
+        "violation": 725.44, "units": "lbm", "points_violated": 1, "points": 1}}
     assert fresh.data_store[mc["ref"]] == constraints
-    assert out["mission_residuals"] == {"range_residual": 0.0, "mass_residual": 725.0}
+    assert out["mission_residuals"] == {"range_residual": 0.0, "mass_residual": 725.44}
     assert out["error"] == "no valid result" and out["unconverged_last_iterate"]["fuel_burned_kg"] == 35735.0
 
 

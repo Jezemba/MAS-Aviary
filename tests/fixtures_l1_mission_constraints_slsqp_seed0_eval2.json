@@ -1,0 +1,126 @@
+{
+ "mission:constraints:range_residual": {
+  "violation": 0.0,
+  "worst_value": 0.0,
+  "equals": 0.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "gtow_constraint.GTOW": {
+  "violation": 0.0,
+  "worst_value": 0.0,
+  "equals": 0.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "link_climb_mass.mass": {
+  "violation": 8.731149137020111e-11,
+  "worst_value": -8.731149137020111e-11,
+  "equals": 0.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "mission:constraints:mass_residual": {
+  "violation": 1.1641532182693481e-10,
+  "worst_value": -1.1641532182693481e-10,
+  "equals": 0.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.linkages.climb:mach_final|cruise:mach_initial": {
+  "violation": 0.0,
+  "worst_value": 0.0,
+  "equals": 0.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.climb.mach[initial]": {
+  "violation": 0.0,
+  "worst_value": 0.35511806013553543,
+  "lower": 0.18,
+  "upper": 0.8,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.climb.climb_start_cl[initial]": {
+  "violation": 1.9984014443252818e-15,
+  "worst_value": 0.8747222222222203,
+  "equals": 0.8747222222222223,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.climb.throttle[path]": {
+  "violation": 0.0,
+  "worst_value": 0.08857285341536274,
+  "lower": 0.0,
+  "upper": 1.0,
+  "points": 20,
+  "points_violated": 0
+ },
+ "traj.climb.collocation_constraint.defects:mass": {
+  "violation": 1.760409333926255e-05,
+  "worst_value": -1.760409333926255e-05,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 13
+ },
+ "traj.climb.collocation_constraint.defects:distance": {
+  "violation": 7.046527490484125e-07,
+  "worst_value": 7.046527490484125e-07,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 0
+ },
+ "traj.cruise.throttle[initial]": {
+  "violation": 0.0,
+  "worst_value": 0.7220228266962794,
+  "lower": 0.0,
+  "upper": 1.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.cruise.throttle[final]": {
+  "violation": 0.0,
+  "worst_value": 0.7248058543022801,
+  "lower": 0.0,
+  "upper": 1.0,
+  "points": 1,
+  "points_violated": 0
+ },
+ "traj.cruise.collocation_constraint.defects:mass": {
+  "violation": 5.093648207106576e-06,
+  "worst_value": 5.093648207106576e-06,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 15
+ },
+ "traj.cruise.collocation_constraint.defects:distance": {
+  "violation": 1.3921646993414219e-09,
+  "worst_value": 1.3921646993414219e-09,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 0
+ },
+ "traj.descent.throttle[path]": {
+  "violation": 0.0,
+  "worst_value": 0.4890436104046597,
+  "lower": 0.0,
+  "upper": 1.0,
+  "points": 20,
+  "points_violated": 0
+ },
+ "traj.descent.collocation_constraint.defects:mass": {
+  "violation": 1.3555871838583701e-05,
+  "worst_value": 1.3555871838583701e-05,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 12
+ },
+ "traj.descent.collocation_constraint.defects:distance": {
+  "violation": 1.6160998211269344e-05,
+  "worst_value": 1.6160998211269344e-05,
+  "equals": 0.0,
+  "points": 15,
+  "points_violated": 15
+ }
+}

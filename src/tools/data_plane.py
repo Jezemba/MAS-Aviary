@@ -2218,8 +2218,22 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     # get_outputs counts only when a run_cycle ran on this sizing.
     sizing = store.get("cycle_sizing") or {}
     if tool_name == "run_cycle":
-        sizing["ran"] = True
+        # L4 (second review): "ran" only for a run_cycle that ran the model and returned its outputs envelope.
+        # pycycle-mcp's failures are {"error": {type, message}} with no converged field; marking those as ran left
+        # prop_cycle_converged at the previous run's True, and a later get_outputs captured whatever the session
+        # held under the new sizing key. A failed run also un-marks an earlier run on this sizing (the session's
+        # state is now the failed run's). Wrong output names (success false, model_ran true) still count as a run:
+        # get_outputs then reads that run with the right names (B129).
+        ran_ok = (not data.get("error") and not data.get("error_code") and data.get("model_ran") is not False
+                  and isinstance(data.get("outputs"), dict))
+        sizing["ran"] = ran_ok
         store["cycle_sizing"] = sizing
+        if not ran_ok:
+            store["prop_cycle_converged"] = False
+            store["prop_cycle_failed_runs"] = int(store.get("prop_cycle_failed_runs") or 0) + 1
+            logger.warning("[L4] run_cycle failed (%s); nothing captured and get_outputs refused until a run "
+                           "succeeds", str(data.get("error") or data.get("error_code"))[:200])
+            return
     elif sizing.get("ran") is not True:
         store["prop_cycle_unrun_reads"] = int(store.get("prop_cycle_unrun_reads") or 0) + 1
         logger.warning("[B340] get_outputs before run_cycle on the current sizing; outputs not captured")
@@ -2597,21 +2611,48 @@ def _inline_except(tool_name: str, key: str, value: dict) -> dict:
     return kept
 
 
+# L1 (second review, 2026-11-18): aviary-mcp's own feasibility test (aviary_runner.mission_constraints and
+# failure_details, fix/final-rerun): a constraint point is violated when its gap from the bound exceeds 1e-6, and the
+# server counts those points as points_violated. An equality constraint's gap is never exactly 0 at a converged
+# iterate (1e-16 .. 1e-7 on the coupled baseline), so "violation > 0" listed met constraints as violated.
+AVIARY_CONSTRAINT_TOL = 1e-6
+
+
+def _constraint_violated(detail) -> bool | None:
+    """aviary-mcp's rule: points_violated > 0 (points outside the bound by more than 1e-6); a reply without
+    points_violated is judged by the same 1e-6 on its violation. None when neither is readable."""
+    if not isinstance(detail, dict):
+        return None
+    pv = detail.get("points_violated")
+    if isinstance(pv, (int, float)) and not isinstance(pv, bool):
+        return pv > 0
+    try:
+        return float(detail.get("violation")) > AVIARY_CONSTRAINT_TOL
+    except (TypeError, ValueError):
+        return None
+
+
 def _constraints_summary(tool_name: str, key: str, value: dict) -> dict:
     """aviary-mcp mission_constraints: the outcome inline (how many constraints, which are violated and by how much),
-    the per-constraint detail (bounds, worst value, points, units) behind a ref. mission_residuals stays inline."""
+    the per-constraint detail (bounds, worst value, points, units) behind a ref. mission_residuals stays inline.
+    Violated = aviary-mcp's own test (L1): points_violated > 0, i.e. some point outside its bound by more than 1e-6.
+    A constraint whose verdict cannot be read is listed as unreadable, never counted as met."""
     store_key = f"{tool_name}__{key}"
     _design_state.data_store[store_key] = value
-    violated = {}
+    violated, unreadable = {}, []
     for name, detail in value.items():
-        try:
-            gap = float((detail or {}).get("violation"))
-        except (TypeError, ValueError, AttributeError):
-            continue
-        if gap > 0.0:
-            violated[name] = {"violation": gap, "units": (detail or {}).get("units")}
-    return {"_intercepted": True, "ref": store_key, "constraints": len(value), "violated": violated,
-            "note": "per-constraint detail (bounds, worst value, points) stored by the framework"}
+        verdict = _constraint_violated(detail)
+        if verdict is None:
+            unreadable.append(name)
+        elif verdict:
+            violated[name] = {"violation": detail.get("violation"), "units": detail.get("units"),
+                              "points_violated": detail.get("points_violated"), "points": detail.get("points")}
+    out = {"_intercepted": True, "ref": store_key, "constraints": len(value), "violated": violated,
+           "violated_rule": f"aviary-mcp's test: a point outside its bound by more than {AVIARY_CONSTRAINT_TOL:g}",
+           "note": "per-constraint detail (bounds, worst value, points) stored by the framework"}
+    if unreadable:
+        out["unreadable"] = unreadable
+    return out
 
 
 def _intercept_binaries(tool_name: str, data: dict) -> dict:
@@ -3935,6 +3976,8 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     # B187: which session was sized, on which inputs -- run_cycle re-sizes when either changes.
     # B340: "ran" -- a run_cycle has run on this sizing (get_outputs before that reads the previous Fn_DES's run).
     store["cycle_sizing"] = {"session": resolved.get("session_id"), "key": _cycle_sizing_key(), "ran": False}
+    # L4 (second review): the previous run's convergence verdict is not this sizing's; only a run_cycle on it sets it.
+    store["prop_cycle_converged"] = None
     logger.info("Fn_DES=%.0f lbf from %s", fn_des_lbf, basis)
 
 
@@ -4293,7 +4336,15 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     """
     if _design_state is None or _tool_server_map.get(tool_name) != "aviary" or not isinstance(data, dict):
         return
-    sid = getattr(_call_ctx, "aviary_sid", None) or (_design_state.sessions or {}).get("aviary")
+    # L8 (second review): the reply's own session id first. create_session has no session_id argument, so the
+    # request-side id fell back to the PREVIOUS aviary session and the new session's fingerprint was filed under it.
+    reply_sid = data.get("session_id")
+    if isinstance(reply_sid, str) and reply_sid:
+        sid = reply_sid
+    elif tool_name == "create_session":
+        sid = None          # a create_session reply without its id names no session (nothing filed per session)
+    else:
+        sid = getattr(_call_ctx, "aviary_sid", None) or (_design_state.sessions or {}).get("aviary")
     basis = getattr(_call_ctx, "cruise_basis", None) if tool_name == CRUISE_POINT_TOOL else None
     if tool_name == CRUISE_POINT_TOOL:
         _call_ctx.cruise_basis = None
@@ -4337,6 +4388,8 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
 CRUISE_POINT_TOOL = "get_cruise_point"
 # B340 (review #6): replies that describe a FLOWN mission, not the design the session holds now.
 _FLOWN_FINGERPRINT_TOOLS = frozenset({"run_simulation", "get_results", "get_trajectory", "check_constraints"})
+# L5: replies of these without flown_design_fingerprint carry only the held design (aviary-mcp review #6 decorator).
+_HELD_ONLY_WITHOUT_FLOWN = frozenset({"get_trajectory", "check_constraints"})
 
 
 def _note_aviary_fingerprints(tool_name: str, data: dict, sid) -> None:
@@ -4356,18 +4409,34 @@ def _note_aviary_fingerprints(tool_name: str, data: dict, sid) -> None:
     key = str(sid) if sid else None
     by_session = store.setdefault("aviary_held_fingerprint_by_session", {})
     if tool_name in _FLOWN_FINGERPRINT_TOOLS:
+        # L8 (second review): aviary_flown_fingerprint_by_session = the design of the session's latest VALID result
+        # only. Error replies (INVALID_TIMEOUT, RUN_STILL_STOPPING, NO_RESULTS, ...) and MISSION_NOT_CONVERGED (which
+        # names the design it tried as flown_design_fingerprint) used to be filed there as "flown"; their tried
+        # design goes to aviary_unconverged_or_failed_fingerprint_by_session instead.
+        failed = data.get("success") is False or bool(data.get("error_code"))
         if isinstance(flown, str):
-            store.setdefault("aviary_flown_fingerprint_by_session", {})[str(key)] = flown
+            if failed:
+                store.setdefault("aviary_unconverged_or_failed_fingerprint_by_session", {})[str(key)] = flown
+            else:
+                store.setdefault("aviary_flown_fingerprint_by_session", {})[str(key)] = flown
             if isinstance(held, str) and key:
                 by_session[key] = held
                 store["aviary_design_fingerprint"] = held
-        elif tool_name == "run_simulation" and isinstance(held, str):
+        elif tool_name == "run_simulation" and isinstance(held, str) and not failed:
             store.setdefault("aviary_flown_fingerprint_by_session", {})[str(key)] = held
             if key:
                 by_session[key] = held
                 store["aviary_design_fingerprint"] = held
         elif isinstance(held, str) and (data.get("success") is False or data.get("error_code")):
             # aviary-mcp B339: an error reply names the held design (no result was reported, nothing flown).
+            if key:
+                by_session[key] = held
+            store["aviary_design_fingerprint"] = held
+        elif isinstance(held, str) and tool_name in _HELD_ONLY_WITHOUT_FLOWN:
+            # L5 (second review): aviary-mcp a395021..7032080 gives these two only the held fingerprint (its
+            # _reports_held_design decorator); flown_design_fingerprint was added to them later (fix/final-rerun L5).
+            # Without the field the reply says only what the session holds: recorded as held, nothing as flown, and
+            # the held value is not cleared (clearing it re-asked the cruise point after every agent read).
             if key:
                 by_session[key] = held
             store["aviary_design_fingerprint"] = held
@@ -4389,6 +4458,61 @@ def aviary_held_fingerprint(session_id) -> str | None:
     """The design fingerprint aviary last reported HOLDING on this session (B340), or None."""
     store = _design_state.data_store if _design_state is not None else {}
     return (store.get("aviary_held_fingerprint_by_session") or {}).get(str(session_id)) if session_id else None
+
+
+def _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_source) -> None:
+    """L3 (second review): apply the CURRENT design to aviary, then ask its cruise point; the point is stamped with the
+    current design basis ONLY when that set succeeded and the point's design_fingerprint is the one the set returned.
+
+    The basis used to be stamped before the set and the set's reply ignored: a refused or failed set (watchdog, server
+    error, session busy, TYPE_ERROR) left aviary holding the previous wing A, the point of A was stamped with the new
+    basis B, and the engine sized on A's L/D counted as current for B (review #1 again). Now a failed set, a set
+    without a fingerprint, or a point of another design leaves no valid point and records why (cruise_point_error).
+    The set is required: without a registered set_aircraft_parameters no point is asked for. It is sent also when the
+    wing has not been measured this link (it used to be skipped then): the geometry authority then leaves the
+    session's wing as it is (B143) and the set still applies the tails, wing mass and engine scale and names the
+    design aviary holds.
+    """
+    store = _design_state.data_store
+    store.pop("cruise_point_error", None)
+    setter = (_registered_tools or {}).get("set_aircraft_parameters")
+    if setter is None:
+        store["cruise_point_error"] = (f"{CRUISE_POINT_TOOL} not asked: the aviary server has no "
+                                       "set_aircraft_parameters, so the current design cannot be applied first")
+        return
+    wanted_basis = design_basis()
+    # The point must be of the CURRENT design: apply it first (geometry authority puts the measured wing and fuselage
+    # on the call, the wing-mass injection the current mass), recorded in the KB like any call.
+    _call_ctx.cruise_basis = None
+    set_reply = _as_dict(setter.forward(session_id=sid, parameters={}))
+    set_fp = set_reply.get("design_fingerprint")
+    if set_reply.get("success") is False or set_reply.get("error_code") or set_reply.get("error") \
+            or not isinstance(set_fp, str):
+        store["cruise_point_error"] = (
+            f"{CRUISE_POINT_TOOL} not asked: the framework's set_aircraft_parameters (current design onto aviary "
+            f"session {sid}) did not succeed: {set_reply.get('error_code') or ''} "
+            f"{str(set_reply.get('error') or ('no design_fingerprint in the reply' if not set_reply else ''))[:300]}"
+        ).strip()
+        return
+    if design_basis() != wanted_basis:      # pragma: no cover - the set cannot morph the geometry
+        store["cruise_point_error"] = f"{CRUISE_POINT_TOOL} not asked: the design changed while it was applied"
+        return
+    from src.config.canonical import load_canonical
+
+    mission = load_canonical().get("mission", {}) or {}
+    _call_ctx.cruise_basis = wanted_basis      # B340: the design this point is asked for (read by the capture)
+    before = store.get("aviary_cruise_point")
+    tool.forward(session_id=sid, mass_kg=mass, mach=mission.get("cruise_mach"),
+                 altitude_ft=mission.get("cruise_altitude_ft"), engine_scale=carried_scale)
+    store["cruise_point_request"] = {"mass_kg": mass, "mass_basis": basis, "engine_scale": carried_scale,
+                                     "engine_basis": engine_source, "applied_design_fingerprint": set_fp}
+    point = store.get("aviary_cruise_point")
+    if point is not before and isinstance(point, dict) and point.get("_design_basis") is not None \
+            and point.get("design_fingerprint") != set_fp:
+        store["aviary_cruise_point"] = dict(point, _design_basis=None)
+        store["cruise_point_error"] = (
+            f"{CRUISE_POINT_TOOL} answered for design {point.get('design_fingerprint')}, not the design the framework "
+            f"just applied ({set_fp}); the point is not used")
 
 
 def current_cruise_point() -> tuple[dict | None, str]:
@@ -4431,21 +4555,11 @@ def current_cruise_point() -> tuple[dict | None, str]:
         sid = (_design_state.sessions or {}).get("aviary")
         if tool is not None and sid:
             try:
-                _call_ctx.cruise_basis = design_basis()      # B340: the design this point is asked for
-                # The point must be of the CURRENT design: apply it first (geometry authority puts the measured wing and
-                # fuselage on the call, the wing-mass injection the current mass), recorded in the KB like any call.
-                setter = (_registered_tools or {}).get("set_aircraft_parameters")
-                if setter is not None and store.get("geometry_wing"):
-                    setter.forward(session_id=sid, parameters={})
-                from src.config.canonical import load_canonical
-
-                mission = load_canonical().get("mission", {}) or {}
-                tool.forward(session_id=sid, mass_kg=mass, mach=mission.get("cruise_mach"),
-                             altitude_ft=mission.get("cruise_altitude_ft"), engine_scale=carried_scale)
-                store["cruise_point_request"] = {"mass_kg": mass, "mass_basis": basis, "engine_scale": carried_scale,
-                                                 "engine_basis": engine_source}
+                _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_source)
             except Exception as exc:  # pragma: no cover - surfaced as the reason below
                 store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
+            finally:
+                _call_ctx.cruise_basis = None
             point = store.get("aviary_cruise_point")
     if _valid(point):
         return point, f"aviary FLOPS cruise point at {mass:.1f} kg ({basis})"
@@ -4742,6 +4856,48 @@ def carried_engine() -> tuple[str | None, float | None, str]:
         return None, None, f"the canonical baseline could not be read ({exc})"
     deck, scale = base.get("engine_deck_file"), base.get("engine_scale_factor")
     if deck and isinstance(scale, (int, float)) and scale > 0:
-        return str(deck), float(scale), "baseline engine (canonical baseline.engine_deck_file / engine_scale_factor)"
+        path, why = resolve_baseline_deck(base)
+        if path is None:
+            return None, None, why
+        return path, float(scale), f"baseline engine (canonical baseline.engine_deck_file / engine_scale_factor; {why})"
     return None, None, (f"canonical baseline.engine_deck_file / engine_scale_factor are not set ({deck!r}, "
                         f"{scale!r})")
+
+
+# L2 (second review): the baseline deck is named by FILE NAME in the canonical yaml and found in the run machine's
+# study decks folder, which the launcher names in this variable (the slot's decks folder, $SLOT_HOME/decks, where
+# start_slot.sh copies SEED_DECKS). It used to be an absolute ws8 path, so estimate_mass was refused on every other
+# machine (ENGINE_DECK_NOT_READABLE) and no link of that combination could fly.
+DECKS_DIR_ENV = "AVION_DECKS_DIR"
+
+
+def resolve_baseline_deck(base: dict) -> tuple[str | None, str]:
+    """The canonical baseline deck's path on THIS machine and how it was found, or (None, why). Never a fallback:
+    a relative name needs AVION_DECKS_DIR; the file must exist and, when baseline.engine_deck_md5 is given, match it."""
+    import hashlib
+
+    name = str(base.get("engine_deck_file") or "")
+    if not name:
+        return None, "canonical baseline.engine_deck_file is not set"
+    if os.path.isabs(name):
+        # An absolute path is used as written; estimate_mass refuses it when the file is missing
+        # (ENGINE_DECK_NOT_READABLE). The study yaml names the deck relative (below).
+        path, how = name, "absolute path in the canonical yaml"
+    else:
+        decks = os.environ.get(DECKS_DIR_ENV)
+        if not decks:
+            return None, (f"the baseline deck {name} is named relative to the study decks folder, and {DECKS_DIR_ENV} "
+                          "is not set (the launcher sets it to this machine's decks folder, e.g. $SLOT_HOME/decks)")
+        path, how = os.path.join(decks, name), f"{DECKS_DIR_ENV}={decks}"
+        if not os.path.isfile(path):
+            return None, f"the baseline deck {path} ({how}) does not exist on this machine"
+    want = base.get("engine_deck_md5")
+    if want and os.path.isfile(path):
+        try:
+            with open(path, "rb") as fh:
+                got = hashlib.md5(fh.read()).hexdigest()
+        except OSError as exc:
+            return None, f"the baseline deck {path} ({how}) is not readable: {exc}"
+        if got != str(want):
+            return None, f"the baseline deck {path} ({how}) has md5 {got}, not the canonical {want}"
+    return path, how
