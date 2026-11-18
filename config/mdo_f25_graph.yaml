@@ -1,3 +1,11 @@
+# NOT USED BY THE F25 STUDY'S TEXT -- STALE (2026-11-18). The graph-routed combinations load this file for its
+# states and edges only; no agent of the 8 study combinations receives its agent_prompt texts (the conditional
+# router and the networked board build verbatim inputs from the agent configs; checked in the code, MAS-Aviary
+# BUGS.md B330 / item 3 of that report). The prompts and the coupling notes below are out of date: since the drag
+# model decision of 2026-11-18 nothing from SU2 is injected into aviary (no LIFT_COEFFICIENT, no drag factor), Fn_DES
+# comes from the carried sized mass and aviary's cruise lift-to-drag, and the engine scale is not bounded to
+# [1.1, 1.4]. Do not take study settings from this file.
+#
 # MDO F25 Aircraft Design — Predefined State Machine Graph
 # Used by the Graph-Routed execution handler when predefined_graph is "mdo_f25"
 # Spans 5 MCPs: TiGL, SU2, CPACS-Mass, pyCycle, Aviary
