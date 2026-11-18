@@ -178,16 +178,30 @@ def counted_step_log(link_dir: Path) -> tuple[int, Path | None]:
     return max(logs) if logs else (0, None)
 
 
-def mission_summaries(kb: list[dict]) -> list[dict]:
+def mission_summaries(kb: list[dict], converged_only: bool = False) -> list[dict]:
     """Every successful run_simulation / get_results that returned a fuel figure, in KB order.
 
     Mirrors measured_fuel_from_kb in scripts/stat_batch_runner.py (the last one is the link's fuel).
+    converged_only (contract flops_drag_b324, MAS-Aviary B314): a mission counts only when it converged, and a
+    get_results only after a counted run_simulation on the same session (the runner's rule since B314).
     """
     out = []
+    counted_session: dict = {}
     for e in kb:
-        if e.get("tool") not in ("run_simulation", "get_results") or e.get("status") != "success":
+        if e.get("tool") not in ("run_simulation", "get_results"):
             continue
-        outputs = e.get("outputs") or {}
+        outputs = e.get("outputs") if isinstance(e.get("outputs"), dict) else {}
+        if converged_only:
+            sid = (e.get("inputs") or {}).get("session_id")
+            ok = (e.get("status") == "success" and outputs.get("success") is not False
+                  and outputs.get("converged") is not False)
+            if e["tool"] == "run_simulation" and e.get("status") != "refused":
+                # a run that reached aviary decides what the session's results are, whether it counted or not
+                counted_session[sid] = ok and outputs.get("converged") is True
+            if not ok or not counted_session.get(sid):
+                continue
+        elif e.get("status") != "success":
+            continue
         for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
             if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
                 out.append({"seq": e.get("seq"), "tool": e["tool"], "attempt": int(e.get("attempt") or 1), **{
@@ -254,7 +268,10 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     ec = res.get("eval_classification") or {}
 
     # --- fuel and constraints (measured from the knowledge base) ---
-    missions = mission_summaries(kb)
+    design_flown = read_json(link_dir / "design_flown.json") or {}
+    contract, contract_why = flown.detect_contract(design, design_flown, kb)
+    row["contract"], row["contract.detail"] = contract, contract_why
+    missions = mission_summaries(kb, converged_only=contract == flown.CONTRACT_FLOPS)
     last = missions[-1] if missions else {}
     fuel = last.get("fuel_burned_kg")
     flew = fuel is not None and float(fuel) > ZERO_FUEL_FLOOR_KG
@@ -397,7 +414,10 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
         return [s for s in read_jsonl(p) if s.get("kind") == "step"]
 
     row.update(flown.flown_link(link_dir, kb, last, res, carry, steps_of,
-                                pycycle_defaults if pycycle_defaults is not None else {}))
+                                pycycle_defaults if pycycle_defaults is not None else {}, contract, design_flown))
+    # Every refusal / failure code of the link (all attempts), e.g. MISSION_NOT_CONVERGED, TAIL_FROM_GEOMETRY.
+    row["error_codes"] = json.dumps(dict(Counter(error_code(e) for e in kb
+                                                 if e.get("status") in ("refused", "failed"))), sort_keys=True)
 
     # --- what the link LEFT (end state, carried to the next link) and design.json's last values ---
     # Not what flew: a link may change the design after its counted mission (O_IF 13, N_GR 2 ...).

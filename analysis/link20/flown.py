@@ -31,6 +31,18 @@ case3_target_cl.py); the expected iterations are in analysis/link20/reports/11_b
                               set_inputs (B270)
   flag.engine_scale_stale     the flown engine scale is not the last one the link tried to set (a refused set call
                               left the earlier scale; case 5, N_GR 19)
+
+Two contracts (detect_contract, column `contract`): CONTRACT_V1 (every study up to l20_final) is evaluated exactly as
+above. CONTRACT_FLOPS (the final re-run, MAS-Aviary integration/final-rerun-2026-11-18): no SU2 value is flown (B324),
+so su2_not_flown and mac_default are retired (empty, .detail says why) and untrimmed_su2 / agent_target_cl / stale_mesh
+look at the SU2 solve the mission requires (recorded only); wing_mass_stale reads the framework's capture
+(design_flown.json) when the estimate_mass reply is intercepted (B342); a mission counts only when it converged (B314).
+New-contract flags: cruise_point_mismatch (the cruise point Fn_DES was sized on is not of the flown design
+fingerprint), engine_stale_basis (flown scale not from this attempt's cycle sized on the flown design at the flown
+take-off mass), mass_not_converged, unmeasured_tails (the 8 tail inputs missing or not the measured ones),
+refusal_codes (any new-contract refusal / failure code in the counted attempt). New columns: flown_design_fingerprint,
+engine.fn_des_lbf, cruise.* (L/D, CL, CD, mass, fingerprint of the sizing point), trim_mass_basis_kg / _source,
+su2.cl / su2.cd (recorded only), the 8 tails, error_codes.
 """
 
 from __future__ import annotations
@@ -38,6 +50,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 # Aviary inputs that carry a coupled value or a design variable into the mission.
@@ -45,11 +58,36 @@ FLOWN_PARAMS = ["Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wi
                 "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
                 "Aircraft.Fuselage.MAX_WIDTH", "Aircraft.Engine.SCALE_FACTOR", "Mission.Design.LIFT_COEFFICIENT",
                 "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR", "Aircraft.Wing.MASS", "Aircraft.Wing.MASS_SCALER"]
+# G1 (MAS-Aviary B331, aviary-mcp B333): the measured CPACS tails the framework puts on aviary (data_plane.TAIL_KEYS).
+TAIL_KEYS = [f"Aircraft.{t}.{p}" for t in ("HorizontalTail", "VerticalTail")
+             for p in ("AREA", "ASPECT_RATIO", "TAPER_RATIO", "THICKNESS_TO_CHORD")]
 # Further flown values (not aviary aircraft parameters): the SU2 CL/CD behind the flown CL, the mission's takeoff
 # mass, and the engine deck the run flew.
 EXTRA_COLUMNS = ["aero.cl_cruise", "aero.cd_cruise", "structures.mtom_kg", "engine_deck_key"]
+# Flags of the new contract (empty, "not applicable", on CONTRACT_V1 links).
+NEW_CONTRACT_FLAGS = ["cruise_point_mismatch", "engine_stale_basis", "mass_not_converged", "unmeasured_tails",
+                      "refusal_codes"]
 FLAGS = ["untrimmed_su2", "agent_target_cl", "mac_default", "engine_scale_bench_ref", "stale_mesh", "su2_not_flown",
-         "wing_mass_stale", "carried_engine_replaced", "engine_scale_stale"]
+         "wing_mass_stale", "carried_engine_replaced", "engine_scale_stale"] + NEW_CONTRACT_FLAGS
+# New-contract columns (only filled under CONTRACT_FLOPS).
+FLOPS_COLUMNS = ["flown_design_fingerprint", "engine.fn_des_lbf", "cruise.lift_to_drag", "cruise.cl", "cruise.cd",
+                 "cruise.mass_kg", "cruise.design_fingerprint", "trim_mass_basis_kg", "trim_mass_basis_source",
+                 "su2.cl", "su2.cd"]
+
+# The two contracts a run can follow.
+#   CONTRACT_V1     every study up to l20_final: SU2 CL and a drag factor are flown, Fn_DES from SU2 L/D.
+#   CONTRACT_FLOPS  MAS-Aviary integration/final-rerun-2026-11-18 (B305-B343): drag = aviary FLOPS only, no SU2 value
+#                   flown (B324), Fn_DES from aviary get_cruise_point, unconverged missions are failures (B314),
+#                   measured tails (B331), held / flown design fingerprints (aviary-mcp B339).
+CONTRACT_V1, CONTRACT_FLOPS = "su2_drag_v1", "flops_drag_b324"
+# Refusal / failure codes introduced with CONTRACT_FLOPS (MAS-Aviary dcd01c6 data_plane, aviary-mcp fix/final-rerun).
+NEW_CONTRACT_CODES = {"MISSION_NOT_CONVERGED", "ZERO_FUEL", "MASS_ESTIMATE_NOT_USABLE", "MISSION_INPUTS_NOT_APPLIED",
+                      "DESIGN_THRUST_NOT_AVAILABLE", "DESIGN_THRUST_NOT_PHYSICAL", "DRAG_FROM_AVIARY_MODEL",
+                      "TAIL_FROM_GEOMETRY", "NO_TRIM_TARGET", "ENGINE_DECK_NOT_READABLE", "ENGINE_NOT_ON_RECORD",
+                      "FLIGHT_CONDITION_FIXED", "UNKNOWN_CYCLE_KEY", "CANONICAL_CYCLE_SETTINGS_UNAVAILABLE",
+                      "CRUISE_POINT_INPUT", "CRUISE_POINT_ERROR", "INVALID_TIMEOUT", "VALIDATION_ERROR"}
+# MAS-Aviary coupling.py (dcd01c6) constants of fn_des_from_lift_to_drag.
+FN_DES_G, FN_DES_N_PER_LBF, FN_DES_ENGINES, FN_DES_MARGIN = 9.81, 4.448, 2, 1.25
 
 # MAS-Aviary src/tools/coupling.py BENCH_ENGINE_CRUISE_FN_LBF (the bench deck's M0.78/FL330 thrust); the data plane
 # divides pyCycle's Fn by it when it thinks no designed deck is attached (_inject_engine_scale).
@@ -188,7 +226,7 @@ def flown_inputs(rows: list[dict], m: int, start_params: dict | None, start_src:
     if gr is not None:
         i, dp = gr
         ap = dp["aircraft_params"]
-        for p in FLOWN_PARAMS:
+        for p in FLOWN_PARAMS + TAIL_KEYS:
             out[p] = (ap.get(p), f"get_results {log} row {i}" if p in ap else
                       f"not set on the flown session (aviary default; get_results {log} row {i})")
         mc = dp.get("mission_config") or {}
@@ -209,7 +247,7 @@ def flown_inputs(rows: list[dict], m: int, start_params: dict | None, start_src:
                     params = {}
             for p, v in params.items():
                 state[p] = (v, f"set_aircraft_parameters {log} row {i}")
-    for p in FLOWN_PARAMS:
+    for p in FLOWN_PARAMS + TAIL_KEYS:
         out[p] = state.get(p, (None, "not set on the flown session (aviary default; no get_results after the run)"))
     tom = None
     for i, r in enumerate(rows[:m]):
@@ -283,8 +321,15 @@ def _geometry_track(rows):
 # ---------------------------------------------------------------- one link
 
 def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: list[dict], defaults: dict,
-            log: str, kb_attempt: list[dict] | None = None) -> dict:
-    """Extra flown columns (SU2 CL/CD, deck) and the bug-signature flags for the counted mission at row m."""
+            log: str, kb_attempt: list[dict] | None = None, contract: str = CONTRACT_V1,
+            design_flown: dict | None = None) -> dict:
+    """Extra flown columns (SU2 CL/CD, deck) and the bug-signature flags for the counted mission at row m.
+
+    contract CONTRACT_V1 (the studies up to l20_final) is evaluated exactly as before. Under CONTRACT_FLOPS no SU2
+    value is flown (B324): the SU2 flags look at the solve the mission requires (the last successful one before it,
+    B315), recorded only; su2_not_flown and mac_default are retired; the new-contract flags are added (_flops_contract).
+    """
+    new = contract == CONTRACT_FLOPS
     out: dict = {}
     carry = carry or {}
     prev = carry.get("previous_design") or {}
@@ -310,7 +355,21 @@ def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: li
     for i, r in solves:
         if cl is not None and close((_res(r).get("final_coefficients") or {}).get("CL"), cl, 1e-8):
             prod = (i, r)
-    if prod:
+    if new:
+        # B324: nothing from SU2 reaches the mission. The solve the mission requires (B315) is recorded in su2.*.
+        prod = solves[-1] if solves else None
+        why_not = f"not flown under contract {CONTRACT_FLOPS}: the mission flies aviary's FLOPS drag (B324)"
+        out["aero.cl_cruise"] = (None, why_not)
+        out["aero.cd_cruise"] = (None, why_not)
+        if prod:
+            i, r = prod
+            fc, da = _res(r).get("final_coefficients") or {}, _res(r).get("drag_assessment") or {}
+            out["su2.cl"] = (fc.get("CL"), f"run_su2_solver {log} row {i} final_coefficients.CL (recorded only)")
+            out["su2.cd"] = (da.get("cd_reported", fc.get("CD")),
+                             f"run_su2_solver {log} row {i} (recorded only)")
+        else:
+            out["su2.cl"] = out["su2.cd"] = (None, "no successful SU2 solve before the counted mission")
+    elif prod:
         i, r = prod
         fc, da = _res(r).get("final_coefficients") or {}, _res(r).get("drag_assessment") or {}
         out["aero.cl_cruise"] = (fc.get("CL"), f"run_su2_solver {log} row {i} final_coefficients.CL")
@@ -476,11 +535,22 @@ def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: li
     mass_flown = num(fv["Aircraft.Wing.MASS"])
     est = [(i, r) for i, r in enumerate(before) if r["tool"] == "estimate_mass" and r["ok"]]
     why = []
+    why_undecided = None
     if est:
         ei, er = est[-1]
-        mw = (((_res(er).get("mass_breakdown") or {}).get("components")) or {}).get("mWing_kg")
-        if not close(mass_flown, mw, 1e-3):
-            why.append(f"flown wing mass {mass_flown} != mass-mcp {mw} (row {ei})")
+        mb = _res(er).get("mass_breakdown") or {}
+        mw = ((mb.get("components")) or {}).get("mWing_kg")
+        mw_src = f"mass-mcp {mw} (row {ei})"
+        if mb.get("_intercepted"):
+            # B342 (MAS-Aviary 9a4e0ac..bdc5bdf): the reply holds a ref, not the numbers. The framework captured the
+            # estimate before the interception; design_flown.json structures.wing_mass_kg is that capture.
+            mw = ((design_flown or {}).get("structures") or {}).get("wing_mass_kg")
+            mw_src = (f"mass-mcp {mw} (row {ei} reply intercepted, B342: value from design_flown.json "
+                      f"structures.wing_mass_kg)")
+            if mw is None:
+                why_undecided = f"estimate_mass row {ei} reply intercepted (B342) and no design_flown.json wing mass"
+        if why_undecided is None and not close(mass_flown, mw, 1e-3):
+            why.append(f"flown wing mass {mass_flown} != {mw_src}")
         used = os.path.basename(er["args"].get("cpacs_file_path") or "")
         exps = [x for x in exports if x[0] < ei]
         exps = [x for x in exps if os.path.basename(x[3] or "") == used] or exps
@@ -502,6 +572,8 @@ def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: li
             why.append(f"no estimate; flown mass {mass_flown} != carried {carried_mass}")
     flags["wing_mass_stale"] = bool(why)
     detail["wing_mass_stale"] = "; ".join(why) if why else "flown wing mass is mass-mcp's current one"
+    if why_undecided and not why:
+        flags["wing_mass_stale"], detail["wing_mass_stale"] = None, why_undecided
 
     # carried engine replaced (B270)
     intended = {k: num(v) for k, v in carried_engine.items() if k in ENGINE_KEYS}
@@ -552,10 +624,202 @@ def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: li
         detail["engine_scale_stale"] = (f"flown {scale}; last attempted {attempted[1]} at row {attempted[0]} "
                                         f"({'succeeded' if attempted[2] else 'refused/failed'})")
 
+    if new:
+        req = "the solve the mission requires (last successful before it; recorded only, not flown, B324/B315)"
+        for f in ("untrimmed_su2", "agent_target_cl", "stale_mesh"):
+            detail[f] = f"{req}: {detail[f]}" if prod else "no successful SU2 solve before the counted mission"
+        flags["su2_not_flown"] = None
+        detail["su2_not_flown"] = (f"retired under contract {CONTRACT_FLOPS}: no SU2 value is flown by design "
+                                   "(drag = aviary FLOPS, B324)")
+        flags["mac_default"] = None
+        detail["mac_default"] = (f"retired under contract {CONTRACT_FLOPS}: no drag factor and no friction "
+                                 "build-up (B324)")
+        extra_cols, new_flags, new_detail = _flops_contract(rows, m, flown, fv, scale, eng, key, design_flown,
+                                                           kb_attempt or [], log)
+        out.update(extra_cols)
+        flags.update(new_flags)
+        detail.update(new_detail)
+    else:
+        for f in NEW_CONTRACT_FLAGS:
+            flags[f], detail[f] = None, f"not applicable to contract {CONTRACT_V1}"
     for f in FLAGS:
         out[f"flag.{f}"] = flags.get(f)
         out[f"flag.{f}.detail"] = detail.get(f)
     return out
+
+
+def _fn_des(mass_kg, lift_to_drag):
+    """MAS-Aviary coupling.fn_des_from_lift_to_drag (dcd01c6): mass * g / (L/D) / engines / 4.448 * 1.25."""
+    m, ld = num(mass_kg), num(lift_to_drag)
+    if not m or not ld or m <= 0 or ld <= 0:
+        return None
+    return m * FN_DES_G / ld / FN_DES_ENGINES / FN_DES_N_PER_LBF * FN_DES_MARGIN
+
+
+def _flops_contract(rows, m, flown, fv, scale, eng, key, design_flown, kb_attempt, log):
+    """New-contract columns and flags (drag = aviary FLOPS, Fn_DES from aviary's cruise point; B305/B324/B331/B339)."""
+    cols, flags, detail = {}, {}, {}
+    run = _res(rows[m])
+    before = rows[:m]
+    df = design_flown or {}
+
+    # flown design fingerprint (aviary-mcp B339: flown_design_fingerprint; before it a run flies the held design,
+    # whose fingerprint the run reply carries as design_fingerprint)
+    if run.get("flown_design_fingerprint"):
+        fp, fp_src = run["flown_design_fingerprint"], f"run_simulation {log} row {m} flown_design_fingerprint"
+    elif run.get("design_fingerprint"):
+        fp, fp_src = run["design_fingerprint"], (f"run_simulation {log} row {m} design_fingerprint (aviary-mcp "
+                                                 "before B339: the run flies the held design)")
+    else:
+        fp, fp_src = None, f"run_simulation {log} row {m} carries no design fingerprint"
+    cols["flown_design_fingerprint"] = (fp, fp_src)
+
+    # the thrust behind the flown engine scale: run_cycle Fn = scale x deck reference, and the Fn_DES set before it
+    ref = None
+    for r in before:
+        if r["tool"] == "generate_engine_deck" and r["ok"] and key and _res(r).get("design_key") == key:
+            ref = num(_res(r).get("reference_fn_des_lbf"))
+    if ref is None:
+        ref = num((df.get("engine_deck") or {}).get("reference_fn_des_lbf")) \
+            if (df.get("engine_deck") or {}).get("key") == key else None
+    cyc = None
+    if scale is not None and ref is not None:
+        for i, r in enumerate(before):
+            fn = num((_res(r).get("outputs") or {}).get("perf.Fn")) if r["tool"] == "run_cycle" and r["ok"] else None
+            if fn and close(scale * ref, fn, 1e-9):
+                cyc = (i, r, fn)
+    fn_des = None
+    if cyc:
+        psid = cyc[1]["args"].get("session_id")
+        for i, r in enumerate(rows[:cyc[0]]):
+            if r["tool"] == "set_inputs" and r["ok"] and r["args"].get("session_id") == psid \
+                    and num((r["args"].get("values") or {}).get("Fn_DES")) is not None:
+                fn_des = (i, num(r["args"]["values"]["Fn_DES"]))
+    cols["engine.fn_des_lbf"] = ((fn_des[1], f"set_inputs {log} row {fn_des[0]} Fn_DES (sized the flown engine)")
+                                 if fn_des else (None, "no Fn_DES set before the run_cycle behind the flown scale"))
+
+    # the cruise point that sized it: Fn_DES = mass g / (L/D) / 2 / 4.448 x 1.25 at that point's mass and L/D
+    points = [(i, r) for i, r in enumerate(before) if r["tool"] == "get_cruise_point" and r["ok"]
+              and isinstance(_res(r).get("cruise_point"), dict)]
+    sizing = None
+    if fn_des:
+        for i, r in points:
+            cp = _res(r)["cruise_point"]
+            if close(_fn_des(cp.get("mass_kg"), cp.get("lift_to_drag")), fn_des[1], 1e-6):
+                sizing = (i, cp)
+    if sizing:
+        cp, csrc = sizing[1], f"get_cruise_point {log} row {sizing[0]} (the point Fn_DES was sized on)"
+    elif isinstance(df.get("aviary_cruise_point"), dict) and fn_des and close(
+            _fn_des(df["aviary_cruise_point"].get("mass_kg"), df["aviary_cruise_point"].get("lift_to_drag")),
+            fn_des[1], 1e-6):
+        cp, csrc = df["aviary_cruise_point"], "design_flown.json aviary_cruise_point (reproduces the flown Fn_DES)"
+    else:
+        cp, csrc = None, ("no cruise point reproduces the flown engine's Fn_DES" if fn_des
+                          else "flown engine's Fn_DES not found")
+    for k, c in (("lift_to_drag", "cruise.lift_to_drag"), ("cl", "cruise.cl"), ("cd", "cruise.cd"),
+                 ("mass_kg", "cruise.mass_kg"), ("design_fingerprint", "cruise.design_fingerprint")):
+        cols[c] = ((cp or {}).get(k), csrc)
+
+    # trim mass basis (B306/B340): the mass the cruise point / Fn_DES / take-off mass use, and where it comes from
+    basis_txt = str((df.get("engine_sizing") or {}).get("fn_des_basis") or "")
+    mm = re.search(r" at ([0-9.]+) kg \((.*)\)\s*$", basis_txt)
+    cols["trim_mass_basis_kg"] = (num(mm.group(1)) if mm else (cp or {}).get("mass_kg"),
+                                  "design_flown.json engine_sizing.fn_des_basis" if mm else csrc)
+    cols["trim_mass_basis_source"] = (mm.group(2) if mm else None,
+                                      "design_flown.json engine_sizing.fn_des_basis" if mm else
+                                      "not recorded (no engine_sizing.fn_des_basis in design_flown.json)")
+
+    # cruise point vs the flown design
+    if cp is None:
+        flags["cruise_point_mismatch"], detail["cruise_point_mismatch"] = None, csrc
+    elif fp is None:
+        flags["cruise_point_mismatch"], detail["cruise_point_mismatch"] = None, fp_src
+    else:
+        flags["cruise_point_mismatch"] = cp.get("design_fingerprint") != fp
+        detail["cruise_point_mismatch"] = f"sizing point {cp.get('design_fingerprint')} ({csrc}); flown {fp}"
+
+    # engine sized on a stale design basis
+    why = []
+    tom = num(flown["structures.mtom_kg"][0])
+    if scale is None:
+        why.append("no engine scale flown")
+    elif cyc is None:
+        why.append(f"flown scale {scale} x deck reference {ref} matches no run_cycle Fn of this attempt")
+    elif fn_des is None:
+        why.append("no Fn_DES before the run_cycle behind the flown scale")
+    elif cp is None:
+        why.append(f"Fn_DES {fn_des[1]:.2f} reproduces no cruise point")
+    else:
+        if fp is not None and cp.get("design_fingerprint") != fp:
+            why.append(f"sized on design {cp.get('design_fingerprint')}, flew {fp}")
+        if tom is not None and not close(cp.get("mass_kg"), tom, 1e-6):
+            why.append(f"sized at {cp.get('mass_kg')} kg, take-off mass flown {tom}")
+        ck = (df.get("engine_deck") or {}).get("cycle_key")
+        if isinstance(ck, list) and len(ck) >= 3 and fp is not None and ck[2] != fp:
+            why.append(f"design_flown engine_deck.cycle_key design {ck[2]} != flown {fp}")
+    flags["engine_stale_basis"] = None if scale is None else bool(why)
+    detail["engine_stale_basis"] = "; ".join(why) if why else (
+        f"scale {scale} = Fn {cyc[2]:.2f} / {ref}; Fn_DES {fn_des[1]:.2f} from L/D {cp.get('lift_to_drag')} at "
+        f"{cp.get('mass_kg')} kg on the flown design")
+
+    # mass from a converged sizing
+    wing = num(fv["Aircraft.Wing.MASS"])
+    est = [(i, r) for i, r in enumerate(before) if r["tool"] == "estimate_mass" and r["ok"]]
+    conv, msrc = None, None
+    for i, r in est:
+        mb = _res(r).get("mass_breakdown") or {}
+        if not mb.get("_intercepted") and close(((mb.get("components") or {}).get("mWing_kg")), wing, 1e-9):
+            conv, msrc = mb.get("sizing_converged"), f"estimate_mass {log} row {i} mass_breakdown.sizing_converged"
+            drv = ((mb.get("sizing_report") or {}).get("driver") or {}) if isinstance(mb.get("sizing_report"), dict) \
+                else {}
+            if drv.get("converged") is False:
+                conv, msrc = False, f"estimate_mass {log} row {i} sizing_report.driver.converged"
+    st = df.get("structures") or {}
+    if conv is None and close(st.get("wing_mass_kg"), wing, 1e-9):
+        conv, msrc = st.get("sizing_converged"), "design_flown.json structures.sizing_converged"
+    if wing is None:
+        flags["mass_not_converged"], detail["mass_not_converged"] = None, "no wing mass flown"
+    elif conv is None:
+        flags["mass_not_converged"] = None
+        detail["mass_not_converged"] = f"no estimate with the flown wing mass {wing} whose convergence is readable"
+    else:
+        flags["mass_not_converged"] = conv is not True
+        detail["mass_not_converged"] = f"sizing_converged {conv} ({msrc})"
+
+    # tails flown = measured tails (G1, B331)
+    flown_tails = {k: num(flown[k][0]) for k in TAIL_KEYS}
+    measured, tsrc = None, None
+    for i, r in est:
+        mb = _res(r).get("mass_breakdown") or {}
+        t = ((mb.get("sizing_report") or {}).get("tails")) if isinstance(mb.get("sizing_report"), dict) else None
+        if isinstance(t, dict) and all(k in t for k in TAIL_KEYS):
+            measured, tsrc = t, f"estimate_mass {log} row {i} sizing_report.tails"
+    if measured is None and isinstance(st.get("tails"), dict):
+        measured, tsrc = st["tails"], "design_flown.json structures.tails"
+    missing = [k for k, v in flown_tails.items() if v is None]
+    if missing:
+        flags["unmeasured_tails"] = True
+        detail["unmeasured_tails"] = f"{len(missing)} tail inputs not on the flown session (aviary bench tails)"
+    elif measured is None:
+        flags["unmeasured_tails"] = None
+        detail["unmeasured_tails"] = "tails flown, but no measured tails on record to compare"
+    else:
+        diff = [k for k in TAIL_KEYS if not close(flown_tails[k], measured.get(k), 1e-6)]
+        flags["unmeasured_tails"] = bool(diff)
+        detail["unmeasured_tails"] = (f"flown != measured ({tsrc}) for {diff}" if diff
+                                      else f"flown tails = measured ({tsrc})")
+
+    # refusal / failure codes of the new contract anywhere in the counted attempt
+    codes = {}
+    for e in kb_attempt:
+        if e.get("status") in ("refused", "failed"):
+            o = e.get("outputs") if isinstance(e.get("outputs"), dict) else {}
+            c = e.get("error_code") or o.get("error_code")
+            if c in NEW_CONTRACT_CODES:
+                codes[c] = codes.get(c, 0) + 1
+    flags["refusal_codes"] = bool(codes)
+    detail["refusal_codes"] = json.dumps(codes, sort_keys=True) if codes else "none of the new-contract codes"
+    return cols, flags, detail
 
 
 def _model_calls(steps: list[dict], tool: str) -> list[dict]:
@@ -634,10 +898,11 @@ def _typed_target(cfg_row: dict, steps: list[dict], rows: list[dict], cfg_i: int
 
 
 def flown_link(link_dir: Path, kb: list[dict], counted: dict, res: dict, carry: dict | None,
-               steps_by_attempt, defaults: dict) -> dict:
+               steps_by_attempt, defaults: dict, contract: str = CONTRACT_V1,
+               design_flown: dict | None = None) -> dict:
     """All flown columns (value + src.<column>) and flags for one link. counted = the link's last mission summary
-    (extract.mission_summaries), or {} when the link ran no mission."""
-    cols = FLOWN_PARAMS + EXTRA_COLUMNS
+    (extract.mission_summaries), or {} when the link ran no mission. contract: detect_contract()."""
+    cols = FLOWN_PARAMS + TAIL_KEYS + EXTRA_COLUMNS + (FLOPS_COLUMNS if contract == CONTRACT_FLOPS else [])
     row: dict = {}
     uncounted = ""
     if not counted:
@@ -676,10 +941,10 @@ def flown_link(link_dir: Path, kb: list[dict], counted: dict, res: dict, carry: 
         start_src = "carry_over.aviary_session_start (session start)"
     fl = flown_inputs(rows, m, start, start_src, log)
     extra = analyse(rows, m, fl, carry, steps_by_attempt(attempt), defaults, log,
-                    [e for e in kb if int(e.get("attempt") or 1) == attempt])
-    for c in FLOWN_PARAMS + ["structures.mtom_kg"]:
+                    [e for e in kb if int(e.get("attempt") or 1) == attempt], contract, design_flown)
+    for c in FLOWN_PARAMS + TAIL_KEYS + ["structures.mtom_kg"]:
         row[c], row[f"src.{c}"] = fl[c]
-    for c in ("aero.cl_cruise", "aero.cd_cruise", "engine_deck_key"):
+    for c in [c for c in cols if c in extra]:
         row[c], row[f"src.{c}"] = extra.pop(c)
     row.update(extra)
     row["flown_inputs_from"] = uncounted + fl["_inputs_from"]
@@ -687,7 +952,28 @@ def flown_link(link_dir: Path, kb: list[dict], counted: dict, res: dict, carry: 
     if uncounted:
         for c in cols:
             row[f"src.{c}"] = uncounted + str(row[f"src.{c}"])
-    for c in FLOWN_PARAMS + ["aero.cl_cruise", "aero.cd_cruise", "structures.mtom_kg"]:
-        if row[c] is not None:
+    numeric = FLOWN_PARAMS + TAIL_KEYS + ["aero.cl_cruise", "aero.cd_cruise", "structures.mtom_kg"] + [
+        c for c in FLOPS_COLUMNS if c not in ("flown_design_fingerprint", "cruise.design_fingerprint",
+                                              "trim_mass_basis_source")]
+    for c in numeric:
+        if row.get(c) is not None:
             row[c] = num(row[c])
     return row
+
+
+def detect_contract(design: dict | None, design_flown: dict | None, kb: list[dict]) -> tuple[str, str]:
+    """Which contract a link ran under, from the run itself (never from the study name).
+
+    CONTRACT_FLOPS when the link called aviary get_cruise_point (B305/B324: Fn_DES from aviary's cruise point), or
+    its design.json / design_flown.json has the keys MAS-Aviary writes since B324 (aviary_cruise_point,
+    engine_sizing, aero.drag_coupling). Otherwise CONTRACT_V1."""
+    if any(e.get("tool") == "get_cruise_point" for e in kb):
+        return CONTRACT_FLOPS, "the link called get_cruise_point (B305/B324)"
+    for name, d in (("design_flown.json", design_flown), ("design.json", design)):
+        d = d or {}
+        keys = [k for k in ("aviary_cruise_point", "engine_sizing") if k in d]
+        if (d.get("aero") or {}).get("drag_coupling"):
+            keys.append("aero.drag_coupling")
+        if keys:
+            return CONTRACT_FLOPS, f"{name} has {keys} (written since B324)"
+    return CONTRACT_V1, "no get_cruise_point call and no B324 keys in design.json / design_flown.json"

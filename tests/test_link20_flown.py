@@ -113,7 +113,7 @@ def test_coupled_columns_are_the_counted_flight_not_design_json(tmp_path):
     # what the link left / design.json is kept, under its own names
     assert row[f"design_json.{CL}"] == 0.64 and row["design_json.aero.cl_cruise"] == 0.64
     assert row["design_json.structures.mtom_kg"] == 91234.5
-    for f in fl.FLAGS:                       # the clean link raises no flag
+    for f in [f for f in fl.FLAGS if f not in fl.NEW_CONTRACT_FLAGS]:     # the clean link raises no flag
         assert row[f"flag.{f}"] is False, (f, row[f"flag.{f}.detail"])
 
 
