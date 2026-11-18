@@ -24,6 +24,11 @@ import json
 
 import pytest
 
+# Drag model decision (Jessica, 2026-11-18): SU2's CL and drag factor are no longer injected into aviary, so the
+# injection bounds gate these tests cover was removed with it. An out-of-range SU2 CL now refuses the mission in
+# aero_guard (tests/test_b111_nonphysical_aero.py, tests/test_b281_final_rerun_fixes.py).
+pytestmark = pytest.mark.skip(reason="SU2 aero injection removed by the drag model decision of 2026-11-18")
+
 from src.coordination.design_state import DesignState
 from src.tools import coupling
 from src.tools.data_plane import (

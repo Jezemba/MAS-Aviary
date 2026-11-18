@@ -130,10 +130,38 @@ class TestToolOutputStillGroundTruth:
 FIXTURE_KB = __import__("pathlib").Path(__file__).parent / "fixtures_kb_v2nothink_missions.jsonl"
 
 
+def _converged_fixture(tmp_path):
+    """B281 (audit F3): the recorded v2nothink missions all ended "converged": false, which is not a result any more.
+    These tests are about WHERE the metrics come from, so they read the same records marked converged."""
+    import json as _json
+
+    out = tmp_path / "kb_converged.jsonl"
+    rows = []
+    for line in FIXTURE_KB.read_text().splitlines():
+        e = _json.loads(line)
+        o = e.get("outputs")
+        if isinstance(o, dict) and o.get("converged") is False:
+            o["converged"] = True
+        rows.append(_json.dumps(e))
+    out.write_text("\n".join(rows))
+    return out
+
+
 def _configure(monkeypatch, link, attempt, path=FIXTURE_KB):
     from src.tools import knowledge_base as kbm
 
+    if path == "converged":
+        path = _converged_fixture(_TMP[0])
     monkeypatch.setattr(kbm, "_run_config", {"path": str(path), "chain_link": link, "attempt": attempt, "seed": None})
+
+
+_TMP = [None]
+
+
+@pytest.fixture(autouse=True)
+def _tmp(tmp_path):
+    _TMP[0] = tmp_path
+    yield
 
 
 class TestMetricsFromTheKnowledgeBase:
@@ -142,13 +170,15 @@ class TestMetricsFromTheKnowledgeBase:
         expected = {1: 23030.134334151855, 2: 22997.584843876724, 3: 22997.983315263606}
         for attempt, fuel in expected.items():
             _configure(monkeypatch, 0, attempt)
+            assert _extract_aviary_eval_from_messages([]) is None       # B281 (F3): unconverged, not a result
+            _configure(monkeypatch, 0, attempt, path="converged")
             out = _extract_aviary_eval_from_messages([])
             assert out["fuel_burned_kg"] == pytest.approx(fuel)
-            assert out["gtow_kg"] > 100000 and out["converged"] is False
+            assert out["gtow_kg"] > 100000 and out["converged"] is True
 
     def test_gtow_and_the_get_results_only_fields_come_from_the_tools(self, monkeypatch):
         """Link 5's eval said gtow 0.0 (the agent wrote "Gross Mass"); the tools said 101,409 kg."""
-        _configure(monkeypatch, 4, 1)
+        _configure(monkeypatch, 4, 1, path="converged")
         out = _extract_aviary_eval_from_messages([_msg("Gross Mass: 101409.13 kg\nFuel Burned: 1 kg")])
         assert out["fuel_burned_kg"] == pytest.approx(22413.49364206984)
         assert out["gtow_kg"] == pytest.approx(101409.13436013744)
@@ -159,7 +189,7 @@ class TestMetricsFromTheKnowledgeBase:
         """Link 4 attempt 1: every run_simulation refused -- no metrics, even with prose present."""
         _configure(monkeypatch, 3, 1)
         assert _extract_aviary_eval_from_messages([_msg(REAL_MISSION_PROSE, tools=("run_simulation",))]) is None
-        _configure(monkeypatch, 3, 2)
+        _configure(monkeypatch, 3, 2, path="converged")
         assert _extract_aviary_eval_from_messages([])["fuel_burned_kg"] == pytest.approx(20302.31579250006)
 
     def test_another_attempt_or_link_is_never_used(self, monkeypatch):
@@ -174,6 +204,10 @@ class TestMetricsFromTheKnowledgeBase:
         from scripts.stat_batch_runner import measured_fuel_from_kb
 
         lines = [_json.loads(l) for l in FIXTURE_KB.read_text().splitlines()]
+        raw = tmp_path / "kb_raw.jsonl"
+        raw.write_text("\n".join(_json.dumps(e) for e in lines if e["chain_link"] == 0))
+        assert measured_fuel_from_kb(raw, 1) is None           # B281 (F3): unconverged missions are not counted
+        lines = [_json.loads(l) for l in _converged_fixture(tmp_path).read_text().splitlines()]
         link1 = tmp_path / "kb.jsonl"
         link1.write_text("\n".join(_json.dumps(e) for e in lines if e["chain_link"] == 0))
         assert measured_fuel_from_kb(link1, 1) == pytest.approx(23030.134334151855)

@@ -178,7 +178,7 @@ def calls(monkeypatch):
 
 
 DESIGN = {"aero": {"cl_cruise": 0.56, "cd_cruise": 0.023},
-          "structures": {"wing_mass_kg": 8735.0, "mtom_kg": 78126.0},
+          "structures": {"wing_mass_kg": 8735.0, "mtom_kg": 78126.0, "sizing_converged": True},
           "propulsion": {"sfc_cruise": 0.643, "fn_lbf": 8144.0, "cycle_converged": True}}
 
 
@@ -190,7 +190,9 @@ def test_a_seeded_baseline_still_sets_the_engine_session(calls, monkeypatch, tmp
     report = graph_preinit.prepare({})
     assert "error" not in report and report["results"].startswith("cached baseline")
     assert ("set_inputs", {"session_id": "cyc1", "values": {}}) in calls
-    assert dp.engine_is_current()
+    # Drag model decision 2026-11-18: a seeded engine counts as current only once aviary's cruise point of this
+    # design exists (the engine is sized on it); at pre-init there is none yet.
+    assert not dp.engine_is_current()
 
 
 def test_a_later_link_keeps_its_engine_inputs(calls):

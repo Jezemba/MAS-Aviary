@@ -23,58 +23,55 @@ def _state():
     init_data_plane(DesignState(), TOOL_SERVER_MAP)
 
 
-def _seed(cl=None, cd=None, mtom=78126.0, fn=None):
+def _seed(ld=None, mtom=78126.0, fn=None, monkeypatch=None):
+    """Drag model decision (Jessica, 2026-11-18): the engine is sized on the trim mass basis and aviary's FLOPS cruise
+    lift-to-drag (aviary-mcp get_cruise_point), no longer on SU2's CL/CD."""
+    import src.tools.data_plane as _dp
+
     ds = get_design_state()
     ds.data_store["mass_mtom_kg"] = mtom
-    if cl is not None:
-        coupling.put_var(ds, "aero.cl_cruise", cl)
-        coupling.put_var(ds, "aero.cd_cruise", cd)
+    if monkeypatch is not None:
+        monkeypatch.setattr(_dp, "trim_mass_basis", lambda: (mtom, "test basis"))
+        monkeypatch.setattr(_dp, "carried_engine", lambda: ("/decks/d.deck", 1.3, "carried"))
+    if ld is not None:
+        ds.data_store.update({"aviary_cruise_point": {"lift_to_drag": ld, "mass_kg": mtom, "cl": 0.56,
+                                                      "cd": 0.56 / ld, "engine_scale_used": 1.3,
+                                                      "cd_depends_on_engine_scale": False,
+                                                      "design_fingerprint": "fp"},
+                              "aviary_design_fingerprint": "fp"})
     if fn is not None:
         coupling.put_var(ds, "prop.fn_lbf", fn)
         # B187: a cycle result the framework sized on this mass and drag.
-        from src.tools import data_plane as _dp
-
         ds.data_store["prop_cycle_key"] = _dp._cycle_sizing_key()
     return ds
 
 
-def test_the_old_coefficient_is_the_l_over_d_17_case():
-    """FN_DES_PER_KG_LBF = g / 17 / 2 / 4.448 * 1.25: the coupled formula at L/D 17 reproduces it."""
-    assert coupling.fn_des_from_drag(73000, 17.0, 1.0) == pytest.approx(coupling.mtom_to_pycycle_fn_des(73000), rel=1e-3)
-
-
-def test_bench_engine_scale_one_at_the_old_assumption():
-    assert coupling.fn_to_aviary_engine_scale(coupling.mtom_to_pycycle_fn_des(73000)) == pytest.approx(1.0, abs=0.01)
-
-
-def test_fn_des_follows_the_measured_drag():
-    _seed(cl=0.5563, cd=0.0395)
+def test_fn_des_follows_aviarys_cruise_lift_to_drag(monkeypatch):
+    _seed(ld=14.1, monkeypatch=monkeypatch)
     resolved = resolve_request("set_inputs", {"session_id": "s", "values": {"fan:PR": 1.685}})
-    fn = resolved["values"]["Fn_DES"]
-    cd_total = coupling.total_cruise_cd(0.0395)
-    # the framework uses the cruise Reynolds number, this the nominal one: within 1%
-    assert fn == pytest.approx(78126.0 * 9.81 / (0.5563 / cd_total) / 2 / 4.448 * 1.25, rel=1e-2)
-    assert fn > coupling.mtom_to_pycycle_fn_des(78126.0) * 1.5   # L/D ~9.5, not 17
+    assert resolved["values"]["Fn_DES"] == pytest.approx(78126.0 * 9.81 / 14.1 / 2 / 4.448 * 1.25)
 
 
-def test_the_framework_thrust_replaces_a_copied_one():
+def test_the_framework_thrust_replaces_a_copied_one(monkeypatch):
     """The sandbox's propulsion agent passed Fn_DES 6336 (copied from design.json); it used to win."""
-    _seed(cl=0.5563, cd=0.0395)
+    _seed(ld=14.1, monkeypatch=monkeypatch)
     resolved = resolve_request("set_inputs", {"session_id": "s", "values": {"Fn_DES": 6336.0}})
-    assert resolved["values"]["Fn_DES"] > 9000
+    assert resolved["values"]["Fn_DES"] > 7000
     out = json.loads(intercept_response("set_inputs", json.dumps({"success": True})))
     assert out["framework_applied"]["overridden"]["Fn_DES"]["asked"] == 6336.0
 
 
-def test_without_aero_the_mass_based_thrust_and_an_agent_value_stand():
-    _seed()
-    assert resolve_request("set_inputs", {"values": {}})["values"]["Fn_DES"] == pytest.approx(
-        coupling.mtom_to_pycycle_fn_des(78126.0))
-    assert resolve_request("set_inputs", {"values": {"Fn_DES": 7000.0}})["values"]["Fn_DES"] == 7000.0
+def test_without_aviarys_cruise_point_no_thrust_is_assumed_and_an_agent_value_does_not_stand(monkeypatch):
+    """Was: the mass-based thrust (L/D 17 assumed) and an agent value stood. Now nothing is assumed: Fn_DES is not
+    set and the reason is recorded; run_cycle is refused (tests/test_b281_final_rerun_fixes.py)."""
+    _seed(monkeypatch=monkeypatch)
+    assert "Fn_DES" not in resolve_request("set_inputs", {"values": {}})["values"]
+    assert "Fn_DES" not in resolve_request("set_inputs", {"values": {"Fn_DES": 7000.0}})["values"]
+    assert get_design_state().data_store["engine_sizing_error"]
 
 
-def test_aviary_gets_pycycles_thrust_as_engine_scale():
-    _seed(fn=11872.0)
+def test_aviary_gets_pycycles_thrust_as_engine_scale(monkeypatch):
+    _seed(ld=14.1, fn=11872.0, monkeypatch=monkeypatch)
     resolved = resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": {
         "Aircraft.Engine.SCALE_FACTOR": 1.0}})
     assert resolved["parameters"]["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(11872.0 / 5936.0)
@@ -82,7 +79,7 @@ def test_aviary_gets_pycycles_thrust_as_engine_scale():
     assert "Aircraft.Engine.SCALE_FACTOR" in out["framework_applied"]["overridden"]
 
 
-def test_no_cycle_result_leaves_the_engine_alone():
-    _seed()
+def test_no_cycle_result_leaves_the_engine_alone(monkeypatch):
+    _seed(monkeypatch=monkeypatch)
     resolved = resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": {"Aircraft.Wing.AREA": 120.0}})
     assert "Aircraft.Engine.SCALE_FACTOR" not in resolved["parameters"]

@@ -29,6 +29,11 @@ def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle", "run_cycle": "pycycle",
                                                  "get_outputs": "pycycle"})
     dp._call_ctx.__dict__.clear()
+    # Drag model decision 2026-11-18: the engine is sized on the trim mass basis and aviary's cruise point.
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
+    dp._design_state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0,
+                                                               "design_fingerprint": "fp"},
+                                        "aviary_design_fingerprint": "fp"})
     yield
     dp._call_ctx.__dict__.clear()
 
@@ -68,11 +73,12 @@ def test_su2_gets_twice_the_semi_span_reference_area(tool):
     assert out["ref_area"] == pytest.approx(122.7815, abs=1e-3)      # D150 full wing
 
 
-def test_a_caller_supplied_reference_area_still_wins():
+def test_a_caller_supplied_reference_area_no_longer_wins():
+    """B281 (audit F10): REF_AREA is the geometry's when the framework has it (was: the caller's won)."""
     coupling.put_var(dp._design_state, "geom.reference_area", 61.39, source_tool="t")
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "ref_area": 130.1})
-    assert out["ref_area"] == 130.1
+    assert out["ref_area"] == pytest.approx(122.78)
 
 
 # ---- B129: the cycle is captured from get_outputs too ---------------------------------------------
@@ -312,10 +318,12 @@ def test_su2_gets_the_aspect_ratio_and_the_mission_flight_state(tool):
     assert out["cruise_mach"] == 0.78 and out["cruise_altitude_ft"] == 33000.0
 
 
-def test_a_caller_flight_state_is_kept():
+def test_a_caller_flight_state_is_replaced_by_the_missions():
+    """B281 (audit F10): the mission's flight state always (was: a caller's value was kept)."""
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "cruise_altitude_ft": 36000.0})
-    assert out["cruise_altitude_ft"] == 36000.0
+    assert out["cruise_altitude_ft"] == 33000.0
+    assert _store()["_su2_kept_back_last"]["cruise_altitude_ft"] == 36000.0
 
 
 # ---- an unconverged engine cycle is not a result ----------------------------------------------------
@@ -349,19 +357,22 @@ def test_a_converged_sized_mtom_is_preferred():
     dp.intercept_response("estimate_mass", json.dumps({"status": "success", "mass_breakdown": {
         "mTOM_kg": 78126.0, "mTOM_sized_kg": 91172.0, "sizing_converged": True,
         "components": {"mWing_kg": 8736.0, "mWing_source": "flops"}}}))
-    assert _store()["mass_mtom_kg"] == 91172.0
+    assert _store()["mass_mtom_kg"] == 91172.0       # (the sized mass of a converged estimate)
 
 
 def test_an_unconverged_sized_mtom_is_not_used():
     dp.intercept_response("estimate_mass", json.dumps({"status": "success", "mass_breakdown": {
         "mTOM_kg": 78126.0, "mTOM_sized_kg": 91172.0, "sizing_converged": False,
         "components": {"mWing_kg": 8736.0, "mWing_source": "flops"}}}))
-    assert _store()["mass_mtom_kg"] == 78126.0
+    # B281 (audit F4): not the CPACS starting mass either -- the estimate is not usable and is withdrawn.
+    assert "mass_mtom_kg" not in _store() and "did not converge" in _store()["mass_estimate_error"]
 
 
 # ---- version safety: injected arguments only reach servers that declare them ------------------------
 
-def test_injected_arguments_are_dropped_for_an_older_server(monkeypatch):
+def test_an_older_server_without_the_coupled_arguments_is_refused(monkeypatch):
+    """B281 (audit F16): was "dropped for an older server". A coupled argument the server does not take refuses the
+    call (the mass would be sized off the mission)."""
     from smolagents import Tool
 
     from src.tools.type_coercion import wrap_tool_with_middleware
@@ -379,5 +390,5 @@ def test_injected_arguments_are_dropped_for_an_older_server(monkeypatch):
             return json.dumps({"status": "success", "mass_breakdown": {}})
 
     out = wrap_tool_with_middleware(OldEstimateMass()).forward(cpacs_file_path="/nonexistent.xml")
-    assert "called_with" in seen                          # no TypeError from num_passengers etc.
-    assert "error" not in json.loads(out) or "unexpected keyword" not in json.loads(out).get("error", "")
+    assert "called_with" not in seen
+    assert json.loads(out)["error_code"] in ("SERVER_LACKS_COUPLED_ARGUMENT", "ENGINE_NOT_ON_RECORD")

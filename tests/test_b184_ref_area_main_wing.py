@@ -70,4 +70,4 @@ def test_get_wing_summary_of_the_tail_does_not_replace_the_wing():
     area, mac = _ref()
     assert area == pytest.approx(60.1306, abs=1e-3)
     assert mac == pytest.approx(4.1508, abs=1e-4)
-    assert coupling.get_var(dp._design_state, "geom.wing_wetted_area") == pytest.approx(107.37)
+    # (geom.wing_wetted_area went with the friction build-up, drag model decision of 2026-11-18.)

@@ -438,7 +438,7 @@ def test_f13_set_defaults_are_measured_and_derived_rows_are_not_stale(source):
         if (uid, key) in _MEASURED:
             assert default.strip() == _MEASURED[(uid, key)], (source, uid, key)
     assert "| 6336 |" not in text and "| 78,126 |" not in text
-    assert "| pycycle | from mass and su2 | set by framework | lbf |" in text
+    assert "| pycycle | from mass and aviary | set by framework | lbf |" in text
     assert "| pycycle, su2 | from mass | set by framework | kg |" in text
 
 

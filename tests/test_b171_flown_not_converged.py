@@ -30,13 +30,13 @@ def _state():
     init_data_plane(DesignState(), {"run_simulation": "aviary"})
 
 
-def test_the_tool_result_carries_a_warning_not_an_error():
+def test_an_unconverged_mission_is_not_a_result():
+    """B281 (audit F3, Jessica 2026-11-18) replaces B171's "a warning, not an error": the framework counts converged
+    missions only, and the reply says why in plain words, with the residuals."""
     out = json.loads(intercept_response("run_simulation", json.dumps(FLOWN_NOT_CONVERGED)))
-    assert out["flown"] is True and "error_code" not in out and out.get("valid") is not False
-    warning = out["convergence_warning"]
-    assert warning["note"].startswith("WARNING, not a failure")
-    assert warning["optimizer_message"] == "Positive directional derivative for linesearch"
-    assert [r["violation"] for r in warning["residuals"]] == [726.38, 84.36]
+    assert out["success"] is False and out["flown"] is False and out["error_code"] == "MISSION_NOT_CONVERGED"
+    assert "Positive directional derivative for linesearch" in out["error"]
+    assert "726.38" in out["error"] and "84.36" in out["error"]
 
 
 def test_no_fuel_is_still_did_not_fly():

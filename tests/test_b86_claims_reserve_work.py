@@ -43,6 +43,10 @@ def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_tool_server_map", dict(SERVERS))
     kbm.configure_run(None, 0, 1, None)
     wc.reset()
+    # B281: the framework now needs the mass basis and an engine on record (no defaults), and refuses a call whose
+    # server does not declare a coupled argument (audit F16) -- the stubs declare them.
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: (__file__, 1.0, "test"))
     yield
     wc.reset()
 
@@ -66,10 +70,11 @@ def _tool(name, response=None):
             return json.dumps(response if response is not None else {"success": True})
 
     T.name = name
-    T.inputs = {"session_id": {"type": "any", "description": "s", "nullable": True}}
+    names = ["session_id"] + sorted(dp.COUPLED_INJECTED_ARGS)          # B281 (F16): a real server's schema
+    T.inputs = {k: {"type": "any", "description": k, "nullable": True} for k in names}
     T.forward.__signature__ = inspect.Signature([
-        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-        inspect.Parameter("session_id", inspect.Parameter.KEYWORD_ONLY, default=None)])
+        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)] + [
+        inspect.Parameter(k, inspect.Parameter.KEYWORD_ONLY, default=None) for k in names])
     return wrap_tool_with_middleware(T())
 
 

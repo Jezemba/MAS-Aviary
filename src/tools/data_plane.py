@@ -993,6 +993,7 @@ def restore_refusal(refusal: dict | None) -> None:
 # B281 (audit F16): arguments the framework injects that carry a coupled or pinned value. A server that does not
 # declare one cannot run the call coupled, so the call is refused rather than run without it.
 COUPLED_INJECTED_ARGS = frozenset({"target_cl", "aspect_ratio", "ref_area", "takeoff_mass_kg", "cruise_mach",
+                                   "engine_deck_file", "engine_scale_factor",
                                    "cruise_altitude_ft", "num_passengers", "range_nmi"})
 
 
@@ -3887,6 +3888,11 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     aviary holds now.
     """
     if _design_state is None or _tool_server_map.get(tool_name) != "aviary" or not isinstance(data, dict):
+        return
+    if (data.get("success") is False or data.get("error_code")) and tool_name == CRUISE_POINT_TOOL:
+        # aviary-mcp 3c4e6b6: CRUISE_POINT_INPUT / CRUISE_POINT_ERROR -- the reason reaches the engine-sizing refusal.
+        _design_state.data_store["cruise_point_error"] = (f"{CRUISE_POINT_TOOL}: {data.get('error_code')}: "
+                                                          f"{str(data.get('error') or '')[:300]}")
         return
     if data.get("success") is False or data.get("error_code"):
         return

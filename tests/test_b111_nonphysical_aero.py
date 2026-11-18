@@ -35,6 +35,9 @@ def _aero(cl, cd):
 ])
 def test_the_observed_nonphysical_results_are_refused(cl, cd):
     _aero(cl, cd)
+    # Drag model decision 2026-11-18: CD is no longer guarded (it is not flown); these results came from sessions
+    # never configured for the aircraft -- untrimmed -- which is what refuses them now.
+    dp._design_state.data_store["aero_solve_trimmed"] = False
     refusal = aero_guard.aero_nonphysical("run_simulation", {})
     assert refusal["error_code"] == "AERO_NONPHYSICAL"
     assert "configure_from_cpacs(session_id='su2-session'" in refusal["error"]
@@ -71,9 +74,10 @@ def test_a_published_bound_still_wins():
 
 
 def test_an_out_of_range_cl_is_not_injected_even_without_get_design_space():
+    """Drag model decision 2026-11-18: SU2's CL is never injected now; an out-of-range CL still refuses the mission."""
     _aero(1.4247, 0.0245)
     dp._design_state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 10.0}
     resolved = {"session_id": "a", "parameters": {"Aircraft.Wing.ASPECT_RATIO": 10.0}}
     dp._inject_phase_h_aero(resolved)
     assert "Mission.Design.LIFT_COEFFICIENT" not in resolved["parameters"]
-    assert dp._design_state.data_store["aero_coupling_status"] == "AERO_OUT_OF_BOUNDS"
+    assert "outside the cruise range" in aero_guard.aero_nonphysical("run_simulation", {})["error"]

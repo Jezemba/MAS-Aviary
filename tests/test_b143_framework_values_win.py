@@ -47,24 +47,30 @@ def _resolve(params):
     return dp.resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": dict(params)})["parameters"]
 
 
+# Drag model decision (Jessica, 2026-11-18): the drag keys are aviary's model's; a call that sets them is refused
+# (DRAG_FROM_AVIARY_MODEL) and the framework injects neither (was: SU2's CL / drag factor replaced the caller's).
+NO_DRAG_KEYS = {k: v for k, v in ATTEMPT3_CALL.items()
+                if k not in ("Mission.Design.LIFT_COEFFICIENT", "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR")}
+
+
 def test_su2_and_mass_values_replace_the_callers():
-    p = _resolve(ATTEMPT3_CALL)
-    assert p["Mission.Design.LIFT_COEFFICIENT"] == pytest.approx(0.2403152789)
-    assert p["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] != 1.02
+    dp.take_refusal()
+    _resolve(ATTEMPT3_CALL)
+    assert dp.take_refusal()["error_code"] == "DRAG_FROM_AVIARY_MODEL"
+    p = _resolve(NO_DRAG_KEYS)
+    assert "Mission.Design.LIFT_COEFFICIENT" not in p and "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in p
     assert p["Aircraft.Wing.MASS"] == pytest.approx(8736.345205942507)     # B240: the wing mass itself
 
 
 def test_a_placeholder_string_is_replaced_not_sent():
     """Attempt 1 sent the table's 'from su2' / 'from mass' as values (aviary TYPE_ERROR)."""
-    p = _resolve({"Mission.Design.LIFT_COEFFICIENT": "from su2",
-                  "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": "from su2",
-                  "Aircraft.Wing.MASS_SCALER": "from mass"})
+    p = _resolve({"Aircraft.Wing.MASS_SCALER": "from mass"})
     assert "Aircraft.Wing.MASS_SCALER" not in p and isinstance(p["Aircraft.Wing.MASS"], float)
     assert all(isinstance(p[k], float) for k in p)
 
 
 def test_unmeasured_geometry_keeps_the_session_value():
-    p = _resolve(ATTEMPT3_CALL)
+    p = _resolve(NO_DRAG_KEYS)
     for key in ("Aircraft.Wing.SWEEP", "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH",
                 "Aircraft.Fuselage.MAX_WIDTH", "Aircraft.Fuselage.MAX_HEIGHT"):
         assert key not in p, key
@@ -73,17 +79,16 @@ def test_unmeasured_geometry_keeps_the_session_value():
 
 
 def test_the_caller_is_told_what_was_replaced():
-    _resolve(ATTEMPT3_CALL)
+    _resolve(dict(NO_DRAG_KEYS, **{"Aircraft.Wing.MASS": 9000.0}))
     out = json.loads(dp.intercept_response("set_aircraft_parameters",
                                            json.dumps({"success": True, "applied": []})))
     fa = out["framework_applied"]["overridden"]
-    assert fa["Mission.Design.LIFT_COEFFICIENT"]["asked"] == 0.5
-    assert fa["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"]["asked"] == 1.02
+    assert fa["Aircraft.Wing.MASS"]["asked"] == 9000.0
     ga = out["geometry_authority"]["overridden"]
     assert ga["Aircraft.Wing.SWEEP"]["asked"] == 27.33
 
 
 def test_matching_values_are_not_reported_as_overrides():
-    _resolve({"Mission.Design.LIFT_COEFFICIENT": 0.2403152789})
+    _resolve({"Aircraft.Wing.MASS": 8736.345205942507})
     out = json.loads(dp.intercept_response("set_aircraft_parameters", json.dumps({"success": True})))
-    assert "Mission.Design.LIFT_COEFFICIENT" not in (out.get("framework_applied") or {}).get("overridden", {})
+    assert "Aircraft.Wing.MASS" not in (out.get("framework_applied") or {}).get("overridden", {})

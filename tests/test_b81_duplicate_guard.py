@@ -61,6 +61,10 @@ def fresh(monkeypatch):
     monkeypatch.setattr(dp, "_tool_server_map", dict(SERVERS))
     kbm.configure_run(None, 0, 1, None)
     dg.register_blackboard(None)
+    # B281: the framework now needs the mass basis and an engine on record (no defaults), and refuses a call whose
+    # server does not declare a coupled argument (audit F16) -- the stubs declare them.
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: (__file__, 1.0, "test"))
     yield
 
 
@@ -86,6 +90,7 @@ class Server:
                 resp = server.responses.get(name, {"success": True})
                 return json.dumps(resp(kw) if callable(resp) else resp)
         T.name = name
+        inputs = list(inputs) + sorted(dp.COUPLED_INJECTED_ARGS - set(inputs))   # B281 (F16): a real server's schema
         T.inputs = {k: {"type": "any", "description": k, "nullable": True} for k in inputs}
         T.forward.__signature__ = None
         import inspect

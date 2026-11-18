@@ -27,6 +27,11 @@ def fresh(monkeypatch):
         "set_aircraft_parameters": "aviary", "run_simulation": "aviary",
         "run_su2_solver": "su2", "estimate_mass": "mass", "run_cycle": "pycycle"})
     kbm.configure_run(None, 0, 1, None)
+    # Drag model decision 2026-11-18: the engine is sized on the trim mass basis and aviary's cruise point.
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (72000.0, "test basis"))
+    dp.get_design_state().data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 72000.0,
+                                                                     "design_fingerprint": "fp"},
+                                             "aviary_design_fingerprint": "fp"})
     yield
 
 
@@ -93,10 +98,10 @@ def test_the_mission_will_not_run_on_aviarys_default_drag_polar():
     assert refusal is not None
     assert refusal["error_code"] == "MISSING_REQUIRED_PARAMETERS"
     assert refusal["success"] is False
-    missing = {m["parameter"]: m["state"] for m in refusal["missing"]}
-    assert missing["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == "missing"
+    # Drag model decision 2026-11-18: the SU2 solve is required as a RUN (its CL/CD are recorded, not injected).
+    missing = {m["producer"]: m["state"] for m in refusal["missing"]}
+    assert missing["su2"] == "missing"
     assert "run_su2_solver" in refusal["error"]
-    assert "DEFAULT drag polar" in refusal["error"]
 
 
 def test_the_mission_will_not_run_on_aviarys_internal_flops_wing_mass():
@@ -165,15 +170,16 @@ def test_re_running_the_discipline_clears_the_staleness():
 
 # ---- a value passed by hand counts ----------------------------------------------------------------
 
-def test_a_hand_passed_parameter_satisfies_the_contract():
-    """The contract is about what reaches the solver, not about who produced it."""
+def test_hand_passed_drag_keys_do_not_replace_the_su2_solve():
+    """Drag model decision 2026-11-18 (was: a hand-passed CL / drag factor satisfied the contract): the mission needs
+    the design's SU2 solve as a run; the drag keys are aviary's and refused at set_aircraft_parameters."""
     _mass_ran()
     _cycle_ran()
 
     assert _call("run_simulation") is not None          # no aero yet
     assert _call("run_simulation",
                  **{"Mission.Design.LIFT_COEFFICIENT": 0.51,
-                    "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 0.66}) is None
+                    "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 0.66}) is not None
 
 
 # ---- propulsion: required as a run, never claimed as coupled (B3) -----------------------------------
