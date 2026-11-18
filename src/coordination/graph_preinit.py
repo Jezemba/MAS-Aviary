@@ -49,12 +49,19 @@ def baseline_cpacs() -> str:
 
 # B254: bump when the code that produces the baseline changes. The key used to be the CPACS alone, so results from
 # old code were reused indefinitely and differed by machine (CD 0.02288 on ws8, 0.02232 on ws5 for one name).
-BASELINE_VERSION = "b254"
+# B281 (audit F9): bumped. "b254" caches were computed before B274-B281 (trim at the CPACS 78,126 kg, untrimmed
+# fallbacks, CPACS-mass Fn_DES); they are left on disk (nothing is deleted) and never read again. The trim mass is
+# part of the key too, so a changed canonical baseline.sized_mtom_kg never reuses a cache trimmed at another mass.
+BASELINE_VERSION = "b281"
 
 
 def _cache_path(cpacs: str) -> Path:
+    from src.tools.data_plane import trim_mass_basis
+
     digest = hashlib.md5(Path(cpacs).read_bytes()).hexdigest()
-    return CACHE_DIR / f"{digest}.{BASELINE_VERSION}.design.json"
+    mass, _ = trim_mass_basis()
+    tag = f"m{mass:.1f}" if mass is not None else "mnone"
+    return CACHE_DIR / f"{digest}.{BASELINE_VERSION}.{tag}.design.json"
 
 
 def _size_engine_session(design: dict | None = None) -> None:
@@ -71,7 +78,13 @@ def _size_engine_session(design: dict | None = None) -> None:
 
 
 def seed_from_design(design: dict) -> list[str]:
-    """Put a recorded design.json's discipline results into the data plane (as scripts/stage_sandbox.py)."""
+    """Put a recorded design.json's discipline results into the data plane (as scripts/stage_sandbox.py).
+
+    B281: a mass result is seeded only when its sizing converged (audit F4: no CPACS-mass fallback), the aero keeps
+    its solve's trim and convergence record (B277 / F7), and every seeded result is stamped with the fingerprint of
+    the design it belongs to -- the carried CPACS just opened -- so a morph in this link makes it stale like any
+    captured result (audit F8; before, seeded results had no fingerprint and were never stale).
+    """
     from src.tools import coupling
     from src.tools.data_plane import get_design_state
 
@@ -83,6 +96,7 @@ def seed_from_design(design: dict) -> list[str]:
         seeded.append("geometry.wing")
     if geo.get("fuselage"):
         store["geometry_fuselage"] = dict(geo["fuselage"], _source="graph pre-init")
+    producers = []
     aero = design.get("aero") or {}
     if aero.get("cl_cruise") is not None and aero.get("cd_cruise") is not None:
         store["aero_cl_cruise"], store["aero_cd_cruise"] = aero["cl_cruise"], aero["cd_cruise"]
@@ -90,18 +104,25 @@ def seed_from_design(design: dict) -> list[str]:
         coupling.put_var(ds, "aero.cd_cruise", aero["cd_cruise"], source_tool="graph pre-init")
         if aero.get("drag_assessment"):
             store["aero_drag_assessment"] = aero["drag_assessment"]
-        if "solve_trimmed" in aero:                # B277: the seeded aero keeps its solve's trim record
-            store["aero_solve_trimmed"] = aero.get("solve_trimmed")
-            store["aero_solve_target_cl"] = aero.get("solve_target_cl")
+        # B277 / B281: the seeded aero keeps its solve's record; a design.json without it seeds "unknown", which
+        # aero_guard refuses (audit F7).
+        store["aero_solve_trimmed"] = aero.get("solve_trimmed")
+        store["aero_solve_target_cl"] = aero.get("solve_target_cl")
+        store["aero_solve_converged"] = aero.get("solve_converged")
         seeded.append("aero")
+        producers.append("su2")
     st = design.get("structures") or {}
-    if st.get("wing_mass_kg") is not None:
+    if st.get("sizing_converged") is True and st.get("wing_mass_kg") is not None and st.get("mtom_kg") is not None:
         store["mass_wing_kg"] = st["wing_mass_kg"]
         coupling.put_var(ds, "mass.wing_kg", st["wing_mass_kg"], source_tool="graph pre-init")
-        seeded.append("structures.wing_mass_kg")
-    if st.get("mtom_kg") is not None:
         store["mass_mtom_kg"] = st["mtom_kg"]
         coupling.put_var(ds, "mass.mtom_kg", st["mtom_kg"], source_tool="graph pre-init")
+        store["mass_sizing_converged"] = True
+        seeded.append("structures")
+        producers.append("mass")
+    elif st:
+        store["mass_seed_skipped"] = (f"structures not seeded: sizing_converged {st.get('sizing_converged')!r}, "
+                                      f"mtom_kg {st.get('mtom_kg')!r}")
     prop = design.get("propulsion") or {}
     if prop.get("sfc_cruise") is not None:
         store["prop_cycle_outputs"] = {"prop.sfc_cruise": prop.get("sfc_cruise"), "prop.fn_lbf": prop.get("fn_lbf")}
@@ -115,6 +136,13 @@ def seed_from_design(design: dict) -> list[str]:
         store["prop_cycle_key"] = _cycle_sizing_key()
         store["cycle_sizing"] = {"session": (ds.sessions or {}).get("pycycle"), "key": store["prop_cycle_key"]}
         seeded.append("propulsion")
+        producers.append("pycycle")
+    if producers:
+        from src.tools.coupling_contract import current_design_fingerprint
+
+        fp = current_design_fingerprint()
+        for producer in producers:
+            store[f"_coupled_fp_{producer}"] = fp
     space = design.get("design_space") or {}
     if space.get("geometry"):
         store["design_space_components"] = {k: dict(v) for k, v in space["geometry"].items()}
@@ -124,15 +152,21 @@ def seed_from_design(design: dict) -> list[str]:
 
 
 def seed_mass_from_design(design: dict) -> float | None:
-    """Put a recorded design.json's MTOM into the data plane (the part of seed_from_design the SU2 trim reads)."""
+    """Put a recorded design.json's sized MTOM into the data plane before the SU2 session opens (B276).
+
+    B281: only a converged sizing (audit F4). The SU2 trim itself no longer reads this (data_plane.trim_mass_basis
+    takes the carried sized mass from carry_over); the seed is the MTOM Fn_DES and the take-off mass start from.
+    """
     from src.tools import coupling
     from src.tools.data_plane import get_design_state
 
     ds = get_design_state()
-    mtom = (design.get("structures") or {}).get("mtom_kg")
-    if mtom is None:
+    st = design.get("structures") or {}
+    mtom = st.get("mtom_kg")
+    if mtom is None or st.get("sizing_converged") is not True:
         return None
     ds.data_store["mass_mtom_kg"] = mtom
+    ds.data_store["mass_sizing_converged"] = True
     coupling.put_var(ds, "mass.mtom_kg", mtom, source_tool="graph pre-init")
     return float(mtom)
 
@@ -209,12 +243,20 @@ def prepare(carry_over: dict | None) -> dict:
 
                 state = get_design_state()
                 doc = build_design(state.data_store or {}, state.sessions or {})
-                if (doc.get("aero") or {}).get("cl_cruise") is not None:
+                # B281: only a usable baseline is cached -- a trimmed, converged SU2 solve and a converged mass
+                # sizing -- or every later link 1 would reuse a bad one.
+                aero, st = doc.get("aero") or {}, doc.get("structures") or {}
+                problems = [name for name, ok in (
+                    ("no SU2 CL/CD", aero.get("cl_cruise") is not None),
+                    ("the SU2 solve was not trimmed", aero.get("solve_trimmed") is True),
+                    ("the SU2 solve did not converge", aero.get("solve_converged") is True),
+                    ("the mass sizing did not converge", st.get("sizing_converged") is True)) if not ok]
+                if not problems:
                     CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     cache.write_text(json.dumps(doc, indent=1, default=str))
                     report["cached_as"] = cache.name
                 else:
-                    report["cache_skipped"] = "the baseline SU2 solve produced no CL/CD"
+                    report["cache_skipped"] = "; ".join(problems)
         write_design(get_design_state())
     except Exception as exc:  # pragma: no cover - pre-init must not stop a link; the agents can still work
         logger.warning("[graph pre-init] %s", exc)

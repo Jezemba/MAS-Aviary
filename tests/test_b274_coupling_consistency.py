@@ -27,6 +27,8 @@ def fresh(monkeypatch):
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})
+    # B281 (A8): the trim mass comes from carry-over / canonical; these tests give it directly (the store's MTOM if set).
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (state.data_store.get("mass_mtom_kg", 78126.0), "test basis"))
     dp._PLANFORM_CACHE.clear()
     for name in ("su2_session", "su2_config_override", "morph", "wing_uid"):
         if hasattr(dp._call_ctx, name):
@@ -200,19 +202,22 @@ def test_the_same_value_typed_is_not_reported_as_replaced(fresh):
     assert "_target_cl_asked" not in fresh.data_store
 
 
-def test_without_a_framework_target_the_callers_is_kept_and_flagged(fresh):
+def test_without_a_framework_target_the_callers_value_is_refused_not_kept(fresh):
+    """B281: was "kept and flagged"; no target means the configuration is refused (no silent default)."""
+    dp.take_refusal()
     resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "target_cl": 0.56})
-    assert resolved["target_cl"] == 0.56
-    out = json.loads(dp.intercept_response("configure_from_cpacs", json.dumps({})))
-    assert out["framework_target_cl"]["source"] == "caller"
-
-
-def test_without_any_target_the_response_says_the_session_is_untrimmed(fresh):
-    resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s"})
     assert "target_cl" not in resolved
-    out = json.loads(dp.intercept_response("configure_from_cpacs", json.dumps({})))
-    assert out["framework_target_cl"]["target_cl"] is None
-    assert "NOT trimmed" in out["framework_target_cl"]["note"]
+    refusal = dp.take_refusal()
+    assert refusal["error_code"] == "NO_TRIM_TARGET" and "wing area" in refusal["error"]
+
+
+def test_without_a_trim_mass_the_configuration_is_refused(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (None, "canonical baseline.sized_mtom_kg is not set (None)"))
+    _ready(fresh)
+    dp.take_refusal()
+    dp.resolve_request("configure_from_cpacs", {"session_id": "s"})
+    refusal = dp.take_refusal()
+    assert refusal["error_code"] == "NO_TRIM_TARGET" and "sized_mtom_kg is not set" in refusal["error"]
 
 
 # ---- B277 (d): the guard refuses untrimmed / unchecked / below-induced aero ------------------------------
@@ -261,6 +266,7 @@ def test_a_trimmed_checked_solve_flies(fresh):
     """O_SP 5: trimmed to 0.55919, CD 0.02496 above the floor 0.01372 (source su2)."""
     _aero(fresh, 0.558735238, 0.0249581227)
     fresh.data_store["aero_solve_trimmed"] = True
+    fresh.data_store.update({"aero_solve_target_cl": 0.5591901447, "aero_solve_converged": True})
     fresh.data_store["aero_drag_assessment"] = {"source": "su2", "aspect_ratio": 9.369319,
                                                 "oswald_efficiency": 0.7732, "cd_reported": 0.0249581227}
     assert aero_guard.aero_nonphysical("run_simulation", {}) is None
@@ -271,6 +277,7 @@ def test_a_floored_solve_flies(fresh):
     floor = cl * cl / (math.pi * ar * e)
     _aero(fresh, cl, floor)
     fresh.data_store["aero_solve_trimmed"] = True
+    fresh.data_store.update({"aero_solve_target_cl": cl, "aero_solve_converged": True})
     fresh.data_store["aero_drag_assessment"] = {"source": "induced_floor", "aspect_ratio": ar,
                                                 "oswald_efficiency": e, "cd_reported": floor}
     assert aero_guard.aero_nonphysical("run_simulation", {}) is None
@@ -319,7 +326,7 @@ def test_graph_preinit_creates_the_su2_session_on_the_carried_mass(fresh, monkey
     monkeypatch.setattr(graph_preinit, "_call", fake_call)
     cpacs = _wing_xml(tmp_path)
     previous = {"aero": {"cl_cruise": 0.62, "cd_cruise": 0.032, "solve_trimmed": True, "solve_target_cl": 0.62},
-                "structures": {"mtom_kg": 89455.7, "wing_mass_kg": 9000.0}}
+                "structures": {"mtom_kg": 89455.7, "wing_mass_kg": 9000.0, "sizing_converged": True}}
     report = graph_preinit.prepare({"starting_design": {"CPACS_FILE": cpacs}, "previous_design": previous})
     assert seen["mass_at_su2"] == 89455.7
     assert report["mass_seeded_before_su2"] == 89455.7
@@ -472,6 +479,7 @@ def test_the_second_mission_of_an_iteration_keeps_the_deck_reference(fresh, monk
     assert dp.engine_deck_current("av") is False
     resolved = {"session_id": "av", "parameters": {}}
     dp._inject_engine_scale(resolved)                                # the agent's / framework's set call
+    dp._capture_applied_design("set_aircraft_parameters", {"success": True, "applied": []})   # aviary accepted it
     assert resolved["parameters"]["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(7716.79 / 5900.0)
     dp._ensure_engine_deck({"session_id": "av"})                     # second mission: same cached file
     assert len(attach_calls) == 1                                    # nothing re-attached ...

@@ -707,16 +707,26 @@ def measured_fuel_from_kb(kb_path, attempt: int | None = None) -> float | None:
     if not path.is_file():
         return None
     measured = None
+    # B281 (audit F3): only CONVERGED missions count. A run_simulation that did not converge (or burned no fuel) is
+    # not a measurement, and neither is a get_results read after it: aviary keeps the last converged run's
+    # trajectory after a failed run (audit M14), so get_results counts only after a converged run_simulation.
+    last_sim_ok = False
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             entry = _json.loads(line)
         except ValueError:
             continue
-        if entry.get("tool") not in ("run_simulation", "get_results") or entry.get("status") != "success":
+        if entry.get("tool") not in ("run_simulation", "get_results"):
             continue
         if attempt is not None and entry.get("attempt") not in (None, attempt):
             continue
         outputs = entry.get("outputs") or {}
+        ok = (entry.get("status") == "success" and outputs.get("success") is not False
+              and outputs.get("converged") is not False and outputs.get("valid") is not False)
+        if entry.get("tool") == "run_simulation":
+            last_sim_ok = ok
+        if not ok or (entry.get("tool") == "get_results" and not last_sim_ok):
+            continue
         for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
             if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
                 try:
@@ -754,6 +764,10 @@ def reconcile_measured_fuel(result, result_dict: dict, kb_path, attempt: int | N
         new_value = measured
     for d in targets:
         d["fuel_burned_kg"] = new_value
+        if new_value is None and d.get("gtow_kg") is not None:
+            # B281 (audit F3): no converged mission, so no GTOW either (it would be an unconverged or refused one's).
+            result_dict["gtow_classifier_value"] = d["gtow_kg"]
+            d["gtow_kg"] = None
     result_dict["fuel_source"] = source
     result_dict["fuel_measured_kg"] = measured
     if classified is not None and (new_value is None or abs(float(classified) - new_value) > 1.0):

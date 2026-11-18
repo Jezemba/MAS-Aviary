@@ -36,8 +36,9 @@ su2_config:
   AOA: 2.0
   REYNOLDS_NUMBER: 30000000            # ignored for inviscid EULER, kept nominal
   KIND_TURB_MODEL: "SA"                # ignored for inviscid EULER
-  FREESTREAM_PRESSURE: 26436.0         # ISA @ 33000 ft (DLR-F25 cruise altitude)
-  FREESTREAM_TEMPERATURE: 222.8        # ISA @ 33000 ft
+  # B281 (audit F18): FREESTREAM_PRESSURE / FREESTREAM_TEMPERATURE removed. They read 26436.0 Pa / 222.8 K, labelled
+  # "ISA @ 33000 ft", but ISA there is 26,200.8 Pa / 222.77 K. The framework always passes cruise_altitude_ft and
+  # su2-mcp sets the ISA freestream from it (drag_model.isa); su2-mcp fix/final-rerun refuses other values.
   REF_DIMENSIONALIZATION: "DIMENSIONAL"
   CONV_NUM_METHOD_FLOW: "JST"
   JST_SENSOR_COEFF: "( 0.5, 0.02 )"
@@ -91,6 +92,14 @@ propulsion:
   fan_pressure_ratio: null             # UNSET per decision — pycycle-mcp uses the HBTF default (repo: fan.PR=1.685)
   BPR: 5.105                           # repo DESIGN.splitter.BPR (baked into the HBTF model)
   # OPR is a DERIVED output in pycycle (~30.5 from fan*lpc*hpc PR), NOT an input — do not pin OPR=40.
+  # B281 (audit F12): the design table's "Set (fixed)" rows, pinned on every set_inputs by the framework
+  # (data_plane._pin_cycle_fixed_inputs). tests/test_b281_* check these equal the prompt tables.
+  fixed_inputs:
+    fan.eff: 0.8948
+    lpc.eff: 0.9243
+    hpc.eff: 0.8707
+    hpt.eff: 0.8888
+    lpt.eff: 0.8996
 
 # ---- MISSION (aviary-mcp, port 8600) — already uniform, keep ---------------
 mission:
@@ -102,3 +111,12 @@ mission:
   range_nmi: 2500                      # DLR-F25
   num_passengers: 239                  # DLR-F25
   optimizer_max_iter: 200              # SLSQP iteration budget (already uniform)
+
+# ---- BASELINE (B281, A8 decision of Jessica 2026-11-18) --------------------
+# The SU2 lift target is computed for mass-mcp's SIZED gross mass carried from the previous iteration; on the
+# first iteration for the baseline's sized mass, given here. It must be mass-mcp's converged sizing of the D150
+# baseline (D150_simple.xml) at the study's mission, with the mass-mcp version the study runs (A15 / B280 fixes).
+# Until it is set, every first-iteration SU2 configuration is REFUSED (NO_TRIM_TARGET) -- deliberately: there is no
+# fallback mass (audit F4). The graph-routed baseline cache key includes this value.
+baseline:
+  sized_mtom_kg: null

@@ -238,7 +238,11 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         # 1. Type coercion
         coerced = coerce_tool_arguments(tool, kwargs)
         # 2. Resolve data store references (also injects typed coupling vars)
+        from src.tools import data_plane as _dp
+        _outer_refusal = _dp.take_refusal()       # B281: a refusal belongs to the call that recorded it
         resolved = resolve_request(tool.name, coerced)
+        _refusal = _dp.take_refusal()
+        _dp.restore_refusal(_outer_refusal)
         # 2. Version safety: an argument the MIDDLEWARE added (aspect_ratio, cruise_mach,
         #    num_passengers, ...) must not reach a server whose tool does not declare it -- an older
         #    su2/mass/pycycle server rejects unknown arguments and every call would fail. Arguments
@@ -246,9 +250,22 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         _declared = set((getattr(tool, "inputs", None) or {}).keys())
         if _declared:
             for _key in [k for k in resolved if k not in coerced and k not in _declared]:
+                # B281 (audit F16): a COUPLED value the framework must pass cannot be dropped silently -- the call
+                # would run without the coupling. The server version does not match; refuse and say so.
+                if _key in _dp.COUPLED_INJECTED_ARGS and _refusal is None:
+                    _refusal = {"success": False, "error_code": "SERVER_LACKS_COUPLED_ARGUMENT",
+                                "error": (f"{tool.name} was not called: the framework must pass {_key} to it for a "
+                                          f"coupled result, and this {tool.name} server does not take {_key} (a "
+                                          "server version that does not match the framework). Nothing an agent "
+                                          "can change; report it.")}
                 resolved.pop(_key)
+                _dp.note_compat_drop(tool.name, _key)
                 logging.getLogger(__name__).info(
                     "[compat] %s does not declare %r; dropped the injected value", tool.name, _key)
+        if _refusal is not None:
+            _kb_record(tool.name, resolved, _refusal, status="refused")
+            import json as _json0
+            return _json0.dumps(_refusal)
         # 2a. Fail fast on a ref-shaped argument that does not resolve. Otherwise
         #     the literal key string is sent to the server and interpreted as
         #     DATA, producing an error that names the wrong problem (observed:
@@ -302,6 +319,9 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             from src.tools import aero_guard
 
             _stale = aero_guard.aero_nonphysical(tool.name, resolved)
+        if _stale is None:
+            # B281: nor may it fly when a value it needs did not reach aviary (A10 / F11).
+            _stale = _dp.mission_input_refusal(tool.name, resolved)
         if _stale is not None:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, _stale, status="refused")
@@ -374,6 +394,21 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         # B267: the framework's own work before and after the server call is bounded too, not only the
         # server round trip (l2c seq_graph: get_su2_status waited 3 h past its 900 s budget).
         from src.tools import call_watchdog
+        if tool.name in ("run_simulation", "close_cycle_model"):
+            # B281 (B273): the engine deck is built BEFORE the call, under generate_engine_deck's own budget, as the
+            # optimizer evaluator does. A new deck takes ~1,800-1,940 s; built inside run_simulation's whole-call
+            # budget (1,800 + 300 s) it was abandoned and the mission did not fly.
+            from src.tools import data_plane as _dp2
+            try:
+                call_watchdog.bounded("generate_engine_deck", _dp2.prebuild_engine_deck, tool.name, kwargs)
+            except call_watchdog.ToolCallTimeout as exc:
+                import json as _json1
+                refusal = {"success": False, "error_code": "ENGINE_DECK_NOT_READY",
+                           "error": (f"{tool.name} was not run: the engine deck for the current engine was still being "
+                                     f"built when its time ran out ({exc}). It keeps building and is cached; call "
+                                     f"{tool.name} again later.")}
+                _kb_record(tool.name, dict(kwargs), refusal, status="refused")
+                return _json1.dumps(refusal)
         return call_watchdog.bounded(tool.name, middleware_forward, *args, **kwargs)
 
     tool.forward = bounded_forward

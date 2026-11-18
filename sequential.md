@@ -23,17 +23,17 @@ GLOBAL DESIGN SPACE
 The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized:
 | Variable | Type | Set in (tool: input) | Used by | Default | Range | Units |
 |---|---|---|---|---|---|---|
-| Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.78 | 100 to 160 | m² |
-| Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.37 | 7 to 17 (reliable 9 to 11.5) | none |
+| Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.8287 | 100 to 160 | m² |
+| Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.3632 | 7 to 17 (reliable 9 to 11.5) | none |
 | Wing sweep angle | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `sweep` | su2, mass | 21.65 | 15 to 40 | deg |
-| Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1 | not set | m² |
-| Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.98 | not set | none |
+| Horizontal tail area | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `area` | su2 | 31.1184 | not set | m² |
+| Horizontal tail aspect ratio | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `aspect_ratio` | su2 | 4.9810 | not set | none |
 | Horizontal tail sweep angle | Set | tigl: `set_high_level_parameters`, horizontal tail `Wing2H`, key `sweep` | su2 | 28.00 | not set | deg |
 | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2 | 21.5 | not set | m² |
-| Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.61 | not set | none |
+| Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2 | 1.6069 | not set | none |
 | Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 37.20 | not set | deg |
-| Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.68 | 28 to 50 | m |
-| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.15 | 3 to 5.5 | m |
+| Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.6843 | 28 to 50 | m |
+| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.1490 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | °R |
 | Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | up to 3640 | °R |
@@ -46,7 +46,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | HPC efficiency | Set (fixed) | pycycle: `hpc.eff` | pycycle | 0.8707 | fixed | none |
 | HPT efficiency | Set (fixed) | pycycle: `hpt.eff` | pycycle | 0.8888 | fixed | none |
 | LPT efficiency | Set (fixed) | pycycle: `lpt.eff` | pycycle | 0.8996 | fixed | none |
-| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | 6336 | set by framework | lbf |
+| Design thrust | Derived | framework: pycycle `Fn_DES` from max take-off mass and the SU2 drag (thrust sized to drag) | pycycle | from mass and su2 | set by framework | lbf |
 | Engine scale factor | Derived | framework: pycycle design thrust to aviary `Aircraft.Engine.SCALE_FACTOR` | aviary | from propulsion | set by framework | none |
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
@@ -56,7 +56,7 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Lift coefficient | Derived | framework: cruise lift W/(q·S), SU2 trimmed to it, to aviary `Mission.Design.LIFT_COEFFICIENT` | su2, aviary | ~0.56 | set by framework | none |
 | Drag factor | Derived | framework: su2 result to aviary `Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR` | aviary | from su2 | set by framework | none |
 | Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |
-| Max take-off mass | Derived | mass / aviary | pycycle, su2 | 78,126 | set by framework | kg |
+| Max take-off mass | Derived | mass / aviary | pycycle, su2 | from mass | set by framework | kg |
 | Design range | Condition | aviary: `configure_mission.range_nmi` | aviary, mass | 2500 | fixed | nmi |
 | Passengers | Condition | mission definition | mass | 239 | fixed | none |
 | Cruise Mach | Condition | su2 `MACH_NUMBER`, pycycle `fc.MN` | su2, pycycle, mass | 0.78 | fixed | none |

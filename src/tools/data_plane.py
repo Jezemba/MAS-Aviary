@@ -583,80 +583,115 @@ def intercept_response(tool_name: str, response: Any) -> Any:
 
 
 def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
-    """Phase K-A: stash mass-mcp's wing mass for later injection.
+    """Phase K-A: stash mass-mcp's wing mass and sized MTOM for later injection.
 
-    mass-mcp's ``estimate_mass`` returns a structured ``mass_breakdown``
-    block with ``components.mWing_kg`` carrying the FLOPS-sourced wing
-    mass (in Aviary Wing.MASS scope after the wwr fix in mass-mcp
-    commit bb99056). Without a server-side handoff that number stays
-    inside the structures stage's text output — aviary then computes
-    its OWN wing mass from internal FLOPS and ignores the external
-    discipline. resolve_request injects it as
-    ``Aircraft.Wing.MASS`` (kg, B240) into the next
-    ``set_aircraft_parameters`` so aviary's mission reflects the
-    coupled wing mass.
+    mass-mcp's ``estimate_mass`` returns a structured ``mass_breakdown`` block with ``components.mWing_kg``
+    (the FLOPS wing mass, Aviary Wing.MASS scope) and, since mass-mcp feat/mission-and-sized-mtom,
+    ``mTOM_sized_kg`` with ``sizing_converged``. resolve_request injects the wing mass as ``Aircraft.Wing.MASS``
+    (kg, B240), the MTOM as pycycle's Fn_DES basis (Phase K-B) and as aviary's take-off mass (B239).
+
+    B281 (audit F4 / F14, Jessica 2026-11-18: no silent fallback). An estimate is a result only when its sizing
+    converged and its numbers are in range. Before, an unconverged sizing silently kept mass-mcp's STARTING
+    mass (the CPACS-declared 78,126 kg) as the MTOM -- 42 counted l20_final flights flew Fn_DES and take-off
+    mass on it -- and an out-of-range wing mass or MTOM was skipped with the previous value left in place.
+    Now such an estimate is recorded, the previous mass result is withdrawn (nothing stale flies), and the
+    reply is marked not successful with the reason, so the mission and the cycle are refused until a valid
+    estimate exists.
     """
     if _design_state is None or tool_name != "estimate_mass":
         return
-
+    if data.get("success") is False or data.get("error"):
+        return
     breakdown = data.get("mass_breakdown")
     if not isinstance(breakdown, dict):
         return
     components = breakdown.get("components")
     if not isinstance(components, dict):
         return
-
-    wing_kg = components.get("mWing_kg")
-    if wing_kg is None:
-        return
-    try:
-        wing_f = float(wing_kg)
-    except (TypeError, ValueError):
-        return
-    # Sanity bracket — a 70-tonne narrow-body wing is ~5,000-12,000 kg
-    # structural. Anything outside [1000, 30000] is almost certainly a
-    # parsing accident.
-    if not (1000.0 <= wing_f <= 30000.0):
-        logger.info(
-            "Skipping mass-mcp wing mass=%.1f kg — outside [1k, 30k] "
-            "sanity bracket.",
-            wing_f,
-        )
-        return
-
-    _design_state.data_store["mass_wing_kg"] = wing_f
+    store = _design_state.data_store
     from src.tools import coupling as _coupling
+
+    problems = []
+    try:
+        wing_f = float(components.get("mWing_kg"))
+        if not (1000.0 <= wing_f <= 30000.0):
+            problems.append(f"the wing mass {wing_f:.1f} kg is outside [1,000, 30,000] kg")
+    except (TypeError, ValueError):
+        wing_f = None
+        problems.append(f"no wing mass in the reply (mWing_kg {components.get('mWing_kg')!r})")
+    converged = breakdown.get("sizing_converged") is True
+    mtom_f = None
+    if not converged:
+        problems.append("mass-mcp's gross-mass sizing did not converge (sizing_converged "
+                        f"{breakdown.get('sizing_converged')!r}), so its masses are at the starting gross mass "
+                        f"{breakdown.get('mTOM_kg')} kg, not at this aircraft's mass")
+    else:
+        try:
+            mtom_f = float(breakdown.get("mTOM_sized_kg"))
+            if not (20_000.0 <= mtom_f <= 200_000.0):
+                problems.append(f"the sized gross mass {mtom_f:.1f} kg is outside [20,000, 200,000] kg")
+        except (TypeError, ValueError):
+            problems.append(f"no sized gross mass in the reply (mTOM_sized_kg {breakdown.get('mTOM_sized_kg')!r})")
+    if problems:
+        message = "; ".join(problems)
+        store["mass_estimate_error"] = message
+        store["mass_sizing_converged"] = converged
+        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source"):
+            store.pop(key, None)
+        reg = store.get(_coupling.REGISTRY_KEY) or {}
+        for name in ("mass.wing_kg", "mass.mtom_kg"):
+            reg.pop(name, None)
+        data["success"] = False
+        data["error_code"] = "MASS_ESTIMATE_NOT_USABLE"
+        data["error"] = (f"This mass estimate is not a result: {message}. It was not applied, and the previous mass "
+                         "result was withdrawn. The mission and the engine cycle need a usable estimate of the "
+                         "current design (check the CPACS file it read).")
+        logger.warning("[B281] estimate_mass not usable: %s", message)
+        return
+    store.pop("mass_estimate_error", None)
+    store["mass_sizing_converged"] = True
+    store["mass_wing_kg"] = wing_f
     _coupling.put_var(_design_state, "mass.wing_kg", wing_f, source_tool="estimate_mass")
-    _design_state.data_store["mass_wing_source"] = str(
-        components.get("mWing_source", "unknown")
-    )
+    store["mass_wing_source"] = str(components.get("mWing_source", "unknown"))
+    store["mass_mtom_kg"] = mtom_f
+    _coupling.put_var(_design_state, "mass.mtom_kg", mtom_f, source_tool="estimate_mass")
     # B84: the design this mass was sized for, plus the CPACS it actually read -- the
     # baseline fixture and the exported morph are easy to confuse (B21/B30).
     from src.tools.coupling_contract import note_capture
-    note_capture("mass", {"wing_kg": wing_f, "sized_on": data.get("cpacs_file_path")})
-    logger.info(
-        "Captured wing mass from estimate_mass: %.1f kg (source=%s)",
-        wing_f, components.get("mWing_source"),
-    )
+    note_capture("mass", {"wing_kg": wing_f, "mtom_kg": mtom_f, "sized_on": data.get("cpacs_file_path")})
+    logger.info("Captured wing mass %.1f kg (source=%s) and sized MTOM %.1f kg from estimate_mass",
+                wing_f, components.get("mWing_source"), mtom_f)
 
-    # Phase K-B: also stash MTOM for pycycle Fn_DES injection. mass-mcp's mTOM_kg is the gross
-    # mass the sizing STARTED from (the CPACS value); mass-mcp feat/mission-and-sized-mtom also
-    # reports mTOM_sized_kg, which is a result only when sizing_converged is True.
-    mtom_kg = breakdown.get("mTOM_kg")
-    if breakdown.get("sizing_converged") is True and breakdown.get("mTOM_sized_kg") is not None:
-        mtom_kg = breakdown["mTOM_sized_kg"]
-    if mtom_kg is not None:
-        try:
-            mtom_f = float(mtom_kg)
-            if 20_000.0 <= mtom_f <= 200_000.0:
-                _design_state.data_store["mass_mtom_kg"] = mtom_f
-                from src.tools import coupling as _cpl
-                _cpl.put_var(_design_state, "mass.mtom_kg", mtom_f, source_tool="estimate_mass")
-                logger.info(
-                    "Captured MTOM from estimate_mass: %.1f kg", mtom_f,
-                )
-        except (TypeError, ValueError):
-            pass
+
+def trim_mass_basis() -> tuple[float | None, str]:
+    """The mass the SU2 lift target is computed for (B281, A8 decision of 2026-11-18), and where it comes from.
+
+    mass-mcp's SIZED gross mass carried from the previous iteration's design (design_flown.json via carry_over);
+    on the first iteration, the baseline's sized mass (canonical ``baseline.sized_mtom_kg``). None, with the
+    reason, when that mass does not exist: the caller refuses rather than fall back.
+    """
+    try:
+        from src.coordination.prompt_assembly import read_carry_over
+
+        previous = (read_carry_over() or {}).get("previous_design")
+    except Exception:      # pragma: no cover
+        previous = None
+    if isinstance(previous, dict) and previous:
+        st = previous.get("structures") or {}
+        mtom = st.get("mtom_kg")
+        if st.get("sizing_converged") is True and isinstance(mtom, (int, float)) and 20_000.0 <= mtom <= 200_000.0:
+            return float(mtom), "mass-mcp sized mass carried from the previous iteration"
+        return None, ("the previous iteration has no converged mass-mcp sized mass "
+                      f"(structures.mtom_kg {mtom!r}, sizing_converged {st.get('sizing_converged')!r})")
+    try:
+        from src.config.canonical import load_canonical
+
+        base = (load_canonical().get("baseline") or {}).get("sized_mtom_kg")
+    except Exception as exc:      # pragma: no cover
+        return None, f"the canonical baseline could not be read ({exc})"
+    if isinstance(base, (int, float)) and 20_000.0 <= base <= 200_000.0:
+        return float(base), "baseline sized mass (canonical baseline.sized_mtom_kg)"
+    return None, f"canonical baseline.sized_mtom_kg is not set ({base!r})"
 
 
 def _note_aero_capture_failure(reason: str, data: dict) -> None:
@@ -740,6 +775,10 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
     if fuel > _ZERO_FUEL_FLOOR_KG:
         return
     data["valid"] = False
+    # B281 (A11, l20_final N_IF 12: 8.2e-06 kg with "success": true): the reply itself says it is not a success, so
+    # nothing downstream (the agents, the knowledge base, the runner) can read it as one.
+    data["success"] = False
+    data["flown"] = False
     data["error_code"] = "ZERO_FUEL"
     # B147: say what aviary reported, not a guess. The old note told every caller to "check the
     # coupled inputs", and the mdo_integrator repeated it back as a geometry/aero "mismatch" in
@@ -783,6 +822,8 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
     """
     if _design_state is None or tool_name != "run_simulation":
         return
+    if data.get("success") is False or data.get("converged") is False:
+        return                      # B281: not a flown result (F3 / A11), so not the geometry the next link inherits
     summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
     try:
         fuel = float((summary or {}).get("fuel_burned_kg"))
@@ -826,34 +867,28 @@ def _write_flown_design() -> None:
 
 
 def _warn_flown_not_converged(tool_name: str, data: dict) -> None:
-    """A flown mission whose optimiser stopped short of its tolerance is a result with a warning (B171).
+    """A mission whose optimiser did not converge is not a result (B281, audit F3; replaces B171's warning).
 
-    aipexws8 v2sc2 link 1 (2026-10-10): fuel 22,999 kg, GTOW 102,188 kg, "converged": false with
-    residuals of 726 kg (climb mass), 84 kg (mass balance) and 22 nm (descent distance). The aircraft
-    flew; the integrator prompt read "did not converge" as RETRY and the runner scored it sim_fail.
-    The framework only states what aviary reported -- whether the residuals matter is the agents' call.
-    Did-not-fly (no fuel) stays with _flag_zero_fuel.
+    B171 (2026-10-10) marked a ``converged: false`` mission "flown" with a warning and left the residuals to the
+    agents. Jessica's decision of 2026-11-18: the tool reports non-convergence honestly (aviary-mcp is being
+    changed to answer ``success: false``), the framework counts converged missions only, and the agents decide
+    what to do. Eight counted l20_final flights were ``converged: false`` with residuals up to 36,704 nmi of
+    distance defect. Whatever this aviary-mcp version answers, a ``converged: false`` reply is made not successful
+    here, with aviary's own message and residuals, so it is never counted, carried or reported as a result.
     """
     if tool_name not in _FLOWN_MISSION_TOOLS or data.get("converged") is not False:
         return
-    summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
-    outputs = summary.get("outputs") if isinstance(summary.get("outputs"), dict) else summary
-    try:
-        fuel = float((outputs or {}).get("fuel_burned_kg"))
-    except (TypeError, ValueError):
-        return
-    if fuel <= _ZERO_FUEL_FLOOR_KG:
-        return
     failure = data.get("failure") if isinstance(data.get("failure"), dict) else {}
     residuals = [v for v in (failure.get("violated_constraints") or []) if isinstance(v, dict)]
-    data["flown"] = True
-    data["convergence_warning"] = {
-        "note": (f"WARNING, not a failure: the mission flew ({fuel:.1f} kg of fuel burned) and these are its "
-                 "results, but aviary's optimiser stopped before meeting its convergence tolerance. The "
-                 "remaining residuals are listed so you can judge how far to trust the numbers."),
-        "optimizer_message": failure.get("optimizer_message"),
-        "residuals": [{"constraint": v.get("constraint"), "violation": v.get("violation")} for v in residuals],
-    }
+    data["success"] = False
+    data["flown"] = False
+    data.setdefault("error_code", "MISSION_NOT_CONVERGED")
+    data.setdefault("error", (
+        "The mission did not converge: aviary's optimiser stopped before meeting its tolerance"
+        + (f" (\"{failure['optimizer_message']}\")" if failure.get("optimizer_message") else "")
+        + ", so its fuel and masses are not a result. Remaining residuals, worst first: "
+        + ("; ".join(f"{v.get('constraint')} {v.get('violation')}" for v in residuals[:5]) or "none reported")
+        + "."))
 
 
 def _capture_applied_design(tool_name: str, data: dict) -> None:
@@ -869,6 +904,10 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
     applied = data.get("applied")
     if not isinstance(applied, list):
         return
+    pending = getattr(_call_ctx, "engine_pending", None)
+    _call_ctx.engine_pending = None
+    if pending and not (data.get("success") is False or data.get("error_code")):
+        _design_state.data_store.setdefault("engine_injected_key", {})[pending[0]] = pending[1]
     current = dict(_design_state.data_store.get("design_params_applied") or {})
     for item in applied:
         if isinstance(item, dict) and item.get("name") is not None and "new_value" in item:
@@ -921,6 +960,45 @@ def _mark_coupled_applied(reply=None) -> None:
 import threading as _threading
 
 _call_ctx = _threading.local()
+
+
+def _refuse_call(error_code: str, message: str, **extra) -> None:
+    """Refuse the call being resolved: the middleware returns this instead of calling the server (B281).
+
+    resolve_request cannot return a refusal itself; it records one here and type_coercion's middleware takes it
+    right after resolve_request (take_refusal). Used where the framework cannot compute a value it must set
+    (no silent default): the call does not run, and the reply says what is missing.
+    """
+    _call_ctx.refusal = {"success": False, "error_code": error_code, "error": message, **extra}
+
+
+def take_refusal() -> dict | None:
+    """The refusal recorded for this call (and clear it)."""
+    refusal = getattr(_call_ctx, "refusal", None)
+    _call_ctx.refusal = None
+    return refusal
+
+
+def restore_refusal(refusal: dict | None) -> None:
+    _call_ctx.refusal = refusal
+
+
+# B281 (audit F16): arguments the framework injects that carry a coupled or pinned value. A server that does not
+# declare one cannot run the call coupled, so the call is refused rather than run without it.
+COUPLED_INJECTED_ARGS = frozenset({"target_cl", "aspect_ratio", "ref_area", "takeoff_mass_kg", "cruise_mach",
+                                   "cruise_altitude_ft", "num_passengers", "range_nmi"})
+
+
+def note_compat_drop(tool_name: str, key: str) -> None:
+    """Record an injected argument dropped because the server does not declare it (never silent; B281)."""
+    if _design_state is None:
+        return
+    drops = _design_state.data_store.setdefault("compat_dropped_arguments", {})
+    drops.setdefault(tool_name, [])
+    if key not in drops[tool_name]:
+        drops[tool_name].append(key)
+
+
 _GEOMETRY_WING_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP",
                        "Aircraft.Wing.TAPER_RATIO")
 # B133: the fuselage is geometry too. tigl measures it (OCC bounding box) in every fuselage morph.
@@ -942,6 +1020,10 @@ SU2_PROTECTED_KEYS = frozenset({
     "CONV_STARTITER", "ITER", "EXT_ITER", "MAX_ITER", "INNER_ITER", "TIME_ITER", "TIME_DOMAIN",
     "MACH_NUMBER", "MACH", "AOA", "FREESTREAM_PRESSURE", "FREESTREAM_TEMPERATURE", "REF_AREA",
 })
+# B281 (F10): su2-mcp's own argument names that a caller may put in `overrides` (su2-mcp B173 takes them as the
+# arguments). The framework passes target_cl, aspect_ratio and the flight state itself; oswald_efficiency stays
+# su2-mcp's Raymer value for every solve.
+_SU2_FRAMEWORK_ARGS = frozenset({"target_cl", "aspect_ratio", "oswald_efficiency", "cruise_mach", "cruise_altitude_ft"})
 
 
 def design_authority() -> str:
@@ -1029,14 +1111,10 @@ def _inject_target_cl(resolved: dict) -> None:
                 if str(key).strip().upper() == "TARGET_CL":
                     asked = value
 
-    mass_kg = coupling.get_var(_design_state, "mass.mtom_kg") or store.get("mass_mtom_kg")
-    mass_source = "mass-mcp"
-    if mass_kg is None:
-        # B146: in the sequential pipeline aero runs BEFORE structures, so no mass-mcp result exists
-        # yet and the solve fell back to a fixed 2 deg (CL 0.24 against ~0.57). Use the design mTOM
-        # the CPACS file itself declares -- the mass that geometry was sized for.
-        mass_kg = _cpacs_design_mtom(resolved.get("cpacs_file_path"))
-        mass_source = "cpacs designMasses/mTOM"
+    # B281 (A8 decision, Jessica 2026-11-18): the trim mass is mass-mcp's SIZED mass carried from the previous
+    # iteration (iteration 1: the baseline's sized mass, canonical baseline.sized_mtom_kg). Never the CPACS-declared
+    # 78,126 kg (audit F4), never this iteration's own estimate (that made the target depend on call order, B276).
+    mass_kg, mass_source = trim_mass_basis()
     if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
         _auto_measure_wing()    # B154: nobody measured the wing; the framework does (a LIVE session only)
     if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
@@ -1055,24 +1133,23 @@ def _inject_target_cl(resolved: dict) -> None:
         target = coupling.cruise_lift_coefficient(
             mass_kg, mission.get("cruise_mach", 0.78), mission.get("cruise_altitude_ft", 33000), area)
     if target is None:
-        if asked is not None:
-            resolved["target_cl"] = asked
-            store["_target_cl_note_last"] = {
-                "target_cl": asked, "source": "caller",
-                "note": (f"The framework could not compute the cruise-lift target (mass {mass_kg}, wing area {area}); "
-                         "the target_cl you passed was used.")}
-            logger.warning("[B275] no framework target CL (mass=%s wing area=%s); the caller's %s is used",
-                           mass_kg, area, asked)
-        else:
-            resolved.pop("target_cl", None)
-            store["_target_cl_note_last"] = {
-                "target_cl": None, "source": "none",
-                "note": (f"The framework could not compute the cruise-lift target (mass {mass_kg}, wing area {area}), "
-                         "so this session is NOT trimmed: it solves at a fixed angle of attack. run_simulation will "
-                         "refuse aero from it. Measure the wing or give the session a readable CPACS file, then "
-                         "configure_from_cpacs again.")}
-            logger.warning("[B277] no target CL: mass=%s wing area=%s -- the session is untrimmed and its result "
-                           "will be refused by run_simulation", mass_kg, area)
+        # B281: no silent fixed AOA and no caller value in place of the framework's (was: the caller's target_cl
+        # was kept). The call does not run; the reply says what is missing.
+        resolved.pop("target_cl", None)
+        missing = []
+        if mass_kg is None:
+            missing.append(f"the trim mass ({mass_source})")
+        if area is None:
+            missing.append("the wing area (no measurement and no readable CPACS file for this solve)")
+        if not missing:
+            missing.append(f"a cruise lift coefficient in range for mass {mass_kg} kg and wing {area} m^2")
+        _refuse_call("NO_TRIM_TARGET",
+                     "The SU2 session was not configured: the framework sets the SU2 lift target "
+                     "(cruise lift W / (q S)) and could not compute it: missing " + "; ".join(missing) + ". "
+                     "Give the solve the design's CPACS file (cpacs_file_path) and try again; if the mass is "
+                     "missing, nothing an agent can change fixes it -- report it.")
+        logger.warning("[B281] no target CL: mass=%s (%s) wing area=%s -- SU2 configuration refused",
+                       mass_kg, mass_source, area)
         return
     resolved["target_cl"] = target
     # B275: a trim written into create_su2_session's initial_config text is the framework's too (su2-mcp's configure
@@ -1336,7 +1413,9 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
 
 
 # The design-space inputs of the engine (Jessica's table): what design.json reports as set.
-_ENGINE_INPUTS = ("splitter.BPR", "T4_MAX", "fan.PR", "lpc.PR", "hpc.PR")
+# B281 (audit F12): T4_TAKEOFF and T4_CLIMB are design variables in the table ("Set"), so they are recorded and
+# carried like the others (they used to revert to the defaults in the next link).
+_ENGINE_INPUTS = ("splitter.BPR", "T4_MAX", "fan.PR", "lpc.PR", "hpc.PR", "T4_TAKEOFF", "T4_CLIMB")
 
 
 def _capture_design_space(tool_name: str, data: dict) -> None:
@@ -1485,7 +1564,8 @@ def _note_coupled_override(key: str, asked, used: float) -> None:
 
 def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
     """Tell the caller which SU2 settings it asked to change were kept as the framework set them (B151)."""
-    if _design_state is None or tool_name != "update_config_entries" or not isinstance(data, dict):
+    if _design_state is None or not isinstance(data, dict) or tool_name not in (
+            "update_config_entries", "create_su2_session", "configure_from_cpacs"):   # B281: all three
         return
     kept = _design_state.data_store.pop("_su2_kept_back_last", None)
     if kept:
@@ -1641,14 +1721,19 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     # not, and the ONLY difference in the aero stage was that run 3 reached for
     # sample_surface_solution instead. SU2 had solved cleanly in both.
     if tool_name == "run_su2_solver":
+        # B281 (audit F15): only a solve that succeeded is captured. The coefficients of a failed solve are not this
+        # design's aero, and the old capture took them regardless of `success`.
+        if data.get("success") is False or data.get("error"):
+            return
         coeffs = data.get("final_coefficients")
         if (not isinstance(coeffs, dict) or not coeffs) and data.get("success"):
             # B85/2.2: the solve succeeded but did not report coefficients. Read them out of
             # the session's history file rather than waiting for a read_history_csv that may
             # never come -- in validate8_net it never did, and the mission stayed refused for
             # a design whose aero was solved and sitting on disk.
-            workdir = ((_design_state.data_store.get("_su2_workdirs") or {}).get(
-                str(data.get("session_id") or "")) or _design_state.data_store.get("_su2_workdir_latest"))
+            # B281 (F15): only THIS session's folder -- the "latest" folder fallback could read another session's file.
+            sid = str(data.get("session_id") or getattr(_call_ctx, "su2_session", None) or "")
+            workdir = (_design_state.data_store.get("_su2_workdirs") or {}).get(sid)
             if isinstance(workdir, str):
                 coeffs = _coefficients_from_history(workdir)
                 if coeffs:
@@ -1677,6 +1762,7 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
             # B277: an assessment belongs to ONE solve; never let an earlier solve's stand for this one.
             _design_state.data_store.pop("aero_drag_assessment", None)
         _note_solve_trim()
+        _note_solve_convergence(data.get("converged"), data.get("residual_history"))
         _store_aero(cl_f, cd_f, source="run_su2_solver")
         return
 
@@ -1730,7 +1816,16 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     floored = _induced_floor(cl_f)
     if floored is not None and cd_f < floored:
         cd_f = floored
+    # B281 (audit F15): su2-mcp (fix/final-rerun) says whether the solve that wrote this file converged and reached its
+    # lift target. A last row of an unconverged or untrimmed solve is not a result: nothing is captured.
+    conv = data.get("convergence") if isinstance(data.get("convergence"), dict) else {}
+    if conv.get("converged") is False or conv.get("trimmed") is False:
+        _design_state.data_store["aero_capture_failure"] = (
+            "read_history_csv: the solve that wrote this history did not converge or did not reach its lift target")
+        logger.warning("[B281] %s; not captured", _design_state.data_store["aero_capture_failure"])
+        return
     _note_solve_trim()
+    _note_solve_convergence(conv.get("converged"), rows)
     _store_aero(cl_f, cd_f, source="read_history_csv")
 
 
@@ -1757,6 +1852,43 @@ def note_su2_trim(tool_name: str, resolved: dict, result) -> None:
             target = resolved.get("target_cl")
     _design_state.data_store.setdefault("su2_session_trim", {})[str(session)] = (
         float(target) if isinstance(target, (int, float)) else None)
+
+
+def _note_solve_convergence(reported, rows) -> None:
+    """B281 (audit F7 / M10): whether the solve the captured CL/CD come from reached its residual target.
+
+    su2-mcp 1b6b1b1 reports the last history row with `success` = exit code 0, whether or not the residual reached
+    CONV_RESIDUAL_MINVAL (S_GR 12: stopped at 499/500 iterations, rms[Rho] -4.23 against -6, flown). A ``converged``
+    flag in the reply wins (su2-mcp is being changed to send one); otherwise the last row's rms[Rho] is compared
+    with the canonical CONV_RESIDUAL_MINVAL the framework pins for every solve. Unknown stays None, which
+    aero_guard refuses.
+    """
+    store = _design_state.data_store
+    if isinstance(reported, bool):
+        store["aero_solve_converged"] = reported
+        store["aero_solve_residual"] = {"basis": "su2-mcp converged flag"}
+        return
+    try:
+        from src.config.canonical import load_canonical
+
+        target = float((load_canonical().get("su2_config") or {})["CONV_RESIDUAL_MINVAL"])
+    except Exception:      # pragma: no cover
+        target = None
+    rho = None
+    if isinstance(rows, list) and rows and isinstance(rows[-1], dict):
+        for key, value in rows[-1].items():
+            if str(key).strip().strip('"').strip().lower() == "rms[rho]":
+                try:
+                    rho = float(value)
+                except (TypeError, ValueError):
+                    rho = None
+    if target is None or rho is None:
+        store["aero_solve_converged"] = None
+        store["aero_solve_residual"] = {"basis": "unknown", "rms_rho": rho, "target": target}
+        return
+    store["aero_solve_converged"] = rho <= target + 1e-9
+    store["aero_solve_residual"] = {"basis": "last history row", "rms_rho": rho, "target": target,
+                                    "iterations": len(rows)}
 
 
 def _note_solve_trim() -> None:
@@ -3027,6 +3159,22 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name in ("configure_from_cpacs", "create_su2_session") and _design_state:
         from src.tools import coupling as _cpl
 
+        # B281 (audit F10): the framework's SU2 settings are not the caller's to change in these two tools either
+        # (B151 protected them in update_config_entries only). O_GR 17 sent FREESTREAM_* in overrides, N_GR 1
+        # ASPECT_RATIO / OSWALD_EFFICIENCY (su2-mcp takes those as arguments, B173). They are removed and the
+        # reply says so (framework_kept); the canonical settings and the framework's arguments are what the solve uses.
+        _kept = {}
+        _ov = resolved.get("overrides")
+        if isinstance(_ov, dict):
+            for _k in list(_ov):
+                if str(_k).strip().upper() in SU2_PROTECTED_KEYS or str(_k).strip().lower() in _SU2_FRAMEWORK_ARGS:
+                    _kept[_k] = _ov.pop(_k)
+        if resolved.get("oswald_efficiency") is not None:
+            _kept["oswald_efficiency"] = resolved.pop("oswald_efficiency")   # su2-mcp's Raymer e is the study's
+        if _kept:
+            _design_state.data_store["_su2_kept_back_last"] = _kept
+            logger.warning("[B281] kept the framework's SU2 settings in %s; ignored %s", tool_name, sorted(map(str, _kept)))
+
         # B138: the aspect ratio su2-mcp needs for the induced-drag floor, from the geometry.
         # B253: the geometry's value wins over a caller's, as for the aviary coupled values (B143): an agent
         # re-sent the previous wing's 10.004 for a 10.520 wing.
@@ -3040,11 +3188,18 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _mission = load_canonical().get("mission", {}) or {}
         except Exception:      # pragma: no cover - never block a solve on config
             _mission = {}
-        if resolved.get("cruise_mach") is None and _mission.get("cruise_mach") is not None:
-            resolved["cruise_mach"] = float(_mission["cruise_mach"])
-        if resolved.get("cruise_altitude_ft") is None and _mission.get("cruise_altitude_ft") is not None:
-            resolved["cruise_altitude_ft"] = float(_mission["cruise_altitude_ft"])
+        # B281 (F10): the mission's flight state always (a caller's value used to win).
+        for _arg in ("cruise_mach", "cruise_altitude_ft"):
+            if _mission.get(_arg) is None:
+                continue
+            if resolved.get(_arg) is not None and float(resolved[_arg]) != float(_mission[_arg]):
+                _design_state.data_store.setdefault("_su2_kept_back_last", {})[_arg] = resolved[_arg]
+            resolved[_arg] = float(_mission[_arg])
 
+        # B281 (F10): REF_AREA is the geometry's when the framework has it; a caller's value used to win here.
+        if resolved.get("ref_area") is not None and (_cpl.get_var(_design_state, "geom.reference_area") or (
+                _design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")):
+            _design_state.data_store.setdefault("_su2_kept_back_last", {})["ref_area"] = resolved.pop("ref_area")
         if resolved.get("ref_area") is None:
             _area = _cpl.get_var(_design_state, "geom.reference_area")
             if _area:
@@ -3105,14 +3260,21 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                         "override(s) for %s",
                         len(_su2), len(caller), tool_name,
                     )
-            except Exception:  # canonical is a convenience here, never a blocker
-                pass
+                else:
+                    raise ValueError("the canonical su2_config is empty")
+            except Exception as exc:
+                # B281 (F10): the canonical numerics are the study's control; without them the solve would run on
+                # whatever the session holds. Refuse rather than pass silently.
+                _refuse_call("CANONICAL_SU2_SETTINGS_UNAVAILABLE",
+                             f"{tool_name} was not run: the framework could not load the study's SU2 settings ({exc}). "
+                             "Nothing an agent can change; report it.")
 
     # Auto-fix SU2 marker names in update_config_entries
     if tool_name == "update_config_entries" and _design_state:
         updates = resolved.get("updates")
         if isinstance(updates, dict):
-            kept_back = {k: updates.pop(k) for k in list(updates) if str(k).upper() in SU2_PROTECTED_KEYS}
+            kept_back = {k: updates.pop(k) for k in list(updates) if str(k).upper() in SU2_PROTECTED_KEYS
+                         or str(k).strip().lower() in _SU2_FRAMEWORK_ARGS}   # B281 (F10)
             if kept_back:
                 _design_state.data_store["_su2_kept_back_last"] = kept_back
                 logger.warning("[B151] kept the framework's SU2 settings; ignored %s", sorted(kept_back))
@@ -3151,12 +3313,14 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name == "configure_mission" and _design_state and mcp_name == "aviary":
         _inject_takeoff_mass(resolved)
     if tool_name == "set_aircraft_parameters" and _design_state:
+        _call_ctx.engine_pending = None
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
         _inject_phase_k_wing_mass(resolved)
         _inject_engine_scale(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
         _inject_carried_engine(resolved)
+        _pin_cycle_fixed_inputs(resolved)
         _inject_phase_k_b_fn_des(resolved)
         _inject_cycle_flight_condition(resolved)
         # design.json design_space: the values actually sent, recorded once pycycle confirms them.
@@ -3254,8 +3418,11 @@ def _cycle_sizing_key() -> list | None:
         return None
     cl = _cpl.get_var(_design_state, "aero.cl_cruise")
     cd = _cpl.get_var(_design_state, "aero.cd_cruise")
+    # B281 (audit F9): the friction chord is part of what Fn_DES is sized on (B278), so it is part of the key: a
+    # carried or cached engine sized with another MAC is not current.
+    mac = _friction_mac()[0] if _design_state is not None else None
     return [round(float(mtom), 1), None if cl is None else round(float(cl), 5),
-            None if cd is None else round(float(cd), 6)]
+            None if cd is None else round(float(cd), 6), None if mac is None else round(float(mac), 5)]
 
 
 def engine_is_current() -> bool:
@@ -3341,7 +3508,15 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
         # The framework's value wins over a caller's, as for the aviary coupled values (B143).
         reynolds, swet_sref = _friction_inputs()
         cd_total = _cpl.total_cruise_cd(cd, reynolds, swet_sref)
-        fn_des_lbf = _cpl.fn_des_from_drag(mtom_kg, cl, cd_total)
+        try:
+            fn_des_lbf = _cpl.fn_des_from_drag(mtom_kg, cl, cd_total)
+        except ValueError as exc:
+            # B281 (audit F2): no clamp; an impossible thrust refuses the call and names its inputs.
+            _refuse_call("DESIGN_THRUST_NOT_PHYSICAL",
+                         f"set_inputs was not run: the design thrust Fn_DES the framework computes from the mass and "
+                         f"the SU2 drag is not physical ({exc}). Check those inputs (estimate_mass and the SU2 "
+                         "result) and produce them again.")
+            return
         if "Fn_DES" in values:
             _note_coupled_override("Fn_DES", values["Fn_DES"], fn_des_lbf)
         basis = f"L/D {float(cl) / cd_total:.2f} (CL {float(cl):.4f}, CD {cd_total:.4f} incl. friction)"
@@ -3349,7 +3524,13 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
         if "Fn_DES" in values:
             return  # no aero yet: respect explicit agent override
         # MTOM -> pycycle Fn_DES via the named, documented transform (src/tools/coupling.py).
-        fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
+        try:
+            fn_des_lbf = _cpl.mtom_to_pycycle_fn_des(mtom_kg)
+        except ValueError as exc:
+            _refuse_call("DESIGN_THRUST_NOT_PHYSICAL",
+                         f"set_inputs was not run: the design thrust Fn_DES from the mass is not physical ({exc}). "
+                         "Check the mass estimate and produce it again.")
+            return
         basis = "assumed L/D 17 (no SU2 result yet)"
 
     values["Fn_DES"] = fn_des_lbf
@@ -3752,9 +3933,26 @@ def _inject_phase_h_aero(resolved: dict) -> None:
     # the morphed geometry's wetted-area ratio. Re from canonical cruise Mach/altitude +
     # MAC; Swet/Sref from wing+fuselage wetted / reference area (design-responsive), with a
     # sane band + nominal fallback so a bad geometry read can't produce garbage drag.
-    ar = parameters.get("Aircraft.Wing.ASPECT_RATIO")
+    # B281 (A9): the MEASURED aspect ratio of the current geometry -- not the AR the caller typed, and never the
+    # 11.0 aero_cd_to_aviary_drag_factor assumes without one (O_IF 4: 0.8126 with 11.0 against 0.7929 measured).
+    store = _design_state.data_store
+    wing = store.get("geometry_wing") or _wing_from_cpacs_file(_current_cpacs_file()) or {}
+    ar = wing.get("Aircraft.Wing.ASPECT_RATIO")
+    if not isinstance(ar, (int, float)) or ar <= 0:
+        store["aero_injection_error"] = ("no measured aspect ratio for the current wing (no TiGL measurement and no "
+                                         "readable geometry file), so the drag factor cannot be computed")
+        logger.warning("[B281] AERO NOT INJECTED: %s", store["aero_injection_error"])
+        return
     reynolds, swet_sref = _friction_inputs()
-    scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
+    try:
+        scale_factor = coupling.aero_cd_to_aviary_drag_factor(cd, cl, ar, reynolds=reynolds, swet_sref=swet_sref)
+    except ValueError as exc:
+        # B281 (audit F1): no clamp; a physically impossible factor is not flown.
+        store["aero_injection_error"] = f"the drag factor computed from the SU2 result is not physical ({exc})"
+        logger.warning("[B281] AERO NOT INJECTED: %s", store["aero_injection_error"])
+        return
+    store.pop("aero_injection_error", None)
+    store["aero_drag_factor_ar"] = float(ar)
 
     # The drag factor is already held to aviary's declared range by
     # aero_cd_to_aviary_drag_factor's clamp; CL had no equivalent check, so a
@@ -3771,6 +3969,8 @@ def _inject_phase_h_aero(resolved: dict) -> None:
         )
         _design_state.data_store["aero_rejected_cl"] = float(cl)
         _design_state.data_store["aero_rejected_cd"] = float(cd)
+        store["aero_injection_error"] = (f"CL {float(cl):.4g} is outside aviary's declared range "
+                                         f"[{_cl_bounds[0]}, {_cl_bounds[1]}]")      # B281: refused, not flown
         logger.warning(
             "AERO NOT INJECTED: CL=%.4g is outside aviary's declared bounds "
             "[%s, %s] for Mission.Design.LIFT_COEFFICIENT. Usually a bad SU2 "
@@ -3831,7 +4031,6 @@ def _friction_mac() -> tuple[float | None, str]:
         return float(plan["mac_length"]), f"cpacs file {path}"
     if captured:
         return float(captured), "measured (tigl)"
-    logger.warning("[B278] no MAC from the geometry (no CPACS file, no measurement): nominal Reynolds number")
     return None, "none (nominal Reynolds)"
 
 
@@ -3847,6 +4046,8 @@ def _friction_inputs() -> tuple:
             reynolds = coupling.reynolds_number(_mis.get("cruise_mach", 0.78),
                                                 _mis.get("cruise_altitude_ft", 33000), mac)
         _design_state.data_store["friction_mac"] = {"mac_m": mac, "source": mac_source}
+        if mac is None:
+            logger.warning("[B278] no MAC from the geometry (no CPACS file, no measurement): nominal Reynolds number")
         _ref = coupling.get_var(_design_state, "geom.reference_area")
         _wwet = coupling.get_var(_design_state, "geom.wing_wetted_area")
         _fwet = coupling.get_var(_design_state, "geom.fuselage_wetted_area") or 0.0
@@ -3916,8 +4117,10 @@ def _inject_engine_scale(resolved: dict) -> None:
     _design_state.data_store["engine_injected_scale_factor"] = scale
     _design_state.data_store["engine_scale_basis"] = basis
     # B187/B3: which engine result and deck this scale came from, per aviary session (run_simulation
-    # re-applies when either changes).
-    _design_state.data_store.setdefault("engine_injected_key", {})[sid] = _engine_scale_key(sid)
+    # re-applies when either changes). B281 (A10, N_GR 19): recorded only when aviary ACCEPTS the call
+    # (_capture_applied_design). It used to be recorded here, before the server answered, so a refused set made
+    # the stale scale on the session look current and B187 did not re-apply it.
+    _call_ctx.engine_pending = (sid, _engine_scale_key(sid))
     logger.info("[B170] injected Aircraft.Engine.SCALE_FACTOR=%.3f (pycycle Fn=%.0f lbf / %.0f lbf, %s)",
                 scale, float(fn_lbf), reference, basis)
 
@@ -3953,3 +4156,94 @@ def _fix_su2_markers(updates: dict, wall: str, far: str) -> None:
             if clean.lower() not in (far.lower(), f"( {far} )"):
                 updates[key] = f"( {far} )"
                 logger.info("Fixed %s: '%s' → '( %s )'", key, old, far)
+
+
+def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
+    """B281 (A10 / audit F11, F4, A9, F1): refuse run_simulation when a value the mission needs did not reach aviary.
+
+    Runs after resolve_request, i.e. after the pre-mission steps (take-off mass, engine deck, B187 / B272
+    re-applies). Each of these used to fail with a log line only, and the mission flew whatever the session held:
+    the previous take-off mass, a stale engine scale (N_GR 19), results captured after the last accepted set.
+    """
+    if tool_name != "run_simulation" or _design_state is None:
+        return None
+    if os.environ.get("AVION_REQUIRE_COUPLED_INPUTS", "1") != "1":
+        return None
+    store = _design_state.data_store
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    problems = []
+    if store.get("mass_estimate_error"):
+        problems.append(f"the last mass estimate is not usable: {store['mass_estimate_error']}")
+    if store.get("takeoff_mass_error"):
+        problems.append(f"aviary did not take the take-off mass: {store['takeoff_mass_error']}")
+    if store.get("aero_injection_error"):
+        problems.append(f"the SU2 aero could not be applied: {store['aero_injection_error']}")
+    if engine_is_current() and (store.get("engine_injected_key") or {}).get(sid) != _engine_scale_key(sid):
+        problems.append("aviary does not hold the current engine scale (the framework's set of it was not accepted)")
+    version = int(store.get("_coupled_version") or 0)
+    if version > 0 and store.get("_coupled_version_applied") != version:
+        problems.append("results produced since aviary's last accepted set_aircraft_parameters were not applied "
+                        "(the framework's re-apply was not accepted)")
+    if not problems:
+        return None
+    return {
+        "success": False,
+        "error_code": "MISSION_INPUTS_NOT_APPLIED",
+        "error": ("run_simulation was not run: " + "; ".join(problems) + ". The mission would fly values that are "
+                  "not this design's. Check the last set_aircraft_parameters reply (a refused call applies nothing), "
+                  "fix what it names, and set the parameters again."),
+    }
+
+
+def _pin_cycle_fixed_inputs(resolved: dict) -> None:
+    """B281 (audit F12): the "Set (fixed)" cycle inputs of the design table are the study's, on every set_inputs.
+
+    The table lists the fan / LPC / HPC / HPT / LPT efficiencies as "Set (fixed)", but nothing held them: ~18
+    successful l20_final set_inputs flew rounded values (lpc.eff 0.92, fan.eff 0.89, ...), each a different cycle
+    and deck. The values are canonical propulsion.fixed_inputs (tests check they equal the prompt tables). A
+    caller's other value is replaced and the reply says so (framework_applied), as for Fn_DES.
+    """
+    try:
+        from src.config.canonical import load_canonical
+
+        fixed = dict((load_canonical().get("propulsion") or {}).get("fixed_inputs") or {})
+    except Exception as exc:
+        _refuse_call("CANONICAL_CYCLE_SETTINGS_UNAVAILABLE",
+                     f"set_inputs was not run: the framework could not load the study's fixed cycle inputs ({exc}). "
+                     "Nothing an agent can change; report it.")
+        return
+    if not fixed:
+        return
+    values = resolved.get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if values is None:
+        values = {}
+    if not isinstance(values, dict):
+        return
+    for key, value in fixed.items():
+        if key in values:
+            _note_coupled_override(key, values[key], float(value))
+        values[key] = float(value)
+    resolved["values"] = values
+
+
+def prebuild_engine_deck(tool_name: str, kwargs: dict) -> None:
+    """B281 (B273): build the current engine's deck before run_simulation / close_cycle_model, outside their budget.
+
+    Same builder as the pre-mission hook (_ensure_engine_deck) and B259's close hook (_deck_before_close); called by
+    the middleware under generate_engine_deck's own budget. Inside the call the same builder then finds the deck
+    cached and attached. close_cycle_model builds only for the session that sized the engine (as B259).
+    """
+    if _design_state is None:
+        return
+    if tool_name == "close_cycle_model":
+        sid = (kwargs or {}).get("session_id") or (_design_state.sessions or {}).get("pycycle")
+        if sid != _design_state.data_store.get("prop_cycle_session"):
+            return
+        _ensure_engine_deck({})
+        return
+    _ensure_engine_deck({})

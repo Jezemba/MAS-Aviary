@@ -20,6 +20,9 @@ import math
 import os
 
 _CL_RANGE = (0.05, 1.0)       # aviary-mcp's declared Mission.Design.LIFT_COEFFICIENT range
+# B281 (audit F7): the trim tolerance su2-mcp itself applies when it reports a solve (su2-mcp fix/final-rerun
+# convergence.TRIM_TOLERANCE = 0.01, relative), so the framework and the tool agree on what "on target" means.
+TRIM_CL_REL_TOL = 0.01
 
 
 def oswald_efficiency(aspect_ratio: float) -> float:
@@ -60,7 +63,9 @@ def _solve_record() -> dict:
     assessment = store.get("aero_drag_assessment") if isinstance(store.get("aero_drag_assessment"), dict) else {}
     wing = store.get("geometry_wing") if isinstance(store.get("geometry_wing"), dict) else {}
     return {"trimmed": store.get("aero_solve_trimmed"), "assessment": assessment,
-            "wing_ar": wing.get("Aircraft.Wing.ASPECT_RATIO")}
+            "wing_ar": wing.get("Aircraft.Wing.ASPECT_RATIO"), "target_cl": store.get("aero_solve_target_cl"),
+            "converged": store.get("aero_solve_converged"), "residual": store.get("aero_solve_residual"),
+            "known": True}
 
 
 def induced_drag_floor(cl, assessment: dict | None, wing_ar=None) -> tuple[float, float, float] | None:
@@ -94,6 +99,21 @@ def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
     if record.get("trimmed") is False:
         problems.append("the SU2 solve had no target CL: it ran at a fixed angle of attack, so its CL is not the "
                         "cruise lift and its CD is not the drag at cruise")
+    elif record.get("known") and record.get("trimmed") is not True:
+        # B281 (audit F7): unknown is not trimmed -- a session the framework never saw configured, or aero seeded
+        # from a record that does not say.
+        problems.append("it is not known that the SU2 solve was trimmed to the cruise lift (no record of the "
+                        "session's lift target)")
+    target = record.get("target_cl")
+    if record.get("trimmed") is True and isinstance(target, (int, float)) and target > 0 \
+            and abs(cl / float(target) - 1.0) > TRIM_CL_REL_TOL + 1e-12:
+        problems.append(f"CL {cl:.4g} is not the lift target {float(target):.4g} the solve was trimmed to (more than "
+                        "1 % apart: the trim did not converge)")
+    if record.get("known") and record.get("converged") is not True:
+        res = record.get("residual") or {}
+        problems.append("the SU2 solve did not reach its residual target"
+                        + (f" (rms[Rho] {res.get('rms_rho')} against {res.get('target')})" if res.get("rms_rho") is not None
+                           else " (or it is not known that it did)"))
     if (record.get("assessment") or {}).get("source") == "su2_unchecked":
         problems.append("su2-mcp could not check the drag against the induced drag (drag source su2_unchecked: the "
                         "session had no aspect_ratio)")

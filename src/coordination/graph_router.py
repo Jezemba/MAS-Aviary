@@ -96,6 +96,11 @@ def _codes(records: list) -> list[tuple[str, dict]]:
 
 def _flown(record: dict) -> float | None:
     out = record.get("outputs") or {}
+    # B281 (audit F3): a mission that did not converge (aviary-mcp B288: success false, MISSION_NOT_CONVERGED) or
+    # was otherwise not a result is not flown, whatever fuel figure it carries.
+    if (record.get("status") not in (None, "success") or out.get("success") is False or out.get("converged") is False
+            or out.get("valid") is False or out.get("valid_result") is False):
+        return None
     summary = out.get("summary") if isinstance(out.get("summary"), dict) else out
     try:
         fuel = float(summary.get("fuel_burned_kg"))
@@ -146,7 +151,11 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
         return Decision(AERO, higher(level, MODERATE), "6",
                         f"the mission did not fly and the aero is not trimmed to the cruise lift (CL {cl}, target {target})")
     if mtom and fn:
-        needed = coupling.fn_des_from_drag(float(mtom), float(cl), coupling.total_cruise_cd(float(cd)))
+        try:
+            needed = coupling.fn_des_from_drag(float(mtom), float(cl), coupling.total_cruise_cd(float(cd)))
+        except ValueError:          # B281: no clamp any more; impossible inputs mean the aero is the problem
+            return Decision(AERO, higher(level, MODERATE), "6",
+                            f"the mission did not fly and the SU2 result gives no physical thrust (CL {cl}, CD {cd})")
         scale = coupling.fn_to_aviary_engine_scale(float(fn))
         if scale > ENGINE_SCALE_BOUND:
             return Decision(AERO, higher(level, MODERATE), "6",

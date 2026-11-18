@@ -18,6 +18,7 @@ hardcoded here. The middleware's scrape+inject path becomes a flagged FALLBACK.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 # Registry lives on DesignState.data_store under this key (a flat name->value dict).
@@ -172,12 +173,20 @@ def aero_cd_to_aviary_drag_factor(cd_inviscid: float, cl: float, aspect_ratio: f
     cd_total = float(cd_inviscid) + skin_friction_cd(re, swr)
     cd_aviary_default = _AVIARY_CD0 + (float(cl) ** 2) / (3.14159 * ar_eff * _OSWALD)
     factor = cd_total / cd_aviary_default
-    return max(0.5, min(factor, 2.0))
+    # B281 (audit F1, Jessica 2026-11-18): no clamp. This was max(0.5, min(factor, 2.0)), a silent cap on a
+    # framework-computed value: 22 counted l20_final flights flew 2.0 for computed factors up to ~3.8. Only a
+    # physically impossible value fails.
+    if not math.isfinite(factor) or cd_total <= 0.0 or factor <= 0.0:
+        raise ValueError(f"drag factor {factor!r} from CD {cd_inviscid!r} (total {cd_total!r}) at CL {cl!r}")
+    return factor
 
 
 def mtom_to_pycycle_fn_des(mtom_kg: float) -> float:
-    """Map mass-mcp MTOM to pycycle's ``Fn_DES`` (design thrust, lbf)."""
-    return max(2000.0, min(float(mtom_kg) * FN_DES_PER_KG_LBF, 25000.0))
+    """Map mass-mcp MTOM to pycycle's ``Fn_DES`` (design thrust, lbf). No clamp (B281, audit F2)."""
+    fn = float(mtom_kg) * FN_DES_PER_KG_LBF
+    if not math.isfinite(fn) or fn <= 0.0:
+        raise ValueError(f"design thrust {fn!r} lbf from MTOM {mtom_kg!r} kg")
+    return fn
 
 
 # Engine sized to the design's drag (B170, Jessica 2026-10-10). FN_DES_PER_KG_LBF is
@@ -203,9 +212,15 @@ def total_cruise_cd(cd_inviscid: float, reynolds: float | None = None,
 
 def fn_des_from_drag(mtom_kg: float, cl: float, cd_total: float) -> float:
     """pycycle ``Fn_DES`` (lbf per engine) = MTOM*g / (L/D * engines) * climb margin, L/D = CL/CD."""
+    # B281 (audit F2): no clamp (was [2,000, 25,000] lbf; S_GR 12 flew exactly 25,000). Only a physically
+    # impossible value fails: non-positive lift, drag or mass, or a non-finite result.
+    if not (float(cl) > 0.0 and float(cd_total) > 0.0 and float(mtom_kg) > 0.0):
+        raise ValueError(f"design thrust from MTOM {mtom_kg!r} kg, CL {cl!r}, CD {cd_total!r}")
     l_over_d = float(cl) / float(cd_total)
     fn = float(mtom_kg) * _G / l_over_d / _N_ENGINES / _N_PER_LBF * _CLIMB_THRUST_MARGIN
-    return max(2000.0, min(fn, 25000.0))
+    if not math.isfinite(fn):
+        raise ValueError(f"design thrust {fn!r} lbf from MTOM {mtom_kg!r} kg, CL {cl!r}, CD {cd_total!r}")
+    return fn
 
 
 def fn_to_aviary_engine_scale(fn_lbf: float, reference_fn_lbf: float = BENCH_ENGINE_CRUISE_FN_LBF) -> float:
