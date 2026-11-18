@@ -363,7 +363,7 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
         mission_guard.observe(tool.name, resolved, result, _obs_status)
         coupling_contract.note_su2_references(tool.name, resolved, result)
         from src.tools.data_plane import note_session_closed, note_su2_trim
-        note_su2_trim(tool.name, resolved, result)       # B274: which SU2 sessions are trimmed to the cruise lift
+        note_su2_trim(tool.name, resolved, result)       # B277: which SU2 sessions are trimmed to the cruise lift
         note_session_closed(tool.name, resolved, result)
         # 4a/4b (retired by B84): the aero warning and the optional-mass hint used to be
         #     attached here. They are unreachable now -- a mission call that reaches the

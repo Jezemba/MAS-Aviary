@@ -290,7 +290,7 @@ def pycycle_session_refusal(tool_name: str, kwargs: dict) -> dict | None:
 def note_session_closed(tool_name: str, kwargs: dict, result) -> None:
     """close_cycle_model / close_cpacs succeeded: that session is no longer open (the reply names no session).
 
-    B274: close_cpacs did not drop sessions["tigl"], so the B154 auto-measure (and the DESIGN_STATE's SESSIONS
+    B277: close_cpacs did not drop sessions["tigl"], so the B154 auto-measure (and the DESIGN_STATE's SESSIONS
     list) kept using a session the server had closed: l20_final O_SP 6 / 19 and O_IF 4 got "Unknown session_id".
     """
     server = {"close_cycle_model": "pycycle", "close_cpacs": "tigl"}.get(tool_name)
@@ -1000,7 +1000,7 @@ def _inject_target_cl(resolved: dict) -> None:
     Weight comes from mass-mcp, the flight state from the canonical mission, and the wing area from
     the geometry (authoritative).
 
-    B274 (l20_final bug checks, Case 3 cause B): the target is the FRAMEWORK's value, as the prompt table
+    B275 (l20_final bug checks, Case 3 cause B; B277 for the wing area): the target is the FRAMEWORK's value, as the prompt table
     says ("set by framework"). An agent's target_cl used to win ("the caller pinned one"), so S_SP/S_IF
     solved every wing at their typed 0.56 whatever its area. The caller's value is now replaced and the
     response says so (framework_applied, as B143 does for aviary's coupled values). The wing area no longer
@@ -1040,7 +1040,7 @@ def _inject_target_cl(resolved: dict) -> None:
     if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
         _auto_measure_wing()    # B154: nobody measured the wing; the framework does (a LIVE session only)
     if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
-        _wing_from_cpacs_file(resolved.get("cpacs_file_path"))    # B274: the file being solved
+        _wing_from_cpacs_file(resolved.get("cpacs_file_path"))    # B277: the file being solved
     area = (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")
     if area is None:
         area = (store.get("design_params_applied") or {}).get("Aircraft.Wing.AREA")
@@ -1061,7 +1061,7 @@ def _inject_target_cl(resolved: dict) -> None:
                 "target_cl": asked, "source": "caller",
                 "note": (f"The framework could not compute the cruise-lift target (mass {mass_kg}, wing area {area}); "
                          "the target_cl you passed was used.")}
-            logger.warning("[B274] no framework target CL (mass=%s wing area=%s); the caller's %s is used",
+            logger.warning("[B275] no framework target CL (mass=%s wing area=%s); the caller's %s is used",
                            mass_kg, area, asked)
         else:
             resolved.pop("target_cl", None)
@@ -1071,7 +1071,7 @@ def _inject_target_cl(resolved: dict) -> None:
                          "so this session is NOT trimmed: it solves at a fixed angle of attack. run_simulation will "
                          "refuse aero from it. Measure the wing or give the session a readable CPACS file, then "
                          "configure_from_cpacs again.")}
-            logger.warning("[B274] no target CL: mass=%s wing area=%s -- the session is untrimmed and its result "
+            logger.warning("[B277] no target CL: mass=%s wing area=%s -- the session is untrimmed and its result "
                            "will be refused by run_simulation", mass_kg, area)
         return
     resolved["target_cl"] = target
@@ -1135,7 +1135,7 @@ _PLANFORM_CACHE: dict = {}
 
 
 def _cpacs_planform(path) -> dict | None:
-    """The main wing's planform read from a CPACS file (B274, src/tools/cpacs_planform.py), or None.
+    """The main wing's planform read from a CPACS file (B277, src/tools/cpacs_planform.py), or None.
 
     Cached per file content (path, size, mtime): the same file always gives the same numbers.
     """
@@ -1160,7 +1160,7 @@ def _cpacs_planform(path) -> dict | None:
 
         plan = wing_planform(str(path), uid)
     except Exception as exc:      # unreadable as a wing: the caller decides what that means
-        logger.warning("[B274] could not read the wing planform from %s: %s", path, exc)
+        logger.warning("[B277] could not read the wing planform from %s: %s", path, exc)
         plan = None
     _PLANFORM_CACHE[key] = plan
     return plan
@@ -1177,7 +1177,7 @@ def _current_cpacs_file() -> str | None:
 
 
 def _wing_from_cpacs_file(path) -> dict | None:
-    """B274: record the wing of the CPACS file SU2 is about to solve when no TiGL measurement exists.
+    """B277: record the wing of the CPACS file SU2 is about to solve when no TiGL measurement exists.
 
     l20_final O_SP 6 / 19 and O_IF 4: the geometry agent closed TiGL before anyone measured the wing, so the
     cruise-lift target, the aspect ratio for the induced-drag floor and the reference area were all missing and
@@ -1201,7 +1201,7 @@ def _wing_from_cpacs_file(path) -> dict | None:
                                     "taper_ratio": plan.get("taper_ratio")})
     record["_source"] = f"cpacs file {path}"
     store["geometry_wing"] = record
-    logger.info("[B274] no TiGL measurement: wing AREA %.3f m^2, AR %.3f read from %s",
+    logger.info("[B277] no TiGL measurement: wing AREA %.3f m^2, AR %.3f read from %s",
                 record["Aircraft.Wing.AREA"], record["Aircraft.Wing.ASPECT_RATIO"], path)
     return record
 
@@ -1503,7 +1503,7 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
 
 
 def _annotate_target_cl(data: dict) -> None:
-    """B274: tell the caller its target_cl was replaced by the framework's, or that none could be computed."""
+    """B275: tell the caller its target_cl was replaced by the framework's, or that none could be computed."""
     store = _design_state.data_store
     pending = store.get("_coupled_override_last") or {}
     pending.pop("target_cl", None)
@@ -1658,7 +1658,7 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
                             cd_f, cl_f, float(assessment["cd_reported"]))
             cd_f = float(assessment["cd_reported"])
         else:
-            # B274: an assessment belongs to ONE solve; never let an earlier solve's stand for this one.
+            # B277: an assessment belongs to ONE solve; never let an earlier solve's stand for this one.
             _design_state.data_store.pop("aero_drag_assessment", None)
         _note_solve_trim()
         _store_aero(cl_f, cd_f, source="run_su2_solver")
@@ -1719,7 +1719,7 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
 
 
 def note_su2_trim(tool_name: str, resolved: dict, result) -> None:
-    """B274: remember, per SU2 session, the lift target it was configured with (None = fixed AOA, untrimmed).
+    """B277: remember, per SU2 session, the lift target it was configured with (None = fixed AOA, untrimmed).
 
     Called by the middleware after create_su2_session / configure_from_cpacs returns. su2-mcp sets FIXED_CL_MODE
     only when target_cl is given (config_tools.configure_from_cpacs), and the framework knows what it sent. A
@@ -1744,7 +1744,7 @@ def note_su2_trim(tool_name: str, resolved: dict, result) -> None:
 
 
 def _note_solve_trim() -> None:
-    """B274: the captured CL/CD inherit their session's trim: True, False, or None when the session is unknown."""
+    """B277: the captured CL/CD inherit their session's trim: True, False, or None when the session is unknown."""
     store = _design_state.data_store
     sid = getattr(_call_ctx, "su2_session", None)
     trims = store.get("su2_session_trim") or {}
@@ -2486,7 +2486,7 @@ def _ensure_engine_deck(resolved: dict) -> None:
         "envelope_holes": out.get("envelope_holes") or [], "cached": out.get("cached"),
         "pycycle_session": cyc, "cycle_key": store.get("prop_cycle_key"),
     }
-    # B274: the reference thrust of every deck file, so an injected engine scale is always divided by the reference of
+    # B279: the reference thrust of every deck file, so an injected engine scale is always divided by the reference of
     # the deck ATTACHED to the session (the deck that flies), whatever the cycle bookkeeping says at that moment.
     store.setdefault("engine_deck_references", {})[out["deck_file"]] = float(out["reference_fn_des_lbf"])
     attached = store.setdefault("engine_deck_attached", {})
@@ -3114,7 +3114,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     elif tool_name == "get_fuselage_summary":
         _call_ctx.fuselage_uid = resolved.get("fuselage_uid") or resolved.get("component_uid")
     elif tool_name in ("run_su2_solver", "read_history_csv"):
-        # B274: which SU2 session the captured CL/CD come from, so its trim (or its absence) goes with them.
+        # B277: which SU2 session the captured CL/CD come from, so its trim (or its absence) goes with them.
         _call_ctx.su2_session = resolved.get("session_id") or (_design_state.sessions or {}).get("su2")
     elif tool_name == "set_high_level_parameters":
         _call_ctx.morph = {"uid": resolved.get("component_uid"),
@@ -3787,7 +3787,7 @@ def _inject_phase_h_aero(resolved: dict) -> None:
 
 
 def _friction_mac() -> tuple[float | None, str]:
-    """The MAC the friction Reynolds number uses, from the geometry (B274).
+    """The MAC the friction Reynolds number uses, from the geometry (B278).
 
     l20_final Case 3 cause A: the MAC defaulted to 4.0 m unless an agent happened to call get_wing_summary or
     morph the wing in that iteration, so one design flew two drag factors (O_SP 22,914 / 23,006 kg; S_IF 18 vs
@@ -3808,7 +3808,7 @@ def _friction_mac() -> tuple[float | None, str]:
         return float(plan["mac_length"]), f"cpacs file {path}"
     if captured:
         return float(captured), "measured (tigl)"
-    logger.warning("[B274] no MAC from the geometry (no CPACS file, no measurement): nominal Reynolds number")
+    logger.warning("[B278] no MAC from the geometry (no CPACS file, no measurement): nominal Reynolds number")
     return None, "none (nominal Reynolds)"
 
 
@@ -3865,7 +3865,7 @@ def _inject_engine_scale(resolved: dict) -> None:
     sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
     # B3: with the designed engine's deck on this session the reference is the thrust the deck was made
     # at (5,900 lbf for a size-invariant cycle); the bench deck's reference is its M0.78/FL330 max thrust.
-    # B274 (l20_final Case 3 cause C, S_GR 5/9/15/19, N_IF 5): the reference used to be the deck's only when
+    # B279 (l20_final Case 3 cause C, S_GR 5/9/15/19, N_IF 5): the reference used to be the deck's only when
     # engine_deck_current(sid), which also requires the deck's cycle_key to equal prop_cycle_key. After run_cycle
     # re-sized the engine (new Fn_DES, same cycle inputs), the key changed while the SAME deck file stayed attached,
     # so set_aircraft_parameters divided by the bench 5,936 lbf; run_simulation then regenerated the (cached,

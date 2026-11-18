@@ -90,7 +90,7 @@ def seed_from_design(design: dict) -> list[str]:
         coupling.put_var(ds, "aero.cd_cruise", aero["cd_cruise"], source_tool="graph pre-init")
         if aero.get("drag_assessment"):
             store["aero_drag_assessment"] = aero["drag_assessment"]
-        if "solve_trimmed" in aero:                # B274: the seeded aero keeps its solve's trim record
+        if "solve_trimmed" in aero:                # B277: the seeded aero keeps its solve's trim record
             store["aero_solve_trimmed"] = aero.get("solve_trimmed")
             store["aero_solve_target_cl"] = aero.get("solve_target_cl")
         seeded.append("aero")
@@ -181,7 +181,7 @@ def prepare(carry_over: dict | None) -> dict:
             else baseline_cpacs()
         previous = carry_over.get("previous_design")
         if isinstance(previous, dict) and previous.get("aero"):
-            # B274 (l20_final Case 3.3): the SU2 session below takes its cruise-lift target from the mass on record.
+            # B276 (l20_final Case 3.3): the SU2 session below takes its cruise-lift target from the mass on record.
             # It used to be created BEFORE seed_from_design put the carried mass there, so the target fell back to the
             # CPACS-declared 78,126 kg while any later re-configure used the carried, sized mass (O_GR 13/17/19: CL
             # 0.715 against 0.624 on the same wing, +9.5 t fuel). Seed the carried mass first.

@@ -95,7 +95,7 @@ def test_the_link0_design_state_starts_from_the_measured_sweeps(source):
     assert "27.33" not in lines and "32.21" not in lines and "40.40" not in lines
 
 
-# ---- B275 (d): the wing read straight from the CPACS file ------------------------------------------------
+# ---- B277 (d): the wing read straight from the CPACS file ------------------------------------------------
 
 def test_the_planform_of_a_hand_checked_wing(tmp_path):
     p = wing_planform(_wing_xml(tmp_path))
@@ -164,7 +164,7 @@ def test_close_cpacs_forgets_the_tigl_session_and_auto_measure_does_not_call_it(
     assert calls == []
 
 
-# ---- B276 (b): the framework's lift target wins ------------------------------------------------------------
+# ---- B275 (b): the framework's lift target wins ------------------------------------------------------------
 
 def _ready(state, mass=79560.0, area=122.78):
     state.data_store["mass_mtom_kg"] = mass
@@ -215,7 +215,7 @@ def test_without_any_target_the_response_says_the_session_is_untrimmed(fresh):
     assert "NOT trimmed" in out["framework_target_cl"]["note"]
 
 
-# ---- B275 (d): the guard refuses untrimmed / unchecked / below-induced aero ------------------------------
+# ---- B277 (d): the guard refuses untrimmed / unchecked / below-induced aero ------------------------------
 
 def _aero(state, cl, cd, source="run_su2_solver"):
     state.data_store["aero_cl_cruise"], state.data_store["aero_cd_cruise"] = cl, cd
@@ -304,7 +304,7 @@ def test_a_solve_without_an_assessment_drops_the_previous_one(fresh):
     assert "aero_drag_assessment" not in fresh.data_store
 
 
-# ---- B277 (c): graph pre-init seeds the carried mass before the SU2 session --------------------------------
+# ---- B276 (c): graph pre-init seeds the carried mass before the SU2 session --------------------------------
 
 def test_graph_preinit_creates_the_su2_session_on_the_carried_mass(fresh, monkeypatch, tmp_path):
     from src.coordination import graph_preinit

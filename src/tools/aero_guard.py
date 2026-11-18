@@ -7,7 +7,7 @@ or that sized the baseline), and CL 1.42. Orchestrated iterative link 2 reported
 every other link -- on half the drag. The clamp hid the input; the CL bound check only ran if an
 agent had happened to call get_design_space, and the agent can pass the clamped values itself.
 
-B274 (l20_final bug checks, Cases 1-2): O_SP 6 / 19 and O_IF 4 flew SU2 results solved at a fixed 2 deg with
+B277 (l20_final bug checks, Cases 1-2): O_SP 6 / 19 and O_IF 4 flew SU2 results solved at a fixed 2 deg with
 no lift target (CL 0.461 / 0.463) whose CD (0.0053 / 0.0044) was below the induced drag of that lift; su2-mcp
 had marked them `su2_unchecked` (no aspect ratio, so no floor). They passed this guard, which checked only the
 sign of CD and the CL range, and became the study's three best iterations. The mission is now also refused when
@@ -49,7 +49,7 @@ def _latest_aero():
 
 
 def _solve_record() -> dict:
-    """What the data plane recorded about the solve the aero came from (B274)."""
+    """What the data plane recorded about the solve the aero came from (B277)."""
     try:
         from src.tools.data_plane import get_design_state
 
@@ -105,7 +105,7 @@ def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
 
 
 def aero_nonphysical(tool_name: str, resolved: dict) -> dict | None:
-    """Refuse run_simulation while the design's SU2 aero is non-physical (B111) or untrimmed / unchecked (B274)."""
+    """Refuse run_simulation while the design's SU2 aero is non-physical (B111) or untrimmed / unchecked (B277)."""
     if tool_name != "run_simulation":
         return None
     if os.environ.get("AVION_REQUIRE_PHYSICAL_AERO", "1") != "1":

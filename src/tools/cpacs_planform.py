@@ -1,7 +1,7 @@
-"""The main wing's planform read straight from a CPACS file, without a TiGL session (B274).
+"""The main wing's planform read straight from a CPACS file, without a TiGL session (B277).
 
 Why: the cruise-lift target, the aspect ratio for the induced-drag floor and the SU2 reference area all
-need the wing of the file SU2 is about to solve. Until B274 they came only from a LIVE TiGL measurement
+need the wing of the file SU2 is about to solve. Until B277 they came only from a LIVE TiGL measurement
 (a morph, get_wing_summary, get_high_level_parameters). When the geometry agent closed the TiGL session
 before anyone measured the wing (l20_final O_SP 6 / 19, O_IF 4), there was none, so SU2 solved at a fixed
 2 deg with the CPACS-declared reference area and no aspect ratio, and that untrimmed solve was flown.
