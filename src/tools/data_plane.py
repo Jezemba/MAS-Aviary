@@ -622,7 +622,11 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     except (TypeError, ValueError):
         wing_f = None
         problems.append(f"no wing mass in the reply (mWing_kg {components.get('mWing_kg')!r})")
-    converged = breakdown.get("sizing_converged") is True
+    # mass-mcp 5b7368c (A15): sizing_report.driver carries the optimizer's own verdict and the residuals; both must
+    # say converged.
+    driver = (breakdown.get("sizing_report") or {}).get("driver") if isinstance(breakdown.get("sizing_report"), dict) else None
+    converged = breakdown.get("sizing_converged") is True and (not isinstance(driver, dict)
+                                                              or driver.get("converged") is True)
     mtom_f = None
     if not converged:
         problems.append("mass-mcp's gross-mass sizing did not converge (sizing_converged "
@@ -3017,6 +3021,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
 
     # B132: size the structure at the mission, not at mass-mcp's defaults (150 pax / M0.785 /
     # 3500 nmi / 35,000 ft, which D150 silently got because it carries no mission nodes).
+    if tool_name == "estimate_mass" and _design_state is not None:
+        _inject_mass_engine(resolved)          # B281 (mass-mcp M3): size the aircraft with the engine it flies
     if tool_name == "estimate_mass":
         try:
             from src.config.canonical import load_canonical
@@ -4157,3 +4163,74 @@ def prebuild_engine_deck(tool_name: str, kwargs: dict) -> None:
         _ensure_engine_deck({})
         return
     _ensure_engine_deck({})
+
+
+def _inject_mass_engine(resolved: dict) -> None:
+    """estimate_mass: size the aircraft with the engine the mission flies (B281, mass-mcp M3 framework side).
+
+    mass-mcp 5b7368c takes ``engine_deck_file`` and ``engine_scale_factor``; without them it sizes with aviary's bench
+    engine. The framework passes:
+    * this iteration's engine when its deck is current for the design (engine_deck_current) -- the deck file and
+      the scale the mission flies (pycycle Fn / the deck's reference, as _inject_engine_scale computes it);
+    * otherwise, when this iteration has no engine yet, the engine carried from the previous iteration's flown design
+      (its deck file and the SCALE_FACTOR it flew): within an iteration mass runs before the engine is redesigned;
+    * nothing on the first iteration before any engine exists (mass-mcp then uses its bench engine and says so).
+    A deck that exists but is stale for the design is refused, not replaced by a default. Caller values are
+    replaced (framework values win, B143) and the basis is recorded (mass_engine_basis, design.json).
+    """
+    store = _design_state.data_store
+    if not engine_deck_enabled():
+        store["mass_engine_basis"] = {"source": "bench engine (AVION_ENGINE_DECK=0)"}
+        return
+    sid = (_design_state.sessions or {}).get("aviary")
+    deck = store.get("engine_deck") or {}
+    deck_file = scale = None
+    if deck:
+        if not engine_deck_current(sid):
+            _refuse_call("ENGINE_NOT_CURRENT",
+                         "estimate_mass was not run: the aircraft is sized with the engine it flies, and the engine on "
+                         "record was not sized for the current design (its deck is stale). Run the engine cycle on "
+                         "the current design (set_inputs, run_cycle) and estimate the mass again.")
+            return
+        from src.tools import coupling
+
+        fn = coupling.get_var(_design_state, "prop.fn_lbf")
+        ref = ((store.get("engine_deck_references") or {}).get(deck.get("file")) or {}).get("reference_fn_des_lbf") \
+            or deck.get("reference_fn_des_lbf")
+        if fn is None or not ref:
+            _refuse_call("ENGINE_NOT_CURRENT", "estimate_mass was not run: the current engine has no thrust or deck "
+                                               "reference on record. Run the engine cycle again.")
+            return
+        deck_file, scale = deck.get("file"), coupling.fn_to_aviary_engine_scale(fn, float(ref))
+        source = f"this iteration's engine (deck {deck.get('key')})"
+    else:
+        from src.coordination.prompt_assembly import read_carry_over
+
+        previous = (read_carry_over() or {}).get("previous_design") or {}
+        carried_deck = (previous.get("engine_deck") or {}).get("file") if isinstance(previous, dict) else None
+        carried_scale = ((previous.get("mission_applied") or {}).get("Aircraft.Engine.SCALE_FACTOR")
+                         if isinstance(previous, dict) else None)
+        if carried_deck and carried_scale is not None:
+            deck_file, scale = carried_deck, float(carried_scale)
+            source = "engine carried from the previous iteration (its flown deck and scale)"
+        elif previous:
+            _refuse_call("ENGINE_NOT_ON_RECORD",
+                         "estimate_mass was not run: the previous iteration's flown engine (deck and scale) is not on "
+                         "record, so the aircraft cannot be sized with the engine it flies. Run the engine cycle on "
+                         "the current design first.")
+            return
+        else:
+            store["mass_engine_basis"] = {"source": "bench engine: first iteration, no designed engine yet "
+                                                    "(mass-mcp default, reported in its warnings)"}
+            return
+    if deck_file and not os.path.isfile(str(deck_file)):
+        _refuse_call("ENGINE_DECK_NOT_READABLE",
+                     f"estimate_mass was not run: the engine deck {deck_file} is not readable on this machine (a "
+                     "deck path recorded on another machine, B250). Nothing an agent can change; report it.")
+        return
+    for arg, value in (("engine_deck_file", deck_file), ("engine_scale_factor", scale)):
+        if resolved.get(arg) is not None and str(resolved[arg]) != str(value):
+            store.setdefault("_pinned_overrides", {}).setdefault("estimate_mass", {})[arg] = {
+                "asked": resolved[arg], "used": value}
+        resolved[arg] = value
+    store["mass_engine_basis"] = {"source": source, "engine_deck_file": deck_file, "engine_scale_factor": scale}
