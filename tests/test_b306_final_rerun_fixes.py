@@ -612,7 +612,7 @@ def _cruise(fresh, monkeypatch, ld=17.5, fp="fp-1", mass=90000.0, scale=1.33, de
     monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle", "get_cruise_point": "aviary",
                                                  "set_aircraft_parameters": "aviary", "run_cycle": "pycycle"})
     fresh.sessions["aviary"] = "av"
-    dp._call_ctx.cruise_basis = dp.design_basis()       # B340: as current_cruise_point asks for it
+    dp._cruise_basis.set(dp.design_basis())       # B340/B360: as current_cruise_point asks for it
     dp.intercept_response("get_cruise_point", json.dumps({
         "success": True, "design_fingerprint": fp,
         "cruise_point": {"mach": 0.78, "altitude_ft": 33000, "mass_kg": mass, "cl": 0.62, "cd": 0.62 / ld,
