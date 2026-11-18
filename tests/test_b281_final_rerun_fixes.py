@@ -584,3 +584,21 @@ def test_b273_a_deck_that_is_not_ready_refuses_the_mission(fresh, monkeypatch):
 
     out = json.loads(wrap_tool_with_middleware(Sim()).forward(session_id="av"))
     assert out["error_code"] == "ENGINE_DECK_NOT_READY" and Sim.calls == 0
+
+
+def test_f3_the_batch_runner_reports_the_last_converged_mission(monkeypatch, tmp_path):
+    from src.runners import batch_runner
+    from src.tools import knowledge_base as kbm
+
+    rows = [
+        {"tool": "run_simulation", "status": "success", "outputs": {"summary": {"fuel_burned_kg": 21000.0}}},
+        {"tool": "get_results", "status": "success", "outputs": {"summary": {"gtow_kg": 99000.0}}},
+        {"tool": "run_simulation", "status": "success",
+         "outputs": {"converged": False, "summary": {"fuel_burned_kg": 14000.0}}},
+        {"tool": "get_results", "status": "success", "outputs": {"summary": {"gtow_kg": 88000.0}}},
+    ]
+    kb = tmp_path / "knowledge_base.jsonl"
+    kb.write_text("\n".join(json.dumps(r) for r in rows))
+    monkeypatch.setattr(kbm, "_run_config", {"path": str(kb)})
+    out = batch_runner._mission_metrics_from_kb()
+    assert out["flown"] is True and out["fuel_burned_kg"] == 21000.0 and out["gtow_kg"] == 99000.0
