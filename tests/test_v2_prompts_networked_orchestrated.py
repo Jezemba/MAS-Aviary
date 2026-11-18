@@ -100,7 +100,7 @@ def test_the_link0_design_state_is_the_prompt_table_baseline_with_sessions():
     text = prompt_assembly.starting_design_state(prompt_assembly.system_text("networked.md",
                                                                              "networked_iterative_feedback"))
     assert text.startswith("DESIGN_STATE (the starting design for this iteration):")
-    assert "Wing1: area 122.8287, aspect_ratio 9.3632, sweep 21.65" in text   # B274 + B281 (F13): measured values
+    assert "Wing1: area 122.8287, aspect_ratio 9.3632, sweep 21.65" in text   # B274 + B306 (F13): measured values
     assert "Fuselage1: length 37.6843, diameter 4.1490" in text
     assert "splitter.BPR 5.105" in text
     assert "SCALE_FACTOR" not in text          # B170: the framework sets it from propulsion; not a starting value

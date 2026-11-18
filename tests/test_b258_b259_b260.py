@@ -52,7 +52,7 @@ class _Stub:
         self.calls.append(resolved)
         if callable(self.reply):
             return dp.intercept_response(self.name, self.reply(resolved))
-        return dp.intercept_response(self.name, json.dumps(self.reply))   # as the middleware does (B281: A10)
+        return dp.intercept_response(self.name, json.dumps(self.reply))   # as the middleware does (B306: A10)
 
 
 @pytest.fixture

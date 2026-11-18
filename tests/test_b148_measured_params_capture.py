@@ -31,7 +31,7 @@ FUSELAGE1 = {"component_uid": "Fuselage1", "measured": True, "parameters": {
 def fresh(monkeypatch):
     monkeypatch.delenv("AVION_DESIGN_AUTHORITY", raising=False)
     monkeypatch.setattr(dp, "_design_state", DesignState())
-    # B281 (A8): the trim mass is the carried sized mass (no CPACS mTOM any more); given here directly.
+    # B306 (A8): the trim mass is the carried sized mass (no CPACS mTOM any more); given here directly.
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
     dp._call_ctx.__dict__.clear()
     yield dp._design_state

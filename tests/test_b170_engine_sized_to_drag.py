@@ -63,7 +63,7 @@ def test_the_framework_thrust_replaces_a_copied_one(monkeypatch):
 
 def test_without_aviarys_cruise_point_no_thrust_is_assumed_and_an_agent_value_does_not_stand(monkeypatch):
     """Was: the mass-based thrust (L/D 17 assumed) and an agent value stood. Now nothing is assumed: Fn_DES is not
-    set and the reason is recorded; run_cycle is refused (tests/test_b281_final_rerun_fixes.py)."""
+    set and the reason is recorded; run_cycle is refused (tests/test_b306_final_rerun_fixes.py)."""
     _seed(monkeypatch=monkeypatch)
     assert "Fn_DES" not in resolve_request("set_inputs", {"values": {}})["values"]
     assert "Fn_DES" not in resolve_request("set_inputs", {"values": {"Fn_DES": 7000.0}})["values"]

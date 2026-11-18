@@ -131,7 +131,7 @@ FIXTURE_KB = __import__("pathlib").Path(__file__).parent / "fixtures_kb_v2nothin
 
 
 def _converged_fixture(tmp_path):
-    """B281 (audit F3): the recorded v2nothink missions all ended "converged": false, which is not a result any more.
+    """B306 (audit F3): the recorded v2nothink missions all ended "converged": false, which is not a result any more.
     These tests are about WHERE the metrics come from, so they read the same records marked converged."""
     import json as _json
 
@@ -170,7 +170,7 @@ class TestMetricsFromTheKnowledgeBase:
         expected = {1: 23030.134334151855, 2: 22997.584843876724, 3: 22997.983315263606}
         for attempt, fuel in expected.items():
             _configure(monkeypatch, 0, attempt)
-            assert _extract_aviary_eval_from_messages([]) is None       # B281 (F3): unconverged, not a result
+            assert _extract_aviary_eval_from_messages([]) is None       # B306 (F3): unconverged, not a result
             _configure(monkeypatch, 0, attempt, path="converged")
             out = _extract_aviary_eval_from_messages([])
             assert out["fuel_burned_kg"] == pytest.approx(fuel)
@@ -206,7 +206,7 @@ class TestMetricsFromTheKnowledgeBase:
         lines = [_json.loads(l) for l in FIXTURE_KB.read_text().splitlines()]
         raw = tmp_path / "kb_raw.jsonl"
         raw.write_text("\n".join(_json.dumps(e) for e in lines if e["chain_link"] == 0))
-        assert measured_fuel_from_kb(raw, 1) is None           # B281 (F3): unconverged missions are not counted
+        assert measured_fuel_from_kb(raw, 1) is None           # B306 (F3): unconverged missions are not counted
         lines = [_json.loads(l) for l in _converged_fixture(tmp_path).read_text().splitlines()]
         link1 = tmp_path / "kb.jsonl"
         link1.write_text("\n".join(_json.dumps(e) for e in lines if e["chain_link"] == 0))

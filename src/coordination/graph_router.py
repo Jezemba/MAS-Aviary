@@ -96,7 +96,7 @@ def _codes(records: list) -> list[tuple[str, dict]]:
 
 def _flown(record: dict) -> float | None:
     out = record.get("outputs") or {}
-    # B281 (audit F3): a mission that did not converge (aviary-mcp B288: success false, MISSION_NOT_CONVERGED) or
+    # B306 (audit F3): a mission that did not converge (aviary-mcp B288: success false, MISSION_NOT_CONVERGED) or
     # was otherwise not a result is not flown, whatever fuel figure it carries.
     if (record.get("status") not in (None, "success") or out.get("success") is False or out.get("converged") is False
             or out.get("valid") is False or out.get("valid_result") is False):

@@ -31,7 +31,7 @@ def _state():
 
 
 def test_an_unconverged_mission_is_not_a_result():
-    """B281 (audit F3, Jessica 2026-11-18) replaces B171's "a warning, not an error": the framework counts converged
+    """B306 (audit F3, Jessica 2026-11-18) replaces B171's "a warning, not an error": the framework counts converged
     missions only, and the reply says why in plain words, with the residuals."""
     out = json.loads(intercept_response("run_simulation", json.dumps(FLOWN_NOT_CONVERGED)))
     assert out["success"] is False and out["flown"] is False and out["error_code"] == "MISSION_NOT_CONVERGED"

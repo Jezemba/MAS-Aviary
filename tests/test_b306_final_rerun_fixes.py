@@ -1,4 +1,4 @@
-"""B281 (and the B-numbers of BUGS.md 2026-11-18): the framework fixes before the final 20-iteration re-run.
+"""B306-B325: the framework fixes before the final 20-iteration re-run (code comments tag them all B306).
 
 A8 trim mass, F4/F14 mass results, F9 graph cache, F1/F2 no clamps, B275 refusal, A9 measured AR, A10/F11 nothing
 stale flies, A11 zero fuel, F3 converged missions only, F7 aero guard, F8 seeded fingerprints, F10 SU2 settings,

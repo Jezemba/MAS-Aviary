@@ -593,7 +593,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     ``mTOM_sized_kg`` with ``sizing_converged``. resolve_request injects the wing mass as ``Aircraft.Wing.MASS``
     (kg, B240), the MTOM as pycycle's Fn_DES basis (Phase K-B) and as aviary's take-off mass (B239).
 
-    B281 (audit F4 / F14, Jessica 2026-11-18: no silent fallback). An estimate is a result only when its sizing
+    B306 (audit F4 / F14, Jessica 2026-11-18: no silent fallback). An estimate is a result only when its sizing
     converged and its numbers are in range. Before, an unconverged sizing silently kept mass-mcp's STARTING
     mass (the CPACS-declared 78,126 kg) as the MTOM -- 42 counted l20_final flights flew Fn_DES and take-off
     mass on it -- and an out-of-range wing mass or MTOM was skipped with the previous value left in place.
@@ -653,7 +653,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         data["error"] = (f"This mass estimate is not a result: {message}. It was not applied, and the previous mass "
                          "result was withdrawn. The mission and the engine cycle need a usable estimate of the "
                          "current design (check the CPACS file it read).")
-        logger.warning("[B281] estimate_mass not usable: %s", message)
+        logger.warning("[B306] estimate_mass not usable: %s", message)
         return
     store.pop("mass_estimate_error", None)
     store["mass_sizing_converged"] = True
@@ -671,7 +671,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
 
 
 def trim_mass_basis() -> tuple[float | None, str]:
-    """The mass the SU2 lift target is computed for (B281, A8 decision of 2026-11-18), and where it comes from.
+    """The mass the SU2 lift target is computed for (B306, A8 decision of 2026-11-18), and where it comes from.
 
     mass-mcp's SIZED gross mass carried from the previous iteration's design (design_flown.json via carry_over);
     on the first iteration, the baseline's sized mass (canonical ``baseline.sized_mtom_kg``). None, with the
@@ -782,7 +782,7 @@ def _flag_zero_fuel(tool_name: str, data: dict) -> None:
     if fuel > _ZERO_FUEL_FLOOR_KG:
         return
     data["valid"] = False
-    # B281 (A11, l20_final N_IF 12: 8.2e-06 kg with "success": true): the reply itself says it is not a success, so
+    # B306 (A11, l20_final N_IF 12: 8.2e-06 kg with "success": true): the reply itself says it is not a success, so
     # nothing downstream (the agents, the knowledge base, the runner) can read it as one.
     data["success"] = False
     data["flown"] = False
@@ -830,7 +830,7 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
     if _design_state is None or tool_name != "run_simulation":
         return
     if data.get("success") is False or data.get("converged") is False:
-        return                      # B281: not a flown result (F3 / A11), so not the geometry the next link inherits
+        return                      # B306: not a flown result (F3 / A11), so not the geometry the next link inherits
     summary = data.get("summary") if isinstance(data.get("summary"), dict) else data
     try:
         fuel = float((summary or {}).get("fuel_burned_kg"))
@@ -874,7 +874,7 @@ def _write_flown_design() -> None:
 
 
 def _warn_flown_not_converged(tool_name: str, data: dict) -> None:
-    """A mission whose optimiser did not converge is not a result (B281, audit F3; replaces B171's warning).
+    """A mission whose optimiser did not converge is not a result (B306, audit F3; replaces B171's warning).
 
     B171 (2026-10-10) marked a ``converged: false`` mission "flown" with a warning and left the residuals to the
     agents. Jessica's decision of 2026-11-18: the tool reports non-convergence honestly (aviary-mcp is being
@@ -970,7 +970,7 @@ _call_ctx = _threading.local()
 
 
 def _refuse_call(error_code: str, message: str, **extra) -> None:
-    """Refuse the call being resolved: the middleware returns this instead of calling the server (B281).
+    """Refuse the call being resolved: the middleware returns this instead of calling the server (B306).
 
     resolve_request cannot return a refusal itself; it records one here and type_coercion's middleware takes it
     right after resolve_request (take_refusal). Used where the framework cannot compute a value it must set
@@ -990,7 +990,7 @@ def restore_refusal(refusal: dict | None) -> None:
     _call_ctx.refusal = refusal
 
 
-# B281 (audit F16): arguments the framework injects that carry a coupled or pinned value. A server that does not
+# B306 (audit F16): arguments the framework injects that carry a coupled or pinned value. A server that does not
 # declare one cannot run the call coupled, so the call is refused rather than run without it.
 COUPLED_INJECTED_ARGS = frozenset({"target_cl", "aspect_ratio", "ref_area", "takeoff_mass_kg", "cruise_mach",
                                    "engine_deck_file", "engine_scale_factor",
@@ -998,7 +998,7 @@ COUPLED_INJECTED_ARGS = frozenset({"target_cl", "aspect_ratio", "ref_area", "tak
 
 
 def note_compat_drop(tool_name: str, key: str) -> None:
-    """Record an injected argument dropped because the server does not declare it (never silent; B281)."""
+    """Record an injected argument dropped because the server does not declare it (never silent; B306)."""
     if _design_state is None:
         return
     drops = _design_state.data_store.setdefault("compat_dropped_arguments", {})
@@ -1028,7 +1028,7 @@ SU2_PROTECTED_KEYS = frozenset({
     "CONV_STARTITER", "ITER", "EXT_ITER", "MAX_ITER", "INNER_ITER", "TIME_ITER", "TIME_DOMAIN",
     "MACH_NUMBER", "MACH", "AOA", "FREESTREAM_PRESSURE", "FREESTREAM_TEMPERATURE", "REF_AREA",
 })
-# B281 (F10): su2-mcp's own argument names that a caller may put in `overrides` (su2-mcp B173 takes them as the
+# B306 (F10): su2-mcp's own argument names that a caller may put in `overrides` (su2-mcp B173 takes them as the
 # arguments). The framework passes target_cl, aspect_ratio and the flight state itself; oswald_efficiency stays
 # su2-mcp's Raymer value for every solve.
 _SU2_FRAMEWORK_ARGS = frozenset({"target_cl", "aspect_ratio", "oswald_efficiency", "cruise_mach", "cruise_altitude_ft"})
@@ -1119,7 +1119,7 @@ def _inject_target_cl(resolved: dict) -> None:
                 if str(key).strip().upper() == "TARGET_CL":
                     asked = value
 
-    # B281 (A8 decision, Jessica 2026-11-18): the trim mass is mass-mcp's SIZED mass carried from the previous
+    # B306 (A8 decision, Jessica 2026-11-18): the trim mass is mass-mcp's SIZED mass carried from the previous
     # iteration (iteration 1: the baseline's sized mass, canonical baseline.sized_mtom_kg). Never the CPACS-declared
     # 78,126 kg (audit F4), never this iteration's own estimate (that made the target depend on call order, B276).
     mass_kg, mass_source = trim_mass_basis()
@@ -1141,7 +1141,7 @@ def _inject_target_cl(resolved: dict) -> None:
         target = coupling.cruise_lift_coefficient(
             mass_kg, mission.get("cruise_mach", 0.78), mission.get("cruise_altitude_ft", 33000), area)
     if target is None:
-        # B281: no silent fixed AOA and no caller value in place of the framework's (was: the caller's target_cl
+        # B306: no silent fixed AOA and no caller value in place of the framework's (was: the caller's target_cl
         # was kept). The call does not run; the reply says what is missing.
         resolved.pop("target_cl", None)
         missing = []
@@ -1156,7 +1156,7 @@ def _inject_target_cl(resolved: dict) -> None:
                      "(cruise lift W / (q S)) and could not compute it: missing " + "; ".join(missing) + ". "
                      "Give the solve the design's CPACS file (cpacs_file_path) and try again; if the mass is "
                      "missing, nothing an agent can change fixes it -- report it.")
-        logger.warning("[B281] no target CL: mass=%s (%s) wing area=%s -- SU2 configuration refused",
+        logger.warning("[B306] no target CL: mass=%s (%s) wing area=%s -- SU2 configuration refused",
                        mass_kg, mass_source, area)
         return
     resolved["target_cl"] = target
@@ -1421,7 +1421,7 @@ def _capture_geometry_wing(tool_name: str, data: dict) -> None:
 
 
 # The design-space inputs of the engine (Jessica's table): what design.json reports as set.
-# B281 (audit F12): T4_TAKEOFF and T4_CLIMB are design variables in the table ("Set"), so they are recorded and
+# B306 (audit F12): T4_TAKEOFF and T4_CLIMB are design variables in the table ("Set"), so they are recorded and
 # carried like the others (they used to revert to the defaults in the next link).
 _ENGINE_INPUTS = ("splitter.BPR", "T4_MAX", "fan.PR", "lpc.PR", "hpc.PR", "T4_TAKEOFF", "T4_CLIMB")
 
@@ -1573,7 +1573,7 @@ def _note_coupled_override(key: str, asked, used: float) -> None:
 def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
     """Tell the caller which SU2 settings it asked to change were kept as the framework set them (B151)."""
     if _design_state is None or not isinstance(data, dict) or tool_name not in (
-            "update_config_entries", "create_su2_session", "configure_from_cpacs"):   # B281: all three
+            "update_config_entries", "create_su2_session", "configure_from_cpacs"):   # B306: all three
         return
     kept = _design_state.data_store.pop("_su2_kept_back_last", None)
     if kept:
@@ -1729,7 +1729,7 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     # not, and the ONLY difference in the aero stage was that run 3 reached for
     # sample_surface_solution instead. SU2 had solved cleanly in both.
     if tool_name == "run_su2_solver":
-        # B281 (audit F15): only a solve that succeeded is captured. The coefficients of a failed solve are not this
+        # B306 (audit F15): only a solve that succeeded is captured. The coefficients of a failed solve are not this
         # design's aero, and the old capture took them regardless of `success`.
         if data.get("success") is False or data.get("error"):
             return
@@ -1739,7 +1739,7 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
             # the session's history file rather than waiting for a read_history_csv that may
             # never come -- in validate8_net it never did, and the mission stayed refused for
             # a design whose aero was solved and sitting on disk.
-            # B281 (F15): only THIS session's folder -- the "latest" folder fallback could read another session's file.
+            # B306 (F15): only THIS session's folder -- the "latest" folder fallback could read another session's file.
             sid = str(data.get("session_id") or getattr(_call_ctx, "su2_session", None) or "")
             workdir = (_design_state.data_store.get("_su2_workdirs") or {}).get(sid)
             if isinstance(workdir, str):
@@ -1824,13 +1824,13 @@ def _capture_aero_coefficients(tool_name: str, data: dict) -> None:
     floored = _induced_floor(cl_f)
     if floored is not None and cd_f < floored:
         cd_f = floored
-    # B281 (audit F15): su2-mcp (fix/final-rerun) says whether the solve that wrote this file converged and reached its
+    # B306 (audit F15): su2-mcp (fix/final-rerun) says whether the solve that wrote this file converged and reached its
     # lift target. A last row of an unconverged or untrimmed solve is not a result: nothing is captured.
     conv = data.get("convergence") if isinstance(data.get("convergence"), dict) else {}
     if conv.get("converged") is False or conv.get("trimmed") is False:
         _design_state.data_store["aero_capture_failure"] = (
             "read_history_csv: the solve that wrote this history did not converge or did not reach its lift target")
-        logger.warning("[B281] %s; not captured", _design_state.data_store["aero_capture_failure"])
+        logger.warning("[B306] %s; not captured", _design_state.data_store["aero_capture_failure"])
         return
     _note_solve_trim()
     _note_solve_convergence(conv.get("converged"), rows)
@@ -1863,7 +1863,7 @@ def note_su2_trim(tool_name: str, resolved: dict, result) -> None:
 
 
 def _note_solve_convergence(reported, rows) -> None:
-    """B281 (audit F7 / M10): whether the solve the captured CL/CD come from reached its residual target.
+    """B306 (audit F7 / M10): whether the solve the captured CL/CD come from reached its residual target.
 
     su2-mcp 1b6b1b1 reports the last history row with `success` = exit code 0, whether or not the residual reached
     CONV_RESIDUAL_MINVAL (S_GR 12: stopped at 499/500 iterations, rms[Rho] -4.23 against -6, flown). A ``converged``
@@ -2546,7 +2546,7 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
 
 # B3: the framework, not an agent, turns the designed cycle into the mission's engine. These tools are
 # registered for the data plane even when no agent's allowed_tools lists them (tool_loader).
-# B281 (drag model decision): get_cruise_point (aviary-mcp) is called by the framework only, like the deck tools.
+# B306 (drag model decision): get_cruise_point (aviary-mcp) is called by the framework only, like the deck tools.
 ENGINE_DECK_TOOLS = ("generate_engine_deck", "set_engine_deck", "get_cruise_point")
 
 
@@ -2667,11 +2667,11 @@ def _ensure_engine_deck(resolved: dict) -> None:
 
 # Agent tools the data plane also calls itself; registered for it even when a stage's toolset lacks them (unlike
 # ENGINE_DECK_TOOLS they stay visible to agents).
-FRAMEWORK_CALLED_TOOLS = ("configure_mission", "set_aircraft_parameters")   # B281: the framework applies the design
+FRAMEWORK_CALLED_TOOLS = ("configure_mission", "set_aircraft_parameters")   # B306: the framework applies the design
 
 
 def _takeoff_mass_kg() -> float | None:
-    """The take-off mass the climb start is computed for (B239): the one mass basis (B281, A8 / audit F4).
+    """The take-off mass the climb start is computed for (B239): the one mass basis (B306, A8 / audit F4).
 
     mass-mcp's sized mass carried from the previous iteration (iteration 1: the baseline's), the mass the SU2 trim
     and the engine sizing use -- one basis for trim, Fn_DES and take-off mass. It was this iteration's mass-mcp
@@ -3024,7 +3024,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # B132: size the structure at the mission, not at mass-mcp's defaults (150 pax / M0.785 /
     # 3500 nmi / 35,000 ft, which D150 silently got because it carries no mission nodes).
     if tool_name == "estimate_mass" and _design_state is not None:
-        _inject_mass_engine(resolved)          # B281 (mass-mcp M3): size the aircraft with the engine it flies
+        _inject_mass_engine(resolved)          # B306 (mass-mcp M3): size the aircraft with the engine it flies
     if tool_name == "estimate_mass":
         try:
             from src.config.canonical import load_canonical
@@ -3168,7 +3168,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name in ("configure_from_cpacs", "create_su2_session") and _design_state:
         from src.tools import coupling as _cpl
 
-        # B281 (audit F10): the framework's SU2 settings are not the caller's to change in these two tools either
+        # B306 (audit F10): the framework's SU2 settings are not the caller's to change in these two tools either
         # (B151 protected them in update_config_entries only). O_GR 17 sent FREESTREAM_* in overrides, N_GR 1
         # ASPECT_RATIO / OSWALD_EFFICIENCY (su2-mcp takes those as arguments, B173). They are removed and the
         # reply says so (framework_kept); the canonical settings and the framework's arguments are what the solve uses.
@@ -3182,7 +3182,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _kept["oswald_efficiency"] = resolved.pop("oswald_efficiency")   # su2-mcp's Raymer e is the study's
         if _kept:
             _design_state.data_store["_su2_kept_back_last"] = _kept
-            logger.warning("[B281] kept the framework's SU2 settings in %s; ignored %s", tool_name, sorted(map(str, _kept)))
+            logger.warning("[B306] kept the framework's SU2 settings in %s; ignored %s", tool_name, sorted(map(str, _kept)))
 
         # B138: the aspect ratio su2-mcp needs for the induced-drag floor, from the geometry.
         # B253: the geometry's value wins over a caller's, as for the aviary coupled values (B143): an agent
@@ -3197,7 +3197,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             _mission = load_canonical().get("mission", {}) or {}
         except Exception:      # pragma: no cover - never block a solve on config
             _mission = {}
-        # B281 (F10): the mission's flight state always (a caller's value used to win).
+        # B306 (F10): the mission's flight state always (a caller's value used to win).
         for _arg in ("cruise_mach", "cruise_altitude_ft"):
             if _mission.get(_arg) is None:
                 continue
@@ -3205,7 +3205,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 _design_state.data_store.setdefault("_su2_kept_back_last", {})[_arg] = resolved[_arg]
             resolved[_arg] = float(_mission[_arg])
 
-        # B281 (F10): REF_AREA is the geometry's when the framework has it; a caller's value used to win here.
+        # B306 (F10): REF_AREA is the geometry's when the framework has it; a caller's value used to win here.
         if resolved.get("ref_area") is not None and (_cpl.get_var(_design_state, "geom.reference_area") or (
                 _design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")):
             _design_state.data_store.setdefault("_su2_kept_back_last", {})["ref_area"] = resolved.pop("ref_area")
@@ -3272,7 +3272,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                 else:
                     raise ValueError("the canonical su2_config is empty")
             except Exception as exc:
-                # B281 (F10): the canonical numerics are the study's control; without them the solve would run on
+                # B306 (F10): the canonical numerics are the study's control; without them the solve would run on
                 # whatever the session holds. Refuse rather than pass silently.
                 _refuse_call("CANONICAL_SU2_SETTINGS_UNAVAILABLE",
                              f"{tool_name} was not run: the framework could not load the study's SU2 settings ({exc}). "
@@ -3283,7 +3283,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         updates = resolved.get("updates")
         if isinstance(updates, dict):
             kept_back = {k: updates.pop(k) for k in list(updates) if str(k).upper() in SU2_PROTECTED_KEYS
-                         or str(k).strip().lower() in _SU2_FRAMEWORK_ARGS}   # B281 (F10)
+                         or str(k).strip().lower() in _SU2_FRAMEWORK_ARGS}   # B306 (F10)
             if kept_back:
                 _design_state.data_store["_su2_kept_back_last"] = kept_back
                 logger.warning("[B151] kept the framework's SU2 settings; ignored %s", sorted(kept_back))
@@ -3474,7 +3474,7 @@ def _auto_size_cycle(resolved: dict) -> None:
             except Exception as exc:  # pragma: no cover - surfaced by the refusal below
                 logger.warning("[B187] could not size pycycle session %s before run_cycle: %s", sid, exc)
     if not cycle_is_sized(sid):
-        # B281 (drag model decision): never run the cycle on pycycle's default thrust.
+        # B306 (drag model decision): never run the cycle on pycycle's default thrust.
         _refuse_call("DESIGN_THRUST_NOT_AVAILABLE",
                      "run_cycle was not run: the framework sizes the engine's design thrust (Fn_DES) from the mass "
                      "and aviary's cruise lift-to-drag of the current design, and could not: "
@@ -4045,7 +4045,7 @@ def _inject_engine_scale(resolved: dict) -> None:
     _design_state.data_store["engine_injected_scale_factor"] = scale
     _design_state.data_store["engine_scale_basis"] = basis
     # B187/B3: which engine result and deck this scale came from, per aviary session (run_simulation
-    # re-applies when either changes). B281 (A10, N_GR 19): recorded only when aviary ACCEPTS the call
+    # re-applies when either changes). B306 (A10, N_GR 19): recorded only when aviary ACCEPTS the call
     # (_capture_applied_design). It used to be recorded here, before the server answered, so a refused set made
     # the stale scale on the session look current and B187 did not re-apply it.
     _call_ctx.engine_pending = (sid, _engine_scale_key(sid))
@@ -4087,7 +4087,7 @@ def _fix_su2_markers(updates: dict, wall: str, far: str) -> None:
 
 
 def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
-    """B281 (A10 / audit F11, F4, A9, F1): refuse run_simulation when a value the mission needs did not reach aviary.
+    """B306 (A10 / audit F11, F4, A9, F1): refuse run_simulation when a value the mission needs did not reach aviary.
 
     Runs after resolve_request, i.e. after the pre-mission steps (take-off mass, engine deck, B187 / B272
     re-applies). Each of these used to fail with a log line only, and the mission flew whatever the session held:
@@ -4127,7 +4127,7 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
 
 
 def _pin_cycle_fixed_inputs(resolved: dict) -> None:
-    """B281 (audit F12): the "Set (fixed)" cycle inputs of the design table are the study's, on every set_inputs.
+    """B306 (audit F12): the "Set (fixed)" cycle inputs of the design table are the study's, on every set_inputs.
 
     The table lists the fan / LPC / HPC / HPT / LPT efficiencies as "Set (fixed)", but nothing held them: ~18
     successful l20_final set_inputs flew rounded values (lpc.eff 0.92, fan.eff 0.89, ...), each a different cycle
@@ -4168,7 +4168,7 @@ def _pin_cycle_fixed_inputs(resolved: dict) -> None:
 
 
 def prebuild_engine_deck(tool_name: str, kwargs: dict) -> None:
-    """B281 (B273): build the current engine's deck before run_simulation / close_cycle_model, outside their budget.
+    """B306 (B273): build the current engine's deck before run_simulation / close_cycle_model, outside their budget.
 
     Same builder as the pre-mission hook (_ensure_engine_deck) and B259's close hook (_deck_before_close); called by
     the middleware under generate_engine_deck's own budget. Inside the call the same builder then finds the deck
@@ -4186,7 +4186,7 @@ def prebuild_engine_deck(tool_name: str, kwargs: dict) -> None:
 
 
 def _inject_mass_engine(resolved: dict) -> None:
-    """estimate_mass: size the aircraft with the engine the mission flies (B281, mass-mcp M3 framework side).
+    """estimate_mass: size the aircraft with the engine the mission flies (B306, mass-mcp M3 framework side).
 
     mass-mcp 5b7368c takes ``engine_deck_file`` and ``engine_scale_factor``; without them it sizes with aviary's bench
     engine. The framework passes:

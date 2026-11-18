@@ -74,7 +74,7 @@ def test_su2_gets_twice_the_semi_span_reference_area(tool):
 
 
 def test_a_caller_supplied_reference_area_no_longer_wins():
-    """B281 (audit F10): REF_AREA is the geometry's when the framework has it (was: the caller's won)."""
+    """B306 (audit F10): REF_AREA is the geometry's when the framework has it (was: the caller's won)."""
     coupling.put_var(dp._design_state, "geom.reference_area", 61.39, source_tool="t")
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "ref_area": 130.1})
@@ -319,7 +319,7 @@ def test_su2_gets_the_aspect_ratio_and_the_mission_flight_state(tool):
 
 
 def test_a_caller_flight_state_is_replaced_by_the_missions():
-    """B281 (audit F10): the mission's flight state always (was: a caller's value was kept)."""
+    """B306 (audit F10): the mission's flight state always (was: a caller's value was kept)."""
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "cruise_altitude_ft": 36000.0})
     assert out["cruise_altitude_ft"] == 33000.0
@@ -364,14 +364,14 @@ def test_an_unconverged_sized_mtom_is_not_used():
     dp.intercept_response("estimate_mass", json.dumps({"status": "success", "mass_breakdown": {
         "mTOM_kg": 78126.0, "mTOM_sized_kg": 91172.0, "sizing_converged": False,
         "components": {"mWing_kg": 8736.0, "mWing_source": "flops"}}}))
-    # B281 (audit F4): not the CPACS starting mass either -- the estimate is not usable and is withdrawn.
+    # B306 (audit F4): not the CPACS starting mass either -- the estimate is not usable and is withdrawn.
     assert "mass_mtom_kg" not in _store() and "did not converge" in _store()["mass_estimate_error"]
 
 
 # ---- version safety: injected arguments only reach servers that declare them ------------------------
 
 def test_an_older_server_without_the_coupled_arguments_is_refused(monkeypatch):
-    """B281 (audit F16): was "dropped for an older server". A coupled argument the server does not take refuses the
+    """B306 (audit F16): was "dropped for an older server". A coupled argument the server does not take refuses the
     call (the mass would be sized off the mission)."""
     from smolagents import Tool
 

@@ -22,7 +22,7 @@ def test_the_su2_drag_transforms_were_removed():
 
 
 def test_fn_des_from_aviarys_lift_to_drag():
-    # B281: Fn_DES = mass * g / (L/D) / 2 / 4.448 * 1.25, no [2,000, 25,000] lbf clamp.
+    # B306: Fn_DES = mass * g / (L/D) / 2 / 4.448 * 1.25, no [2,000, 25,000] lbf clamp.
     assert C.fn_des_from_lift_to_drag(73000.0, 17.0) == 73000.0 * 9.81 / 17.0 / 2 / 4.448 * 1.25
     assert C.fn_des_from_lift_to_drag(500000.0, 10.0) > 25000.0
 

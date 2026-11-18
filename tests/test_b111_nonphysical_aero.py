@@ -18,7 +18,7 @@ def fresh(monkeypatch):
 def _aero(cl, cd):
     dp._design_state.data_store["aero_cl_cruise"] = cl
     dp._design_state.data_store["aero_cd_cruise"] = cd
-    # B281 (audit F7): a solve trimmed to this CL and converged; these tests are about CD sign and CL range.
+    # B306 (audit F7): a solve trimmed to this CL and converged; these tests are about CD sign and CL range.
     dp._design_state.data_store.update({"aero_solve_trimmed": True, "aero_solve_target_cl": cl,
                                         "aero_solve_converged": True})
     try:

@@ -23,7 +23,7 @@ from src.tools.data_plane import (
 def fresh_state():
     state = DesignState()
     init_data_plane(state, tool_server_map={})
-    # B281 (A9): the drag factor uses the MEASURED aspect ratio of the current wing.
+    # B306 (A9): the drag factor uses the MEASURED aspect ratio of the current wing.
     state.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 130.1, "Aircraft.Wing.ASPECT_RATIO": 9.4}
     return state
 
@@ -429,7 +429,7 @@ class TestPhaseHAeroInjection:
         assert fresh_state.data_store["aero_cl_cruise"] == pytest.approx(0.187)
         assert fresh_state.data_store["aero_cd_cruise"] == pytest.approx(0.0128)
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_into_set_aircraft_parameters(self, fresh_state):
         """When the agent submits the 8-key parameters dict without the
         Phase H keys, resolve_request adds Mission.Design.LIFT_COEFFICIENT
@@ -457,7 +457,7 @@ class TestPhaseHAeroInjection:
         assert params["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == \
             pytest.approx(1.39, abs=0.05)
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_overwrites_explicit_agent_values(
         self, fresh_state,
     ):
@@ -516,7 +516,7 @@ class TestPhaseHAeroInjection:
                     "mWing_source": "flops",
                     "mFuselage_kg": 3557.0,
                 },
-                "sizing_converged": True, "mTOM_sized_kg": 90000.0,     # B281 (F4): a converged estimate
+                "sizing_converged": True, "mTOM_sized_kg": 90000.0,     # B306 (F4): a converged estimate
             },
         }
         intercept_response("estimate_mass", response)
@@ -573,7 +573,7 @@ class TestPhaseHAeroInjection:
         assert "Aircraft.Wing.MASS" not in out["parameters"]
         assert "Aircraft.Wing.MASS_SCALER" not in out["parameters"]
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_phase_h_and_k_coexist(self, fresh_state):
         """When both SU2 aero AND mass-mcp wing mass are captured, the
         middleware injects all three Phase H+K keys in one call."""
@@ -614,10 +614,10 @@ class TestPhaseHAeroInjection:
             },
         }
         intercept_response("estimate_mass", response)
-        # B281 (audit F4): the SIZED mass, never the starting mTOM_kg (the CPACS 78,126 kg in the study)
+        # B306 (audit F4): the SIZED mass, never the starting mTOM_kg (the CPACS 78,126 kg in the study)
         assert fresh_state.data_store["mass_mtom_kg"] == pytest.approx(91000.0)
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_fn_des_into_pycycle_set_inputs(self, fresh_state):
         """resolve_request on pycycle's set_inputs adds Fn_DES from
         captured MTOM. Formula: MTOM × 0.0811."""
@@ -634,7 +634,7 @@ class TestPhaseHAeroInjection:
         finally:
             _tool_server_map.pop("set_inputs", None)
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_fn_des_does_not_overwrite_explicit_value(
         self, fresh_state,
     ):
@@ -678,7 +678,7 @@ class TestPhaseHAeroInjection:
         finally:
             _tool_server_map.pop("set_inputs", None)
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_inject_coerces_json_string_parameters(self, fresh_state):
         """mcpadapt's anyOf gap sometimes lands `parameters` as a JSON
         string. Inject still works."""

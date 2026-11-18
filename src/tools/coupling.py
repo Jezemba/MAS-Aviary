@@ -135,7 +135,7 @@ BENCH_ENGINE_CRUISE_FN_LBF = 5936.0
 def fn_des_from_lift_to_drag(mass_kg: float, lift_to_drag: float) -> float:
     """pycycle ``Fn_DES`` (lbf per engine) = mass * g / (L/D) / engines / 4.448 * 1.25.
 
-    No clamp (B281, audit F2: was [2,000, 25,000] lbf). Only a physically impossible value fails: a non-positive
+    No clamp (B306, audit F2: was [2,000, 25,000] lbf). Only a physically impossible value fails: a non-positive
     mass or L/D, or a non-finite result.
     """
     mass, ld = float(mass_kg), float(lift_to_drag)

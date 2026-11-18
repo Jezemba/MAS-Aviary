@@ -49,7 +49,7 @@ def baseline_cpacs() -> str:
 
 # B254: bump when the code that produces the baseline changes. The key used to be the CPACS alone, so results from
 # old code were reused indefinitely and differed by machine (CD 0.02288 on ws8, 0.02232 on ws5 for one name).
-# B281 (audit F9): bumped. "b254" caches were computed before B274-B281 (trim at the CPACS 78,126 kg, untrimmed
+# B306 (audit F9): bumped. "b254" caches were computed before B274-B306 (trim at the CPACS 78,126 kg, untrimmed
 # fallbacks, CPACS-mass Fn_DES); they are left on disk (nothing is deleted) and never read again. The trim mass is
 # part of the key too, so a changed canonical baseline.sized_mtom_kg never reuses a cache trimmed at another mass.
 BASELINE_VERSION = "b281"
@@ -80,7 +80,7 @@ def _size_engine_session(design: dict | None = None) -> None:
 def seed_from_design(design: dict) -> list[str]:
     """Put a recorded design.json's discipline results into the data plane (as scripts/stage_sandbox.py).
 
-    B281: a mass result is seeded only when its sizing converged (audit F4: no CPACS-mass fallback), the aero keeps
+    B306: a mass result is seeded only when its sizing converged (audit F4: no CPACS-mass fallback), the aero keeps
     its solve's trim and convergence record (B277 / F7), and every seeded result is stamped with the fingerprint of
     the design it belongs to -- the carried CPACS just opened -- so a morph in this link makes it stale like any
     captured result (audit F8; before, seeded results had no fingerprint and were never stale).
@@ -104,7 +104,7 @@ def seed_from_design(design: dict) -> list[str]:
         coupling.put_var(ds, "aero.cd_cruise", aero["cd_cruise"], source_tool="graph pre-init")
         if aero.get("drag_assessment"):
             store["aero_drag_assessment"] = aero["drag_assessment"]
-        # B277 / B281: the seeded aero keeps its solve's record; a design.json without it seeds "unknown", which
+        # B277 / B306: the seeded aero keeps its solve's record; a design.json without it seeds "unknown", which
         # aero_guard refuses (audit F7).
         store["aero_solve_trimmed"] = aero.get("solve_trimmed")
         store["aero_solve_target_cl"] = aero.get("solve_target_cl")
@@ -154,7 +154,7 @@ def seed_from_design(design: dict) -> list[str]:
 def seed_mass_from_design(design: dict) -> float | None:
     """Put a recorded design.json's sized MTOM into the data plane before the SU2 session opens (B276).
 
-    B281: only a converged sizing (audit F4). The SU2 trim itself no longer reads this (data_plane.trim_mass_basis
+    B306: only a converged sizing (audit F4). The SU2 trim itself no longer reads this (data_plane.trim_mass_basis
     takes the carried sized mass from carry_over); the seed is the MTOM Fn_DES and the take-off mass start from.
     """
     from src.tools import coupling
@@ -243,7 +243,7 @@ def prepare(carry_over: dict | None) -> dict:
 
                 state = get_design_state()
                 doc = build_design(state.data_store or {}, state.sessions or {})
-                # B281: only a usable baseline is cached -- a trimmed, converged SU2 solve and a converged mass
+                # B306: only a usable baseline is cached -- a trimmed, converged SU2 solve and a converged mass
                 # sizing -- or every later link 1 would reuse a bad one.
                 aero, st = doc.get("aero") or {}, doc.get("structures") or {}
                 problems = [name for name, ok in (

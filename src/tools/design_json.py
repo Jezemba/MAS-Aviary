@@ -68,7 +68,7 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         "aviary_cruise_point": store.get("aviary_cruise_point"),
         "engine_sizing": {"fn_des_basis": store.get("engine_fn_des_basis"),
                           "error": store.get("engine_sizing_error")},
-        # B281 (mass-mcp M3): the deck the mission flies, carried so the next iteration's mass is sized with it.
+        # B306 (mass-mcp M3): the deck the mission flies, carried so the next iteration's mass is sized with it.
         "engine_deck": _public(store.get("engine_deck")) if isinstance(store.get("engine_deck"), dict) else None,
         "mass_engine_basis": store.get("mass_engine_basis"),
         "structures": {"wing_mass_kg": store.get("mass_wing_kg"), "mtom_kg": store.get("mass_mtom_kg"),

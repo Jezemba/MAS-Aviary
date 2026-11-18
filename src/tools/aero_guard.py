@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 
 _CL_RANGE = (0.05, 1.0)       # aviary-mcp's declared Mission.Design.LIFT_COEFFICIENT range
-# B281 (audit F7): the trim tolerance su2-mcp itself applies when it reports a solve (su2-mcp fix/final-rerun
+# B306 (audit F7): the trim tolerance su2-mcp itself applies when it reports a solve (su2-mcp fix/final-rerun
 # convergence.TRIM_TOLERANCE = 0.01, relative), so the framework and the tool agree on what "on target" means.
 TRIM_CL_REL_TOL = 0.01
 
@@ -84,7 +84,7 @@ def nonphysical_reason(cl, cd, record: dict | None = None) -> str | None:
         problems.append("the SU2 solve had no target CL: it ran at a fixed angle of attack, so its CL is not the "
                         "cruise lift and its CD is not the drag at cruise")
     elif record.get("known") and record.get("trimmed") is not True:
-        # B281 (audit F7): unknown is not trimmed -- a session the framework never saw configured, or aero seeded
+        # B306 (audit F7): unknown is not trimmed -- a session the framework never saw configured, or aero seeded
         # from a record that does not say.
         problems.append("it is not known that the SU2 solve was trimmed to the cruise lift (no record of the "
                         "session's lift target)")

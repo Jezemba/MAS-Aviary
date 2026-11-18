@@ -964,7 +964,7 @@ def _mission_metrics_from_kb() -> dict | None:
                             pass
         return found
 
-    # B281 (audit F3): only a CONVERGED mission is flown (aviary-mcp B288 answers success false for the others; an
+    # B306 (audit F3): only a CONVERGED mission is flown (aviary-mcp B288 answers success false for the others; an
     # older reply with "converged": false is excluded here too, and so is a zero-fuel "success", A11).
     sim_idx = max((i for i, e in enumerate(entries)
                    if e.get("tool") == "run_simulation" and e.get("status") == "success"
@@ -981,7 +981,7 @@ def _mission_metrics_from_kb() -> dict | None:
     for e in entries[sim_idx + 1:]:
         o = e.get("outputs")
         if e.get("tool") == "run_simulation":
-            break                  # B281: a later (failed) mission; its get_results are not this one's
+            break                  # B306: a later (failed) mission; its get_results are not this one's
         if e.get("tool") == "get_results" and e.get("status") == "success" and isinstance(o, dict) \
                 and (session is None or o.get("session_id") in (None, session)):
             out.update(_metrics(o))

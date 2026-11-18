@@ -62,7 +62,7 @@ def _simulate_link_with_su2(cl=0.19, cd=0.0141):
     )
     ds.sessions["tigl"] = "LINK0-TIGL-SESSION"
     ds.data_store["mass_wing_kg"] = 7419.8
-    # B281 (A9): the drag factor uses the measured AR of the wing (here the link's measured wing).
+    # B306 (A9): the drag factor uses the measured AR of the wing (here the link's measured wing).
     ds.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 11.0}
     return ds
 
@@ -116,7 +116,7 @@ class TestResetIsolatesLinks:
 
 
 class TestStaleAeroNoLongerInjects:
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_link1_mission_does_not_inherit_link0_drag(self):
         """The headline bug: link k must not fly link k-1's SU2 drag."""
         _simulate_link_with_su2(cl=0.19, cd=0.0141)
@@ -141,7 +141,7 @@ class TestStaleAeroNoLongerInjects:
             == "MISSING_no_su2_aero"
         )
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_uncoupled_advisory_fires_again_on_the_new_link(self):
         """The advisory was silenced on links 1..N by the stale registry."""
         _simulate_link_with_su2()
@@ -169,7 +169,7 @@ class TestStaleAeroNoLongerInjects:
         )
         assert "Aircraft.Wing.MASS" not in out["parameters"]
 
-    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b281_final_rerun_fixes.py)")
+    @pytest.mark.skip(reason="SU2 aero injection and the SU2-drag Fn_DES were removed by the drag model decision of 2026-11-18 (see test_b306_final_rerun_fixes.py)")
     def test_fresh_su2_on_the_new_link_couples_normally(self):
         """Reset must not break coupling — only staleness."""
         _simulate_link_with_su2(cd=0.0141)
@@ -178,7 +178,7 @@ class TestStaleAeroNoLongerInjects:
             "read_history_csv", json.dumps({"rows": [{"CL": 0.22, "CD": 0.0155}]})
         )
         get_design_state().data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83,
-                                                          "Aircraft.Wing.ASPECT_RATIO": 13.5}   # B281 (A9)
+                                                          "Aircraft.Wing.ASPECT_RATIO": 13.5}   # B306 (A9)
         out = resolve_request(
             "set_aircraft_parameters",
             {"session_id": "s1", "parameters": {"Aircraft.Wing.ASPECT_RATIO": 13.5}},

@@ -707,7 +707,7 @@ def measured_fuel_from_kb(kb_path, attempt: int | None = None) -> float | None:
     if not path.is_file():
         return None
     measured = None
-    # B281 (audit F3): only CONVERGED missions count. A run_simulation that did not converge (or burned no fuel) is
+    # B306 (audit F3): only CONVERGED missions count. A run_simulation that did not converge (or burned no fuel) is
     # not a measurement, and neither is a get_results read after it: aviary keeps the last converged run's
     # trajectory after a failed run (audit M14), so get_results counts only after a converged run_simulation.
     last_sim_ok = False
@@ -765,7 +765,7 @@ def reconcile_measured_fuel(result, result_dict: dict, kb_path, attempt: int | N
     for d in targets:
         d["fuel_burned_kg"] = new_value
         if new_value is None and d.get("gtow_kg") is not None:
-            # B281 (audit F3): no converged mission, so no GTOW either (it would be an unconverged or refused one's).
+            # B306 (audit F3): no converged mission, so no GTOW either (it would be an unconverged or refused one's).
             result_dict["gtow_classifier_value"] = d["gtow_kg"]
             d["gtow_kg"] = None
     result_dict["fuel_source"] = source

@@ -31,7 +31,7 @@ class _Stub:
     def forward(self, **kwargs):
         resolved = dp.resolve_request(self.name, kwargs)
         self.calls.append(resolved)
-        return dp.intercept_response(self.name, json.dumps(self.reply))   # as the middleware does (B281: A10)
+        return dp.intercept_response(self.name, json.dumps(self.reply))   # as the middleware does (B306: A10)
 
 
 @pytest.fixture

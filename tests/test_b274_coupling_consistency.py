@@ -27,7 +27,7 @@ def fresh(monkeypatch):
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})
-    # B281 (A8): the trim mass comes from carry-over / canonical; these tests give it directly (the store's MTOM if set).
+    # B306 (A8): the trim mass comes from carry-over / canonical; these tests give it directly (the store's MTOM if set).
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (state.data_store.get("mass_mtom_kg", 78126.0), "test basis"))
     dp._PLANFORM_CACHE.clear()
     for name in ("su2_session", "su2_config_override", "morph", "wing_uid"):
@@ -203,7 +203,7 @@ def test_the_same_value_typed_is_not_reported_as_replaced(fresh):
 
 
 def test_without_a_framework_target_the_callers_value_is_refused_not_kept(fresh):
-    """B281: was "kept and flagged"; no target means the configuration is refused (no silent default)."""
+    """B306: was "kept and flagged"; no target means the configuration is refused (no silent default)."""
     dp.take_refusal()
     resolved = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "target_cl": 0.56})
     assert "target_cl" not in resolved

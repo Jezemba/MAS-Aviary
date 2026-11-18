@@ -25,7 +25,7 @@ def fresh(monkeypatch, tmp_path):
     monkeypatch.setattr(dp, "_presessions", {})
     monkeypatch.setattr(dp, "_tool_server_map", {
         "generate_volume_mesh": "tigl", "run_su2_solver": "su2", "estimate_mass": "mass"})
-    # B281: the framework now needs the mass basis and an engine on record (no defaults), and refuses a call whose
+    # B306: the framework now needs the mass basis and an engine on record (no defaults), and refuses a call whose
     # server does not declare a coupled argument (audit F16) -- the stubs declare them.
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
     monkeypatch.setattr(dp, "carried_engine", lambda: (__file__, 1.0, "test"))
@@ -40,7 +40,7 @@ def _tool(name, response=None, raises=None):
         # it (B135 floor), so a stub without it would reject the call.
         inputs = {"session_id": {"type": "string", "description": "s", "nullable": True},
                   "max_runtime_seconds": {"type": "number", "description": "s", "nullable": True},
-                  # B281 (F16): the coupled arguments a real server declares
+                  # B306 (F16): the coupled arguments a real server declares
                   **{k: {"type": "any", "description": k, "nullable": True} for k in sorted(dp.COUPLED_INJECTED_ARGS)}}
         output_type = "string"
         description = "fake"

@@ -72,7 +72,7 @@ TRIMMED = {"aero.cl_cruise": 0.5588, "aero.cd_cruise": 0.0229, "aero.target_cl":
 
 
 def test_flown_goes_to_review_and_an_unconverged_mission_is_not_flown():
-    """B281 (audit F3, Jessica 2026-11-18): only a converged mission is flown (was: "even unconverged")."""
+    """B306 (audit F3, Jessica 2026-11-18): only a converged mission is flown (was: "even unconverged")."""
     d = gr.route_after_node(gr.SIMULATION, [rec("run_simulation", summary={"fuel_burned_kg": 22998.6})],
                             "", gr.SIMPLE, 0)
     assert (d.next_node, d.rule) == (gr.REVIEW, "flow")

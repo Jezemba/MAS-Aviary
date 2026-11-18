@@ -26,7 +26,7 @@ import pytest
 
 # Drag model decision (Jessica, 2026-11-18): SU2's CL and drag factor are no longer injected into aviary, so the
 # injection bounds gate these tests cover was removed with it. An out-of-range SU2 CL now refuses the mission in
-# aero_guard (tests/test_b111_nonphysical_aero.py, tests/test_b281_final_rerun_fixes.py).
+# aero_guard (tests/test_b111_nonphysical_aero.py, tests/test_b306_final_rerun_fixes.py).
 pytestmark = pytest.mark.skip(reason="SU2 aero injection removed by the drag model decision of 2026-11-18")
 
 from src.coordination.design_state import DesignState
@@ -58,7 +58,7 @@ DESIGN_SPACE = {
 @pytest.fixture(autouse=True)
 def _clean():
     init_data_plane(DesignState(), TOOL_SERVER_MAP)
-    # B281 (A9): the drag factor needs the MEASURED aspect ratio; these tests are about the CL bounds.
+    # B306 (A9): the drag factor needs the MEASURED aspect ratio; these tests are about the CL bounds.
     get_design_state().data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 9.36}
     yield
     init_data_plane(DesignState(), TOOL_SERVER_MAP)
