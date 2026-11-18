@@ -53,6 +53,23 @@ def _flown(result: Any) -> tuple[bool, str]:
     return False, f"{code}, fuel_burned_kg {fuel}" if fuel is not None else str(code)
 
 
+# B349 (aviary-mcp fix/final-rerun): replies of a run_simulation that aviary-mcp refused before any run started --
+# another run of the session is in progress (networked peers share one aviary session), a timed-out run is still
+# stopping, or the timeout argument is out of range. Nothing was flown, so they never count as a failed mission
+# (which would refuse the next unchanged call with NO_CHANGE_SINCE_FAILED_RUN after the first run ends).
+NOT_RUN_CODES = frozenset({"RUN_IN_PROGRESS", "RUN_STILL_STOPPING", "INVALID_TIMEOUT"})
+
+
+def _not_run_code(result: Any) -> bool:
+    data = result
+    if isinstance(result, str):
+        try:
+            data = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    return isinstance(data, dict) and data.get("error_code") in NOT_RUN_CODES
+
+
 def check(tool_name: str, resolved: dict) -> dict | None:
     """The refusal payload when this run_simulation repeats a failed one unchanged, else None."""
     store = _store()
@@ -81,6 +98,8 @@ def observe(tool_name: str, resolved: dict, result: Any, status: str) -> None:
         return
     if tool_name != "run_simulation" or status == "refused":
         return
+    if _not_run_code(result):
+        return          # B349: aviary-mcp did not run this mission at all; it is not a failed mission
     flown, why = _flown(result)
     failed = store.setdefault("_failed_missions", {})
     if flown:

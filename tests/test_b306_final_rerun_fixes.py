@@ -25,6 +25,7 @@ def fresh(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     # G1 (measured CPACS tails) is tested in tests/test_g1_cpacs_tails_and_cycle_keys.py; these tests use no tails.
     monkeypatch.setenv("AVION_CPACS_TAILS", "0")
+    monkeypatch.setenv("AVION_CPACS_WING_TC", "0")      # J2 (measured wing t/c): tests/test_j2_wing_tc_framework.py
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})
