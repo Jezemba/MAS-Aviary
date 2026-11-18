@@ -172,16 +172,17 @@ def current_design_fingerprint() -> str:
 # B262: the tool calls whose results are coupled inputs, and the producer each one's result belongs to.
 PRODUCER_TOOLS = {"estimate_mass": "mass", "run_su2_solver": "su2", "read_history_csv": "su2",
                   "run_cycle": "pycycle", "get_outputs": "pycycle"}
-_call_start = __import__("threading").local()
+# B361: the call's own scope (src/tools/call_scope.py), not a threading.local: the watchdog threads are pooled.
+from src.tools.call_scope import call_ctx as _call_start  # noqa: E402
 
 
 def note_call_start(tool_name: str) -> None:
-    """Remember the design a producing call STARTED on (B262), for note_capture on this thread."""
+    """Remember the design a producing call STARTED on (B262), for note_capture in this call's post-hook."""
     producer = PRODUCER_TOOLS.get(tool_name)
     if producer:
-        started = getattr(_call_start, "fp", None) or {}
+        started = getattr(_call_start, "producer_start_fp", None) or {}
         started[producer] = current_design_fingerprint()
-        _call_start.fp = started
+        _call_start.producer_start_fp = started
 
 
 def note_capture(producer: str, detail: Any = None) -> None:
@@ -196,7 +197,7 @@ def note_capture(producer: str, detail: Any = None) -> None:
     state = get_design_state()
     if state is None:
         return
-    started = (getattr(_call_start, "fp", None) or {}).pop(producer, None)
+    started = (getattr(_call_start, "producer_start_fp", None) or {}).pop(producer, None)
     state.data_store[f"_coupled_fp_{producer}"] = started or current_design_fingerprint()
     # B272: a new coupled result (SU2 aero, wing mass, engine) that aviary has not received yet triggers a re-apply
     # before the next mission (data_plane._reapply_current_wing_mass).

@@ -158,6 +158,7 @@ class _Request:
     result: Any = None
     error: BaseException | None = None
     prepared: dict | None = None
+    step_log_prompt: dict | None = None     # B361: the prompt as built on the worker, for the peer's step log
     queued_at: float = field(default_factory=time.monotonic)
 
     def bucket_key(self) -> tuple:
@@ -208,6 +209,11 @@ def submit(model: Any, messages: list, stop_sequences: list | None = None,
     finally:
         with _lock:
             _waiting -= 1
+    # B361: the prompt was recorded on the worker thread (record_prompt is per thread); this peer's record_generation
+    # runs on this thread, so the prompt comes back here instead of staying on the worker.
+    from src.logging import step_log
+
+    step_log.put_prompt(request.step_log_prompt)
     if request.error is not None:
         raise request.error
     return request.result
@@ -312,14 +318,19 @@ def _prepare(request: _Request) -> dict:
     is the model's own budgeted path. Doing it here (rather than in the peer's thread) is what
     keeps the promise that only this thread ever touches the model or its tokenizer.
     """
+    from src.logging import step_log
+
     model = request.model
+    step_log.take_prompt()          # B361: nothing left over from another request on this thread
     with model._thinking_for_this_call(request.thinking):
-        return model._prepare_completion_args(
+        prepared = model._prepare_completion_args(
             request.messages,
             stop_sequences=request.stop_sequences,
             tools_to_call_from=request.tools_to_call_from,
             **request.kwargs,
         )
+    request.step_log_prompt = step_log.take_prompt()
+    return prepared
 
 
 def _generate_rows(rows: list[_Request]) -> None:

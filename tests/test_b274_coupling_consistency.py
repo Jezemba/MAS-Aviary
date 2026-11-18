@@ -192,7 +192,7 @@ def test_trim_settings_in_overrides_cannot_undo_the_trim(fresh):
                                                                        "MACH_NUMBER": 0.78}})
     assert "TARGET_CL" not in resolved["overrides"] and "FIXED_CL_MODE" not in resolved["overrides"]
     assert resolved["target_cl"] == pytest.approx(coupling.cruise_lift_coefficient(79560.0, 0.78, 33000, 122.78))
-    assert fresh.data_store["_target_cl_asked"]["overrides_removed"] == {"TARGET_CL": "0.5", "FIXED_CL_MODE": "NO"}
+    assert dp._call_notes()["_target_cl_asked"]["overrides_removed"] == {"TARGET_CL": "0.5", "FIXED_CL_MODE": "NO"}
 
 
 def test_the_same_value_typed_is_not_reported_as_replaced(fresh):
@@ -375,7 +375,7 @@ def test_o_gr_17_a_lowercase_target_cl_in_create_overrides_is_the_frameworks(fre
                                                          "overrides": {"target_cl": 0.7148, "MACH_NUMBER": 0.78}})
     assert resolved["target_cl"] == pytest.approx(want)
     assert not any(str(k).upper() in ("TARGET_CL", "FIXED_CL_MODE") for k in resolved["overrides"])
-    assert fresh.data_store["_target_cl_asked"]["asked"] == 0.7148
+    assert dp._call_notes()["_target_cl_asked"]["asked"] == 0.7148
 
 
 def test_a_trim_in_initial_config_text_is_removed(fresh):
@@ -383,7 +383,7 @@ def test_a_trim_in_initial_config_text_is_removed(fresh):
     cfg = "SOLVER= EULER\nFIXED_CL_MODE= NO\ntarget_cl = 0.3\nMACH_NUMBER= 0.78\n"
     resolved = dp.resolve_request("create_su2_session", {"cpacs_file_path": "x.xml", "initial_config": cfg})
     assert resolved["initial_config"] == "SOLVER= EULER\nMACH_NUMBER= 0.78\n"
-    assert fresh.data_store["_target_cl_asked"]["overrides_removed"] == {
+    assert dp._call_notes()["_target_cl_asked"]["overrides_removed"] == {
         "initial_config:FIXED_CL_MODE": "NO", "initial_config:TARGET_CL": "0.3"}
 
 

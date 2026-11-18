@@ -54,7 +54,7 @@ def test_wing_mass_is_carried_as_the_mass_itself(plane):
                                 {"session_id": "av1", "parameters": {"Aircraft.Wing.MASS_SCALER": 1.5}})["parameters"]
     assert params["Aircraft.Wing.MASS"] == pytest.approx(8994.6)
     assert "Aircraft.Wing.MASS_SCALER" not in params
-    assert state.data_store["_coupled_override_last"]["Aircraft.Wing.MASS_SCALER"]["asked"] == 1.5
+    assert dp._call_notes()["_coupled_override_last"]["Aircraft.Wing.MASS_SCALER"]["asked"] == 1.5   # B361: per call
 
 
 def test_contract_names_the_wing_mass_parameter():

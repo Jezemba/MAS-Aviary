@@ -1,0 +1,1678 @@
+{
+ "_source": "ws8 /data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_2.json (+ knowledge_base.jsonl): coupled baseline flight on the final code, 2026-11-18; replies restored to the server shape by scratchpad b360audit/extract_fixture.py (refs -> kept payloads, framework annotations dropped)",
+ "recorded": {
+  "aviary_design_fingerprint": "7d1ce93bb83c3754",
+  "aviary_session": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+  "canonical_baseline": {
+   "engine_deck_file": "deck_7815057d6edc9732.deck",
+   "engine_deck_md5": "b1c1e040e4abe82782e47d1ed7666ca8",
+   "engine_scale_factor": 1.1957967702892787,
+   "sized_mtom_kg": 90298.7
+  },
+  "cruise_point": {
+   "altitude_ft": 33000.0,
+   "cd": 0.03653313611135447,
+   "cd_depends_on_engine_scale": false,
+   "cl": 0.6445302592070462,
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "engine_scale_used": 1.1957967702892787,
+   "lift_to_drag": 17.642346861284835,
+   "mach": 0.78,
+   "mass_kg": 90298.7
+  },
+  "engine_scale": 1.1957967702892787,
+  "flown_parameters": {
+   "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892787,
+   "Aircraft.Fuselage.LENGTH": 37.6446,
+   "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+   "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+   "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+   "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+   "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+   "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+   "Aircraft.VerticalTail.AREA": 21.50000389206982,
+   "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197349,
+   "Aircraft.VerticalTail.TAPER_RATIO": 0.34900050048576503,
+   "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+   "Aircraft.Wing.AREA": 122.8287,
+   "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+   "Aircraft.Wing.MASS": 7958.785892400294,
+   "Aircraft.Wing.SPAN": 33.9127,
+   "Aircraft.Wing.SWEEP": 21.6502,
+   "Aircraft.Wing.TAPER_RATIO": 0.2462,
+   "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387
+  },
+  "fn_des_lbf": 7055.200944706749,
+  "fuel_burned_kg": 15719.17609579942,
+  "geometry_tails": {
+   "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+   "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+   "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+   "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+   "Aircraft.VerticalTail.AREA": 21.50000389206982,
+   "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197349,
+   "Aircraft.VerticalTail.TAPER_RATIO": 0.34900050048576503,
+   "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+   "_sized_on": "/tmp/avion_mass_nqthr83u/anchor_unchanged.xml",
+   "_source": "mass-mcp estimate_mass sizing_report.tails (Wing2H; Wing3V)"
+  },
+  "geometry_wing_tc": {
+   "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387,
+   "_sized_on": "/tmp/avion_mass_nqthr83u/anchor_unchanged.xml",
+   "_source": "mass-mcp estimate_mass sizing_report.wing_stations.tc_avg"
+  },
+  "gtow_kg": 90310.00549723483,
+  "pycycle_fn_lbf": 7055.200944706744,
+  "resolved_inputs": {
+   "close_cpacs": [
+    "session_id"
+   ],
+   "close_cycle_model": [
+    "session_id"
+   ],
+   "close_su2_session": [
+    "session_id"
+   ],
+   "configure_mission": [
+    "cruise_altitude_ft",
+    "cruise_mach",
+    "num_passengers",
+    "optimizer_max_iter",
+    "range_nmi",
+    "session_id",
+    "takeoff_mass_kg"
+   ],
+   "create_cycle_model": [
+    "cycle_type",
+    "mode"
+   ],
+   "create_session": [
+    "initial_parameters"
+   ],
+   "create_su2_session": [
+    "aspect_ratio",
+    "cpacs_file_path",
+    "cruise_altitude_ft",
+    "cruise_mach",
+    "initial_mesh",
+    "mesh_file_name",
+    "overrides",
+    "ref_area",
+    "target_cl"
+   ],
+   "estimate_mass": [
+    "cpacs_file_path",
+    "cruise_altitude_ft",
+    "cruise_mach",
+    "design_load_factor",
+    "engine_deck_file",
+    "engine_scale_factor",
+    "material",
+    "num_passengers",
+    "range_nmi",
+    "wing_mass_method"
+   ],
+   "export_cpacs": [
+    "output_path",
+    "session_id"
+   ],
+   "generate_engine_deck": [
+    "session_id"
+   ],
+   "generate_volume_mesh": [
+    "far_field_distance",
+    "mesh_size_max",
+    "mesh_size_min",
+    "output_format",
+    "session_id"
+   ],
+   "get_cruise_point": [
+    "altitude_ft",
+    "engine_scale",
+    "mach",
+    "mass_kg",
+    "session_id"
+   ],
+   "get_high_level_parameters": [
+    "component_uid",
+    "session_id"
+   ],
+   "get_results": [
+    "session_id"
+   ],
+   "get_trajectory": [
+    "session_id",
+    "variables"
+   ],
+   "open_cpacs": [
+    "source",
+    "source_type"
+   ],
+   "run_cycle": [
+    "session_id"
+   ],
+   "run_simulation": [
+    "session_id",
+    "timeout_seconds"
+   ],
+   "run_su2_solver": [
+    "max_runtime_seconds",
+    "session_id"
+   ],
+   "set_aircraft_parameters": [
+    "parameters",
+    "session_id"
+   ],
+   "set_engine_deck": [
+    "deck_file",
+    "session_id"
+   ],
+   "set_inputs": [
+    "session_id",
+    "values"
+   ]
+  }
+ },
+ "replies": {
+  "configure_mission": {
+   "design_fingerprint": "ee2ae73b6455c73d",
+   "mission_summary": {
+    "climb_start": {
+     "clean_clmax": 1.2596,
+     "mach": 0.341,
+     "mass_from": "takeoff_mass_kg",
+     "mass_kg": 90298.7,
+     "note": "starting guess; the flown climb starts at 1.2 x the clean stall speed for the solved mass (run_simulation climb_start)",
+     "rule": "1.2 x clean (flaps-up) stall speed, sea level",
+     "wing_area_from": "design",
+     "wing_area_m2": 122.78
+    },
+    "cruise_altitude_ft": 33000.0,
+    "cruise_mach": 0.78,
+    "num_passengers": 239,
+    "optimizer_max_iter": 200,
+    "payload": {
+     "baggage_kg": 4878.4,
+     "baggage_per_passenger_kg": 20.412,
+     "cargo_kg": 0.0,
+     "mass_per_passenger_kg": 81.647,
+     "num_passengers": 239,
+     "passengers_kg": 19513.5,
+     "per_passenger_with_baggage_kg": 102.058,
+     "source": "Aviary FLOPS payload model (CargoMass) with the aircraft file's 180 lbm per passenger and 45 lbm baggage per passenger; this is the payload the mission flies (its mass balance uses total_payload_kg)",
+     "total_payload_kg": 24391.9
+    },
+    "payload_kg": 24391.9,
+    "range_nmi": 2500.0,
+    "takeoff_mass_kg": 90298.7
+   },
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true
+  },
+  "create_cycle_model": {
+   "model_name": "HBTF",
+   "session_id": "695e9b41-964f-4c4b-8d45-ea53c4d81a23",
+   "top_promoted_inputs": [
+    {
+     "name": "Fn_DES"
+    },
+    {
+     "name": "fc.alt"
+    },
+    {
+     "name": "fc.MN"
+    }
+   ],
+   "top_promoted_outputs": [
+    {
+     "name": "fan.blds_pwr.power"
+    },
+    {
+     "name": "fan.eff_poly_calc.eff_poly"
+    },
+    {
+     "name": "fan.map.SMN_map.effMap"
+    },
+    {
+     "name": "fan.map.SMW_map.effMap"
+    },
+    {
+     "name": "fan.map.map.effMap"
+    },
+    {
+     "name": "fan.map.scalars.s_eff"
+    },
+    {
+     "name": "hpc.blds_pwr.power"
+    },
+    {
+     "name": "hpc.eff_poly_calc.eff_poly"
+    },
+    {
+     "name": "hpc.map.SMN_map.effMap"
+    },
+    {
+     "name": "hpc.map.SMW_map.effMap"
+    },
+    {
+     "name": "hpc.map.map.effMap"
+    },
+    {
+     "name": "hpc.map.scalars.s_eff"
+    },
+    {
+     "name": "hpt.eff_poly_calc.eff_poly"
+    },
+    {
+     "name": "hpt.map.readMap.effMap"
+    },
+    {
+     "name": "hpt.map.scalars.s_eff"
+    },
+    {
+     "name": "hpt.pwr_turb.power"
+    },
+    {
+     "name": "lpc.blds_pwr.power"
+    },
+    {
+     "name": "lpc.eff_poly_calc.eff_poly"
+    },
+    {
+     "name": "lpc.map.SMN_map.effMap"
+    },
+    {
+     "name": "lpc.map.SMW_map.effMap"
+    },
+    {
+     "name": "lpc.map.map.effMap"
+    },
+    {
+     "name": "lpc.map.scalars.s_eff"
+    },
+    {
+     "name": "lpt.eff_poly_calc.eff_poly"
+    },
+    {
+     "name": "lpt.map.readMap.effMap"
+    },
+    {
+     "name": "lpt.map.scalars.s_eff"
+    },
+    {
+     "name": "lpt.pwr_turb.power"
+    },
+    {
+     "name": "perf.Fn"
+    },
+    {
+     "name": "perf.TSFC"
+    }
+   ]
+  },
+  "create_session": {
+   "aircraft": "Single-Aisle Transport (737/A320 class) -- aircraft_for_bench_FwFm.csv",
+   "created_at": "2026-11-18T19:32:38.623607+00:00",
+   "design_fingerprint": "ee2ae73b6455c73d",
+   "initial_parameters_applied": [
+    {
+     "name": "Aircraft.Wing.AREA",
+     "new_value": 122.78,
+     "units": "m^2"
+    },
+    {
+     "name": "Aircraft.Wing.ASPECT_RATIO",
+     "new_value": 9.37,
+     "units": "unitless"
+    },
+    {
+     "name": "Aircraft.Wing.SWEEP",
+     "new_value": 21.65,
+     "units": "deg"
+    },
+    {
+     "name": "Aircraft.Wing.TAPER_RATIO",
+     "new_value": 0.246,
+     "units": "unitless"
+    },
+    {
+     "name": "Aircraft.Fuselage.LENGTH",
+     "new_value": 37.68,
+     "units": "m"
+    },
+    {
+     "name": "Aircraft.Fuselage.MAX_HEIGHT",
+     "new_value": 4.15,
+     "units": "m"
+    },
+    {
+     "name": "Aircraft.Fuselage.MAX_WIDTH",
+     "new_value": 3.96,
+     "units": "m"
+    },
+    {
+     "name": "Aircraft.Engine.SCALE_FACTOR",
+     "new_value": 1.0,
+     "units": "unitless"
+    },
+    {
+     "derived": true,
+     "name": "Aircraft.Wing.SPAN",
+     "new_value": 33.9183,
+     "units": "m"
+    }
+   ],
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true,
+   "warnings": null
+  },
+  "create_su2_session": {
+   "config_path": "/data/Jessica/final_fix/baseline2/tmp/su2_session_18wndw7i/config.cfg",
+   "configured": true,
+   "drag_floor": {
+    "aspect_ratio": 9.363224080853465,
+    "oswald_efficiency": null
+   },
+   "flight_state": {
+    "FREESTREAM_PRESSURE": 26200.8,
+    "FREESTREAM_TEMPERATURE": 222.77,
+    "MACH_NUMBER": 0.78,
+    "altitude_ft": 33000.0
+   },
+   "mesh_path": "/data/Jessica/final_fix/baseline2/tmp/su2_session_18wndw7i/mesh.su2",
+   "overrides_applied": {
+    "_intercepted": false,
+    "items": [
+     "AOA",
+     "CFL_ADAPT",
+     "CFL_ADAPT_PARAM",
+     "CFL_NUMBER",
+     "CONV_FIELD",
+     "CONV_NUM_METHOD_FLOW",
+     "CONV_RESIDUAL_MINVAL",
+     "CONV_STARTITER",
+     "HISTORY_OUTPUT",
+     "ITER",
+     "JST_SENSOR_COEFF",
+     "KIND_TURB_MODEL",
+     "LINEAR_SOLVER",
+     "LINEAR_SOLVER_ERROR",
+     "LINEAR_SOLVER_ITER",
+     "LINEAR_SOLVER_PREC",
+     "MACH_NUMBER",
+     "MARKER_EULER",
+     "MARKER_FAR",
+     "MARKER_MONITORING",
+     "MARKER_PLOTTING",
+     "MATH_PROBLEM",
+     "MGCYCLE",
+     "MGLEVEL",
+     "NUM_METHOD_GRAD",
+     "OUTPUT_FILES",
+     "REF_DIMENSIONALIZATION",
+     "RESTART_SOL",
+     "REYNOLDS_NUMBER",
+     "SCREEN_OUTPUT",
+     "SOLVER",
+     "TIME_DISCRE_FLOW"
+    ],
+    "kind": "list",
+    "note": "Reference listing returned in full \u2014 no second call needed.",
+    "total_count": 32
+   },
+   "references": {
+    "REF_AREA": 122.82871858371793,
+    "REF_LENGTH": 4.193,
+    "ref_area_source": "computed_geometry",
+    "ref_length_source": "cpacs_declared"
+   },
+   "session_id": "4845cf0b-121d-4a1c-b187-f79f88716e0e",
+   "trim": {
+    "note": "AOA is solved for, not fixed: CD is the drag at this lift.",
+    "target_cl": 0.6461026633295784
+   },
+   "workdir": "/data/Jessica/final_fix/baseline2/tmp/su2_session_18wndw7i"
+  },
+  "estimate_mass": {
+   "cpacs_file_path": "/tmp/avion_mass_nqthr83u/anchor_unchanged.xml",
+   "error_message": null,
+   "mass_breakdown": {
+    "components": {
+     "mEmpennage_kg": 1410.4115498655665,
+     "mFurnishings_kg": 8588.43453182,
+     "mFuselage_kg": 8375.415428803393,
+     "mLandingGear_kg": 4476.509747432479,
+     "mPropulsion_kg": 8881.373112253834,
+     "mSystems_kg": 4217.783860914289,
+     "mWing_kg": 7958.785892400294,
+     "mWing_source": "flops"
+    },
+    "mFuel_kg": 17075.63020849552,
+    "mOEM_kg": 48831.10251960908,
+    "mPayload_kg": 24391.9098,
+    "mTOM_kg": 78126.0,
+    "mTOM_sized_kg": 90298.6425281046,
+    "oas_comparison": {
+     "mWing_scaled_kg": null,
+     "mWing_structural_box_kg": null,
+     "oas_flops_delta_pct": null,
+     "present": false,
+     "wing_weight_ratio_used": null
+    },
+    "sizing_converged": true,
+    "sizing_report": {
+     "bench_values_kept": {
+      "aircraft:crew_and_payload:baggage_mass_per_passenger": "45.0,lbm",
+      "aircraft:crew_and_payload:mass_per_passenger": "180.0,lbm",
+      "aircraft:engine:wing_locations": "[0.26869218],unitless",
+      "aircraft:landing_gear:main_gear_oleo_length": "102.0,inch",
+      "aircraft:landing_gear:nose_gear_oleo_length": "67.0,inch",
+      "aircraft:nacelle:avg_diameter": "7.94,ft",
+      "aircraft:nacelle:avg_length": "12.3,ft",
+      "aircraft:wing:glove_and_bat": "134.0,ft**2",
+      "mission:constraints:max_mach": "0.785,unitless"
+     },
+     "calibrated_on_bench": {
+      "aircraft:design:landing_to_takeoff_mass_ratio": 0.87115165336374,
+      "aircraft:fuel:capacity_factor": 26.59267126005587,
+      "from": {
+       "cabin_to_fuselage_length": "bench passenger compartment 85.5 ft / bench fuselage 128 ft",
+       "capacity_factor": "bench wing fuel capacity 45694 lbm / FLOPS geometric term 1718.29 of the bench wing (capacity follows area, span, taper, t/c; as aviary-mcp)",
+       "landing_to_takeoff_mass_ratio": "bench touchdown mass 152800 lbm / bench gross mass 175400 lbm (touchdown = sized gross mass x ratio; as aviary-mcp)"
+      }
+     },
+     "computed_by_aviary": [
+      "aircraft:fuselage:planform_area",
+      "aircraft:fuselage:wetted_area",
+      "aircraft:wing:wetted_area",
+      "aircraft:horizontal_tail:wetted_area",
+      "aircraft:vertical_tail:wetted_area",
+      "aircraft:wing:control_surface_area",
+      "aircraft:design:touchdown_mass",
+      "aircraft:fuel:total_capacity"
+     ],
+     "derived": {
+      "aircraft:crew_and_payload:design:num_first_class": "min(11, passengers): the bench split, as aviary-mcp seats them",
+      "aircraft:fuselage:passenger_compartment_length": "0.66797 (bench cabin / bench fuselage) x fuselage length"
+     },
+     "driver": {
+      "converged": true,
+      "mass_residual_lbm": -2.9103830456733704e-11,
+      "max_iter": 200,
+      "model_evaluations": 13,
+      "optimizer_message": "",
+      "range_residual_nmi": 0.0
+     },
+     "engine": {
+      "deck": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+      "deck_summary": {
+       "altitude_range_ft": [
+        0.0,
+        41000.0
+       ],
+       "mach_range": [
+        0.0,
+        0.9
+       ],
+       "path": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+       "rows": 1177,
+       "sls_thrust_lbf": 29088.172499999997
+      },
+      "engine_mass": "computed (FLOPS law at the scaled thrust; bench 7,400 lbm override removed)",
+      "engine_mass_kg": 4149.152990999317,
+      "engine_mass_override_removed": true,
+      "flown_scale_factor": 1.1957967702892787,
+      "flown_scaled_sls_thrust_lbf": 34783.542729117406,
+      "mass_law": {
+       "bench_reference_mass_lbm": 7400.0,
+       "bench_reference_sls_lbf": 28928.1,
+       "mass_scaler": 1.15
+      },
+      "reference_mass_lbm": 7447.109261374428,
+      "reference_sls_thrust_lbf": 29088.172499999997,
+      "scale_factor": 1.1957967702892787,
+      "scale_factor_source": "engine_scale_factor argument",
+      "scaled_sls_thrust_lbf": 34783.542729117406,
+      "source": "engine_deck_file argument"
+     },
+     "fuselage": {
+      "length_m": 37.64409754697786,
+      "max_height_m": 4.142962350740116,
+      "max_width_m": 3.951665105827438,
+      "source": "tigl surface points"
+     },
+     "mission_flown": {
+      "at_duration_bound": [],
+      "climb_start_mach": 0.3409,
+      "cruise_altitude_ft_range": [
+       32000.0,
+       34000.0
+      ],
+      "cruise_mach_mean": 0.78,
+      "cruise_mach_range": [
+       0.78,
+       0.78
+      ],
+      "phase_duration_min": {
+       "climb": 39.09,
+       "cruise": 277.88,
+       "descent": 29.55
+      },
+      "range_nmi": 2500.0
+     },
+     "mission_requested": {
+      "cruise_altitude_ft": 33000.0,
+      "cruise_mach": 0.78,
+      "profile": "aviary-mcp a5ef294 phase_info; climb-start initial guess uses the sizing's starting gross mass (aviary-mcp: the framework's take-off mass, which is mass-mcp's sized MTOM); the climb start itself is the same constraint (lift coefficient = clean CLmax / 1.2^2 at the solved mass)",
+      "range_nmi": 2500.0
+     },
+     "payload": {
+      "baggage_per_passenger_kg": 20.41165665,
+      "cargo_kg": 0.0,
+      "mass_per_passenger_kg": 81.6466266,
+      "num_passengers": 239,
+      "passenger_payload_kg": 24391.9098,
+      "per_passenger_with_bags_kg": 102.05828325,
+      "source": "Aviary FLOPS cargo model with the bench file's mass per passenger and bags (aircraft_for_bench_FwFm.csv); aviary-mcp's mission loads the same file and values",
+      "total_payload_kg": 24391.9098
+     },
+     "tails": {
+      "horizontal": {
+       "area_m2": 31.118412165407747,
+       "area_source": "tigl reference area",
+       "aspect_ratio": 4.980972720852241,
+       "orientation": "horizontal",
+       "source": "tigl_chord_points",
+       "span_m": 12.449898076375264,
+       "sweep_quarter_chord_deg": 27.999928617646056,
+       "taper_ratio": 0.33000029377752527,
+       "tc_avg": 0.10000009183780126,
+       "uid": "Wing2H"
+      },
+      "vertical": {
+       "area_m2": 21.50000389206982,
+       "area_source": "tigl reference area",
+       "aspect_ratio": 1.4948875277197349,
+       "orientation": "vertical",
+       "source": "tigl_chord_points",
+       "span_m": 5.669222844815763,
+       "sweep_quarter_chord_deg": 37.19996203995765,
+       "taper_ratio": 0.34900050048576503,
+       "tc_avg": 0.110000031254264,
+       "uid": "Wing3V"
+      }
+     },
+     "wing_aspect_ratio_source": "measured",
+     "wing_stations": {
+      "chord_per_semispan": [
+       0.3583325485037491,
+       0.3583325485037491,
+       0.2216601842707142,
+       0.08821924039668176
+      ],
+      "input_station_dist": [
+       0.0,
+       0.10947100786894778,
+       0.37349947327685645,
+       1.0
+      ],
+      "load_path_sweep_dist": [
+       0.0,
+       7.615551814818943,
+       19.89459478823776
+      ],
+      "tc_avg": 0.11644185460446387,
+      "thickness_to_chord_dist": [
+       0.1371958807660545,
+       0.1371958807660545,
+       0.10640388032902115,
+       0.09816249963355106
+      ]
+     },
+     "wing_stations_source": "tigl_chord_points + airfoil points (t/c)"
+    }
+   },
+   "sizing_conditions": {
+    "cruise_altitude_ft": {
+     "flown_range": [
+      32000.0,
+      34000.0
+     ],
+     "source": "argument",
+     "value": 33000.0
+    },
+    "cruise_mach": {
+     "flown_mean": 0.78,
+     "source": "argument",
+     "value": 0.78
+    },
+    "design_range_m": {
+     "flown_nmi": 2500.0,
+     "source": "argument",
+     "value": 4630000.0
+    },
+    "engine": {
+     "deck": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+     "engine_mass_kg": 4149.152990999317,
+     "flown_scale_factor": 1.1957967702892787,
+     "flown_scaled_sls_thrust_lbf": 34783.542729117406,
+     "reference_sls_thrust_lbf": 29088.172499999997,
+     "scale_factor_source": "engine_scale_factor argument",
+     "source": "engine_deck_file argument"
+    },
+    "fuselage_height_m": {
+     "source": "tigl surface points",
+     "value": 4.142962350740116
+    },
+    "fuselage_length_m": {
+     "source": "tigl surface points",
+     "value": 37.64409754697786
+    },
+    "fuselage_width_m": {
+     "source": "tigl surface points",
+     "value": 3.951665105827438
+    },
+    "mtom_kg": {
+     "note": "starting gross mass of the sizing (cpacs: massBreakdown/designMasses/mTOM); the sized gross mass is mass_breakdown.mTOM_sized_kg",
+     "source": "cpacs",
+     "value": 78126.0
+    },
+    "n_engines": {
+     "source": "default",
+     "value": 2
+    },
+    "n_passengers": {
+     "source": "argument",
+     "value": 239
+    },
+    "wing_aspect_ratio": {
+     "source": "tigl3",
+     "value": 9.363224080853465
+    },
+    "wing_reference_area_m2": {
+     "source": "tigl3",
+     "value": 122.82871858371793
+    },
+    "wing_span_m": {
+     "source": "tigl3",
+     "value": 33.91272350701785
+    },
+    "wing_sweep_25_deg": {
+     "source": "tigl_chord_points",
+     "value": 21.65015342508847
+    },
+    "wing_taper_ratio": {
+     "source": "tigl_chord_points",
+     "value": 0.24619376823302655
+    },
+    "wing_thickness_to_chord": {
+     "source": "tigl_chord_points + airfoil points (t/c)",
+     "value": 0.11644185460446387
+    }
+   },
+   "status": "success",
+   "warnings": [
+    "Sized with default mission values for: n_engines = 2. Pass num_passengers / cruise_mach / range_nmi / cruise_altitude_ft / num_engines."
+   ],
+   "wing_mass_method_used": "flops"
+  },
+  "export_cpacs": {
+   "cpacs_file_path": "/data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_2/cpacs/anchor_unchanged.xml",
+   "source": "tixi-native (morphed geometry)",
+   "status": "success"
+  },
+  "generate_engine_deck": {
+   "cached": true,
+   "deck_file": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+   "design_bpr": 5.105,
+   "design_key": "7815057d6edc9732",
+   "design_tsfc": 0.6432353505104839,
+   "envelope_holes": [
+    {
+     "alt_ft": 25000.0,
+     "mach": 0.2
+    }
+   ],
+   "messages": [
+    "Fly this deck in aviary with set_engine_deck(deck_file=...). SCALE_FACTOR = design thrust / 5900.0 lbf gives the engine at its sized thrust."
+   ],
+   "n_failed": 30,
+   "n_points": 1177,
+   "reference_fn_des_lbf": 5900.0,
+   "size_normalised": true,
+   "sls_net_thrust_lbf": 29088.172499999997,
+   "success": true,
+   "wall_seconds": 1819.7
+  },
+  "generate_volume_mesh": {
+   "format": "su2",
+   "mesh_size_bytes": 116635646,
+   "statistics": {
+    "anchor_dir": "/home/aipexws8/Jessica/Avion/study_anchors/b241_d150",
+    "cap_nodes": 21,
+    "deform_seconds": 31.2,
+    "element_count": 2313226,
+    "exit_code": 0,
+    "fuselage_nodes_following_junction": 48,
+    "junction_move_max_m": 3.510085665596981e-08,
+    "junction_nodes": 72,
+    "junction_overhang_max_m": 0.0,
+    "junction_overhang_nodes": 0,
+    "junction_residual_max_m": 5.842389192928446e-09,
+    "mesh_mode": "deformed_from_anchor",
+    "mesh_settings_ignored": [
+     "mesh_size_max",
+     "mesh_size_min"
+    ],
+    "min_volume": 1.30708e-05,
+    "negative_volume_reported": false,
+    "node_count": 384665,
+    "root_zone_nodes": 527,
+    "surface_displacement_max_m": 3.510085665596981e-08,
+    "surface_displacement_mean_m": 6.702657338561881e-11,
+    "surface_flipped_area_fraction": 0.0,
+    "surface_flipped_area_m2": 0.0,
+    "surface_nodes": 4756,
+    "surface_triangles_flipped": 0,
+    "wing_param_fallback_nodes": 10,
+    "workdir": "/data/Jessica/final_fix/baseline2/tmp/tigl_deform_e1v7tg4l"
+   }
+  },
+  "get_cruise_point": {
+   "aero_details": {
+    "design_lift_coefficient": 0.5329703581966528,
+    "design_lift_coefficient_source": "computed by Aviary from the wing",
+    "design_mach": 0.8204845340796365,
+    "drag_n": 50193.30780182324,
+    "dynamic_pressure_pa": 11185.592842517355,
+    "engine_scale_note": "No FLOPS aerodynamic input depends on the engine scale: the nacelle wetted area is 2.8 x the file's nacelle diameter x length (geometry/flops_based/nacelle.py), which do not scale with thrust.",
+    "lift_dependent_drag_coeff_factor": 0.909839381134961,
+    "method": "Aviary FLOPS computed aerodynamics, the builders the mission's cruise uses; no trajectory",
+    "reference_area_m2": 122.82870000000001,
+    "subsonic_drag_coeff_factor": 1.0,
+    "zero_lift_drag_coeff_factor": 0.930890028006548
+   },
+   "cruise_point": {
+    "altitude_ft": 33000.0,
+    "cd": 0.03653313611135447,
+    "cd_depends_on_engine_scale": false,
+    "cl": 0.6445302592070462,
+    "design_fingerprint": "7d1ce93bb83c3754",
+    "engine_scale_used": 1.1957967702892787,
+    "lift_to_drag": 17.642346861284835,
+    "mach": 0.78,
+    "mass_kg": 90298.7
+   },
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "engine_scale_source": "argument",
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true
+  },
+  "get_high_level_parameters": {
+   "Fuselage1": {
+    "component_uid": "Fuselage1",
+    "measured": true,
+    "note": "Measured from the current geometry (bounding box). diameter is the larger of max_width and max_height.",
+    "parameters": {
+     "diameter": 4.143709313380411,
+     "length": 37.644560994515366,
+     "max_height": 4.143709313380411,
+     "max_width": 3.951781358688922
+    }
+   },
+   "Wing1": {
+    "component_uid": "Wing1",
+    "measured": true,
+    "note": "Measured from the current geometry. area, aspect_ratio and span are the full wing (both halves). sweep is the quarter-chord sweep, the same quantity set_high_level_parameters takes and reports.",
+    "parameters": {
+     "area": 122.82871858371793,
+     "aspect_ratio": 9.363224080853465,
+     "span": 33.91272350701785,
+     "sweep": 21.65015342508847,
+     "taper_ratio": 0.24619376823302655
+    }
+   }
+  },
+  "get_results": {
+   "converged": true,
+   "cruise_altitude_m_avg": 10064.496000000003,
+   "cruise_cd_avg": 0.03259989673993787,
+   "cruise_cl_avg": 0.5806277971149577,
+   "cruise_mach_avg": 0.7799999999999999,
+   "cruise_sfc_avg_lb_per_hr_lbf": 0.5959568946400833,
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "design_parameters": {
+    "aircraft_params": {
+     "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892787,
+     "Aircraft.Fuselage.LENGTH": 37.6446,
+     "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+     "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+     "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+     "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+     "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+     "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+     "Aircraft.VerticalTail.AREA": 21.50000389206982,
+     "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197349,
+     "Aircraft.VerticalTail.TAPER_RATIO": 0.34900050048576503,
+     "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+     "Aircraft.Wing.AREA": 122.8287,
+     "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+     "Aircraft.Wing.MASS": 7958.785892400294,
+     "Aircraft.Wing.SPAN": 33.91267733223079,
+     "Aircraft.Wing.SWEEP": 21.6502,
+     "Aircraft.Wing.TAPER_RATIO": 0.2462,
+     "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387
+    },
+    "mission_config": {
+     "cruise_altitude_ft": 33000.0,
+     "cruise_mach": 0.78,
+     "num_passengers": 239,
+     "optimizer_max_iter": 200,
+     "range_nmi": 2500.0,
+     "takeoff_mass_kg": 90298.7
+    }
+   },
+   "flown_design_fingerprint": "7d1ce93bb83c3754",
+   "fuel_burned_kg": 15719.17609579942,
+   "gtow_kg": 90310.00549723483,
+   "payload_kg": 24391.92969675,
+   "reserve_fuel_kg": 1360.77711,
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true,
+   "valid_result": true,
+   "wing_mass_kg": 7958.785892400294,
+   "zero_fuel_weight_kg": 73230.05229143542
+  },
+  "get_trajectory": {
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "flown_design_fingerprint": "7d1ce93bb83c3754",
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true,
+   "trajectory": {
+    "altitude_ft": [
+     0.0,
+     1334.6775716270702,
+     3176.2602089272073,
+     3759.114817128564,
+     3759.114817128564,
+     6484.905777134745,
+     10245.94096013972,
+     11436.295736309678,
+     11436.295736309678,
+     14676.991496137005,
+     19148.49020933912,
+     20563.70426369032,
+     20563.70426369032,
+     23289.495223696504,
+     27050.53040670148,
+     28240.885182871436,
+     28240.885182871436,
+     29575.562754498507,
+     31417.14539179864,
+     32000.0,
+     32000.0,
+     32083.417348226692,
+     32198.516263057947,
+     32234.944676070543,
+     32234.944676070543,
+     32405.306611070922,
+     32640.371310008733,
+     32714.76848351936,
+     32714.76848351936,
+     32917.31196850858,
+     33196.7806380837,
+     33285.23151648065,
+     33285.23151648065,
+     33455.593451481036,
+     33690.65815041884,
+     33765.05532392946,
+     33765.05532392946,
+     33848.47267215616,
+     33963.57158698741,
+     34000.0,
+     34000.0,
+     32602.759417202917,
+     30674.85259377933,
+     30064.676675818537,
+     30064.676675818537,
+     27211.11426456206,
+     23273.780557353733,
+     22027.627901050808,
+     22027.627901050808,
+     18635.024527481582,
+     13953.924312098105,
+     12472.372098949196,
+     12472.372098949196,
+     9618.809687692725,
+     5681.475980484389,
+     4435.323324181462,
+     4435.323324181462,
+     3038.0827413843745,
+     1110.1759179607957,
+     500.0
+    ],
+    "mach": [
+     0.340907580980626,
+     0.3592215435911459,
+     0.38449107406102695,
+     0.3924887940563933,
+     0.3924887940563933,
+     0.4298911111304638,
+     0.4814986747717959,
+     0.49783229221428754,
+     0.49783229221428754,
+     0.5422999466045504,
+     0.6036562336864858,
+     0.6230752887663384,
+     0.6230752887663384,
+     0.660477605840409,
+     0.7120851694817412,
+     0.7284187869242328,
+     0.7284187869242328,
+     0.7467327495347525,
+     0.7720022800046337,
+     0.78,
+     0.78,
+     0.7800000000000001,
+     0.78,
+     0.7800000000000002,
+     0.7800000000000002,
+     0.7800000000000001,
+     0.78,
+     0.7800000000000001,
+     0.7800000000000001,
+     0.7800000000000002,
+     0.78,
+     0.7800000000000001,
+     0.7800000000000001,
+     0.78,
+     0.7799999999999999,
+     0.7799999999999999,
+     0.7799999999999999,
+     0.78,
+     0.7799999999999999,
+     0.78,
+     0.78,
+     0.7624823568723947,
+     0.7383115847578305,
+     0.7306616180251877,
+     0.7306616180251877,
+     0.6948856116751064,
+     0.6455220248981662,
+     0.6298986184609356,
+     0.6298986184609356,
+     0.5873644866132021,
+     0.528676066002424,
+     0.5101013815390645,
+     0.5101013815390645,
+     0.47432537518898343,
+     0.424961788412043,
+     0.4093383819748123,
+     0.4093383819748123,
+     0.3918207388472071,
+     0.3676499667326428,
+     0.36
+    ],
+    "num_points": 60,
+    "phase_labels": [
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "climb",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "cruise",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent",
+     "descent"
+    ],
+    "throttle": [
+     0.19089218852079692,
+     0.278292145525562,
+     0.3428571488026706,
+     0.3445284924291446,
+     0.3445284924291446,
+     0.3587804314673856,
+     0.3981339659081922,
+     0.41278527840944124,
+     0.41278527840944124,
+     0.45571873231598015,
+     0.5356196243942519,
+     0.5648447437648855,
+     0.5648447437648855,
+     0.6277647711865882,
+     0.7255261759631917,
+     0.7611742661800547,
+     0.7611742661800547,
+     0.8055046221270277,
+     0.9402334957200421,
+     1.0000000000000024,
+     0.6193945972759205,
+     0.6198391486004365,
+     0.6205554499301192,
+     0.6208072407578799,
+     0.6208072407578799,
+     0.6221468589630541,
+     0.6244419435645931,
+     0.6252785422296516,
+     0.6252785422296516,
+     0.6278902722515226,
+     0.6209094159861906,
+     0.6172983434716288,
+     0.6172983434716288,
+     0.6104517776050619,
+     0.6012287303272452,
+     0.5983609511813638,
+     0.5983609511813638,
+     0.5951749897661606,
+     0.5908289527453058,
+     0.5894653816905029,
+     0.08924731585944944,
+     0.08091690794694917,
+     0.06657316359988436,
+     0.06279677049865258,
+     0.06279677049865258,
+     0.053533596382548475,
+     0.04262161882202973,
+     0.039380622115837476,
+     0.039380622115837476,
+     0.031209976132411357,
+     0.021813589536450496,
+     0.019102030292083502,
+     0.019102030292083502,
+     0.01404485052376893,
+     0.007492997748278945,
+     0.005593457168602724,
+     0.005593457168602724,
+     0.003573888832617068,
+     0.0007345308930801828,
+     -7.662206741568305e-11
+    ],
+    "time_s": [
+     0.0,
+     97.88159978013115,
+     232.9382295596395,
+     275.68319111647554,
+     275.68319111647554,
+     475.5852389993734,
+     751.4092644927367,
+     838.7066254991081,
+     838.7066254991081,
+     1076.37038198667,
+     1404.2978580807353,
+     1508.0857830567659,
+     1508.0857830567659,
+     1707.9878309396638,
+     1983.811856433027,
+     2071.1092174393984,
+     2071.1092174393984,
+     2168.9908172195296,
+     2304.0474469990377,
+     2346.792408555874,
+     2346.792408555874,
+     3042.1506624940394,
+     4001.6031283017687,
+     4305.26655329259,
+     4305.26655329259,
+     5725.385751249667,
+     7684.860394002631,
+     8305.027418848522,
+     8305.027418848522,
+     9993.40863765572,
+     12323.030116128997,
+     13060.347348921585,
+     13060.347348921585,
+     14480.466546878662,
+     16439.941189631627,
+     17060.108214477517,
+     17060.108214477517,
+     17755.46646841568,
+     18714.918934223413,
+     19018.582359214233,
+     19018.582359214233,
+     19092.513828462685,
+     19194.524166399253,
+     19226.810089575458,
+     19226.810089575458,
+     19377.799163507174,
+     19586.133268227088,
+     19652.07030006158,
+     19652.07030006158,
+     19831.58137000425,
+     20079.27000779756,
+     20157.662614793786,
+     20157.662614793786,
+     20308.651688725506,
+     20516.98579344542,
+     20582.922825279908,
+     20582.922825279908,
+     20656.85429452836,
+     20758.86463246493,
+     20791.150555641136
+    ]
+   }
+  },
+  "open_cpacs": {
+   "configuration_summary": {
+    "num_engines": 0,
+    "num_fuselages": 1,
+    "num_rotors": 0,
+    "num_wings": 3
+   },
+   "cpacs_metadata": {
+    "creator": null,
+    "description": null,
+    "file_name": "/data/Jessica/final_fix/baseline2/code/mass-mcp/tests/fixtures/D150_simple.xml"
+   },
+   "geometry_runtime": "tigl",
+   "session_id": "8770ee4a-7644-4fb8-a1c5-1dfa883365d8"
+  },
+  "run_cycle": {
+   "converged": true,
+   "messages": [
+    "Ran model"
+   ],
+   "outputs": {
+    "fc.Fl_O:stat:MN": 0.78,
+    "fc.alt": 33000.0,
+    "perf.Fn": 7055.200944706744,
+    "perf.OPR": 30.547390274999998,
+    "perf.TSFC": 0.6432353505073676,
+    "splitter.BPR": 5.104999999999998
+   },
+   "success": true
+  },
+  "run_simulation": {
+   "climb_start": {
+    "constraint": "climb-start lift coefficient = clean CLmax 1.2596 / 1.2^2",
+    "mach": 0.3409,
+    "mass_from": "solved mission (Aviary)",
+    "mass_kg": 90310.0,
+    "rule": "1.2 x clean (flaps-up) stall speed at the solved climb-start mass, sea level",
+    "speed_over_stall": 1.2,
+    "wing_area_m2": 122.829
+   },
+   "converged": true,
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "engine": {
+    "deck": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+    "engine_mass_kg": 4149.152991,
+    "external_deck": true,
+    "reference_sls_thrust_lbf": 29088.172499999997,
+    "scale_factor": 1.195797,
+    "scaled_sls_thrust_lbf": 34783.542729
+   },
+   "exit_code": 0,
+   "flown_design_fingerprint": "7d1ce93bb83c3754",
+   "iterations": 13,
+   "mission_constraints": {
+    "gtow_constraint.GTOW": {
+     "equals": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": null,
+     "violation": 0.0,
+     "worst_value": 0.0
+    },
+    "link_climb_mass.mass": {
+     "equals": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": null,
+     "violation": 0.0,
+     "worst_value": 0.0
+    },
+    "mission:constraints:mass_residual": {
+     "equals": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": "lbm",
+     "violation": 2.9103830456733704e-11,
+     "worst_value": 2.9103830456733704e-11
+    },
+    "mission:constraints:range_residual": {
+     "equals": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": "nmi",
+     "violation": 0.0,
+     "worst_value": 0.0
+    },
+    "traj.climb.climb_start_cl[initial]": {
+     "equals": 0.8747222222222223,
+     "points": 1,
+     "points_violated": 0,
+     "units": "unitless",
+     "violation": 2.220446049250313e-16,
+     "worst_value": 0.8747222222222221
+    },
+    "traj.climb.collocation_constraint.defects:distance": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "m",
+     "violation": 3.996047651907089e-10,
+     "worst_value": -3.996047651907089e-10
+    },
+    "traj.climb.collocation_constraint.defects:mass": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "kg",
+     "violation": 2.0160225680495436e-08,
+     "worst_value": -2.0160225680495436e-08
+    },
+    "traj.climb.mach[initial]": {
+     "lower": 0.18,
+     "points": 1,
+     "points_violated": 0,
+     "units": "unitless",
+     "upper": 0.8,
+     "violation": 0.0,
+     "worst_value": 0.340907580980626
+    },
+    "traj.climb.throttle[path]": {
+     "lower": 0.0,
+     "points": 20,
+     "points_violated": 0,
+     "units": "unitless",
+     "upper": 1.0,
+     "violation": 2.4424906541753444e-15,
+     "worst_value": 1.0000000000000024
+    },
+    "traj.cruise.collocation_constraint.defects:distance": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "m",
+     "violation": 1.8921604982160402e-09,
+     "worst_value": 1.8921604982160402e-09
+    },
+    "traj.cruise.collocation_constraint.defects:mass": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "kg",
+     "violation": 1.923013351700083e-09,
+     "worst_value": -1.923013351700083e-09
+    },
+    "traj.cruise.throttle[final]": {
+     "lower": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": "unitless",
+     "upper": 1.0,
+     "violation": 0.0,
+     "worst_value": 0.5894653816905029
+    },
+    "traj.cruise.throttle[initial]": {
+     "lower": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": "unitless",
+     "upper": 1.0,
+     "violation": 0.0,
+     "worst_value": 0.6193945972759205
+    },
+    "traj.descent.collocation_constraint.defects:distance": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "m",
+     "violation": 3.686419751098444e-08,
+     "worst_value": 3.686419751098444e-08
+    },
+    "traj.descent.collocation_constraint.defects:mass": {
+     "equals": 0.0,
+     "points": 15,
+     "points_violated": 0,
+     "units": "kg",
+     "violation": 1.399935369425688e-09,
+     "worst_value": 1.399935369425688e-09
+    },
+    "traj.descent.throttle[path]": {
+     "lower": 0.0,
+     "points": 20,
+     "points_violated": 0,
+     "units": "unitless",
+     "upper": 1.0,
+     "violation": 7.662206741568305e-11,
+     "worst_value": -7.662206741568305e-11
+    },
+    "traj.linkages.climb:mach_final|cruise:mach_initial": {
+     "equals": 0.0,
+     "points": 1,
+     "points_violated": 0,
+     "units": "unitless",
+     "violation": 0.0,
+     "worst_value": 0.0
+    }
+   },
+   "mission_residuals": {
+    "mass_residual": 2.9103830456733704e-11,
+    "range_residual": 0.0
+   },
+   "overridden_outputs": {
+    "aircraft:design:landing_to_takeoff_mass_ratio": {
+     "aviary_computed": 0.9,
+     "flown": 0.871152,
+     "units": "unitless"
+    },
+    "aircraft:fins:mass": {
+     "aviary_computed": 0.0,
+     "flown": 0.0,
+     "units": "lbm"
+    },
+    "aircraft:fuel:auxiliary_fuel_capacity": {
+     "aviary_computed": 0.0,
+     "flown": 0.0,
+     "units": "lbm"
+    },
+    "aircraft:fuel:fuselage_fuel_capacity": {
+     "aviary_computed": 0.0,
+     "flown": 0.0,
+     "units": "lbm"
+    },
+    "aircraft:landing_gear:main_gear_oleo_length": {
+     "aviary_computed": 121.690837,
+     "flown": 102.0,
+     "units": "inch"
+    },
+    "aircraft:landing_gear:nose_gear_oleo_length": {
+     "aviary_computed": 71.4,
+     "flown": 67.0,
+     "units": "inch"
+    },
+    "aircraft:wing:aspect_ratio": {
+     "aviary_computed": 10.419214,
+     "flown": 9.3632,
+     "units": "unitless"
+    },
+    "aircraft:wing:mass": {
+     "aviary_computed": 19065.067788,
+     "flown": 17546.119421,
+     "units": "lbm"
+    }
+   },
+   "runtime_seconds": 4.27,
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true,
+   "summary": {
+    "fuel_burned_kg": 15719.17609579942,
+    "gtow_kg": 90310.00549723483,
+    "wing_mass_kg": 7958.785892400294
+   },
+   "trajectory_file": "trajectories/9c784bee-5567-4e12-bd68-7e2c854864fb.json",
+   "valid_result": true
+  },
+  "run_su2_solver": {
+   "config_used": "/data/Jessica/final_fix/baseline2/tmp/su2_session_18wndw7i/config.cfg",
+   "converged": true,
+   "convergence": {
+    "basis": "SU2's exit message",
+    "converged": true,
+    "final_residual": -6.017517605,
+    "iterations": 174,
+    "max_iterations": 500,
+    "residual_field": "rms[Rho]",
+    "solver_exit_message": "All convergence criteria satisfied.",
+    "summary": "Converged (SU2's exit message): rms[Rho] -6.018 against the target -6, after 174 of 500 iterations. Trimmed: CL 0.6508 is on the target 0.6461 (+0.73%).",
+    "target_residual": -6.0,
+    "trim": {
+     "achieved_cl": 0.6508018557,
+     "fixed_cl_mode": true,
+     "on_target": true,
+     "relative_error": 0.007273135736981962,
+     "su2_stop_tolerance_abs": 0.005814925,
+     "target_cl": 0.6461026633295784,
+     "tolerance": 0.01
+    },
+    "trimmed": true
+   },
+   "drag_assessment": {
+    "aspect_ratio": 9.363224080853465,
+    "cd_induced_floor": 0.01861755024678655,
+    "cd_reported": 0.04519089365,
+    "cd_su2": 0.04519089365,
+    "cl": 0.6508018557,
+    "note": "SU2's CD is at or above the induced drag of its lift, so it is reported unchanged.",
+    "oswald_efficiency": 0.7733921165610352,
+    "oswald_source": "Raymer eq. 12.48",
+    "source": "su2"
+   },
+   "exit_code": 0,
+   "final_coefficients": {
+    "CD": 0.04519089365,
+    "CL": 0.6508018557,
+    "CMz": 0.1394584283
+   },
+   "force_output": {
+    "added": [],
+    "coefficients_meaningful": true,
+    "force_output_ok": true,
+    "notes": [],
+    "ref_area": 122.82871858371793
+   },
+   "launch_mode": "mpi",
+   "launch_reason": "SU2_CFD via mpirun",
+   "log_tail": "|         113|   -2.594260|    0.650804|    0.045191|\n|         114|   -2.642741|    0.650804|    0.045191|\n|         115|   -2.691934|    0.650804|    0.045191|\n|         116|   -2.738080|    0.650804|    0.045191|\n|         117|   -2.785947|    0.650804|    0.045191|\n|         118|   -2.836015|    0.650803|    0.045191|\n|         119|   -2.882677|    0.650803|    0.045191|\n|         120|   -2.930310|    0.650803|    0.045191|\n|         121|   -2.980795|    0.650803|    0.045191|\n|         122|   -3.028230|    0.650803|    0.045191|\n|         123|   -3.075467|    0.650803|    0.045191|\n|         124|   -3.124342|    0.650802|    0.045191|\n|         125|   -3.175474|    0.650802|    0.045191|\n|         126|   -3.226930|    0.650802|    0.045191|\n|         127|   -3.278596|    0.650802|    0.045191|\n|         128|   -3.331433|    0.650802|    0.045191|\n|         129|   -3.384249|    0.650802|    0.045191|\n|         130|   -3.437311|    0.650802|    0.045191|\n|         131|   -3.490834|    0.650802|    0.045191|\n|         132|   -3.544763|    0.650802|    0.045191|\n|         133|   -3.599029|    0.650802|    0.045191|\n|         134|   -3.653599|    0.650802|    0.045191|\n|         135|   -3.708458|    0.650802|    0.045191|\n|         136|   -3.763606|    0.650802|    0.045191|\n|         137|   -3.819044|    0.650802|    0.045191|\n|         138|   -3.874775|    0.650802|    0.045191|\n|         139|   -3.930799|    0.650802|    0.045191|\n|         140|   -3.987113|    0.650802|    0.045191|\n|         141|   -4.043716|    0.650802|    0.045191|\n|         142|   -4.100605|    0.650802|    0.045191|\n|         143|   -4.157781|    0.650802|    0.045191|\n|         144|   -4.215243|    0.650802|    0.045191|\n|         145|   -4.272997|    0.650802|    0.045191|\n|         146|   -4.331045|    0.650802|    0.045191|\n|         147|   -4.389392|    0.650802|    0.045191|\n|         148|   -4.448040|    0.650802|    0.045191|\n|         149|   -4.506992|    0.650802|    0.045191|\n|         150|   -4.566247|    0.650802|    0.045191|\n|         151|   -4.625808|    0.650802|    0.045191|\n|         152|   -4.685674|    0.650802|    0.045191|\n|         153|   -4.745848|    0.650802|    0.045191|\n|         154|   -4.806331|    0.650802|    0.045191|\n|         155|   -4.867127|    0.650802|    0.045191|\n|         156|   -4.928239|    0.650802|    0.045191|\n|         157|   -4.989669|    0.650802|    0.045191|\n|         158|   -5.051421|    0.650802|    0.045191|\n|         159|   -5.113496|    0.650802|    0.045191|\n|         160|   -5.175898|    0.650802|    0.045191|\n|         161|   -5.238626|    0.650802|    0.045191|\n|         162|   -5.301684|    0.650802|    0.045191|\n|         163|   -5.365072|    0.650802|    0.045191|\n|         164|   -5.428793|    0.650802|    0.045191|\n|         165|   -5.492847|    0.650802|    0.045191|\n|         166|   -5.557237|    0.650802|    0.045191|\n|         167|   -5.621965|    0.650802|    0.045191|\n|         168|   -5.687032|    0.650802|    0.045191|\n|         169|   -5.752441|    0.650802|    0.045191|\n|         170|   -5.818192|    0.650802|    0.045191|\n|         171|   -5.884288|    0.650802|    0.045191|\n|         172|   -5.950729|    0.650802|    0.045191|\n|         173|   -6.017518|    0.650802|    0.045191|\n\n----------------------------- Solver Exit -------------------------------\nAll convergence criteria satisfied.\n+-----------------------------------------------------------------------+\n|      Convergence Field     |     Value    |   Criterion  |  Converged |\n+-----------------------------------------------------------------------+\n|                    rms[Rho]|      -6.01752|          < -6|         Yes|\n+-----------------------------------------------------------------------+\n-------------------------------------------------------------------------\n+-----------------------------------------------------------------------+\n|        File Writing Summary       |              Filename             |\n+-----------------------------------------------------------------------+\n|SU2 binary restart                 |restart.dat                        |\nWriting Flow Meta-Data file: flow.meta\n|Paraview                           |vol_solution.vtu                   |\nWriting Flow Meta-Data file: flow.meta\n|Paraview surface                   |surface_flow.vtu                   |\nWriting Flow Meta-Data file: flow.meta\n|CSV file                           |surface_flow.csv                   |\nWriting Flow Meta-Data file: flow.meta\n+-----------------------------------------------------------------------+\n\n--------------------------- Finalizing Solver ---------------------------\nDeleted CNumerics container.\nDeleted CIntegration container.\nDeleted CSolver container.\nDeleted CIteration container.\nDeleted CInterface container.\nDeleted CGeometry container.\nDeleted CFreeFormDefBox class.\nDeleted CSurfaceMovement class.\nDeleted CVolumetricMovement class.\nDeleted CConfig container.\nDeleted nInst container.\nDeleted COutput class.\n-------------------------------------------------------------------------\n\n------------------------- Exit Success (SU2_CFD) ------------------------",
+   "mpi_ranks": 8,
+   "residual_history": [],
+   "runtime_seconds": 298.6048002243042,
+   "solver": "SU2_CFD",
+   "solver_exit_message": "All convergence criteria satisfied.",
+   "success": true,
+   "trimmed": true
+  },
+  "set_aircraft_parameters": {
+   "applied": [
+    {
+     "name": "Aircraft.Wing.AREA",
+     "new_value": 122.8287,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Wing.ASPECT_RATIO",
+     "new_value": 9.3632,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Wing.SWEEP",
+     "new_value": 21.6502,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Wing.TAPER_RATIO",
+     "new_value": 0.2462,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Fuselage.LENGTH",
+     "new_value": 37.6446,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Fuselage.MAX_HEIGHT",
+     "new_value": 4.1437,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Fuselage.MAX_WIDTH",
+     "new_value": 3.9518,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.HorizontalTail.AREA",
+     "new_value": 31.118412165407747,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.HorizontalTail.ASPECT_RATIO",
+     "new_value": 4.980972720852241,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.HorizontalTail.TAPER_RATIO",
+     "new_value": 0.33000029377752527,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.HorizontalTail.THICKNESS_TO_CHORD",
+     "new_value": 0.10000009183780126,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.VerticalTail.AREA",
+     "new_value": 21.50000389206982,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.VerticalTail.ASPECT_RATIO",
+     "new_value": 1.4948875277197349,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.VerticalTail.TAPER_RATIO",
+     "new_value": 0.34900050048576503,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.VerticalTail.THICKNESS_TO_CHORD",
+     "new_value": 0.110000031254264,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Wing.THICKNESS_TO_CHORD",
+     "new_value": 0.11644185460446387,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Wing.MASS",
+     "new_value": 7958.785892400294,
+     "old_value": null
+    },
+    {
+     "name": "Aircraft.Engine.SCALE_FACTOR",
+     "new_value": 1.1957967702892787,
+     "old_value": null
+    }
+   ],
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "model_eval": {
+    "error": null,
+    "nan_outputs": [],
+    "outputs": {
+     "fuel_burned_kg": 0.0,
+     "gtow_kg": 79560.101698,
+     "wing_mass_kg": 7958.785892400294
+    },
+    "success": true
+   },
+   "runtime_seconds": 1.01,
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true,
+   "summary": "VALID -- all static checks passed and model evaluation produced finite outputs.",
+   "valid": true,
+   "violations": [],
+   "warnings": []
+  },
+  "set_engine_deck": {
+   "design_fingerprint": "7d1ce93bb83c3754",
+   "engine": {
+    "aircraft_csv": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.aircraft_m4.csv",
+    "altitude_range_ft": [
+     0.0,
+     41000.0
+    ],
+    "computed_from_design": {},
+    "engine_mass": "computed (FLOPS law; bench file override removed)",
+    "engine_mass_override_removed": true,
+    "mach_range": [
+     0.0,
+     0.9
+    ],
+    "mass_law": {
+     "bench_reference_mass_lbm": 7400.0,
+     "bench_reference_sls_lbf": 28928.1,
+     "mass_scaler": 1.15
+    },
+    "path": "/data/Jessica/final_fix/baseline2/slot11/decks/deck_7815057d6edc9732.deck",
+    "reference_mass_lbm": 7447.109261374428,
+    "rows": 1177,
+    "sls_thrust_lbf": 29088.172499999997
+   },
+   "session_id": "9c784bee-5567-4e12-bd68-7e2c854864fb",
+   "success": true
+  },
+  "set_inputs": {
+   "skipped": [],
+   "updated": [
+    "splitter.BPR",
+    "T4_MAX",
+    "T4_TAKEOFF",
+    "T4_CLIMB",
+    "fan.PR",
+    "lpc.PR",
+    "hpc.PR",
+    "fan.eff",
+    "lpc.eff",
+    "hpc.eff",
+    "hpt.eff",
+    "lpt.eff",
+    "Fn_DES",
+    "fc.alt",
+    "fc.MN"
+   ]
+  }
+ }
+}

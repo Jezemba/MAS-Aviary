@@ -235,11 +235,24 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
     coupling_contract.apply_to_tool(tool)
 
     def middleware_forward(*args, **kwargs):
+        # B361: one scope per call (src/tools/call_scope.py): the pre-hook's values reach this call's post-hook and no
+        # other -- not the next call on this pooled watchdog thread, not a nested framework call, not a parallel peer.
+        from src.tools.call_scope import close_call_scope, open_call_scope
+
+        token = open_call_scope()
+        try:
+            return _middleware_body(*args, **kwargs)
+        finally:
+            close_call_scope(token)
+
+    def _middleware_body(*args, **kwargs):
         # 1. Type coercion
         coerced = coerce_tool_arguments(tool, kwargs)
         # 2. Resolve data store references (also injects typed coupling vars)
         from src.tools import data_plane as _dp
-        _outer_refusal = _dp.take_refusal()       # B306: a refusal belongs to the call that recorded it
+        # B306: a refusal belongs to the call that recorded it. B361: with a fresh scope per call nothing is pending
+        # here (the take / restore is kept as a guard; it is a no-op).
+        _outer_refusal = _dp.take_refusal()
         resolved = resolve_request(tool.name, coerced)
         _refusal = _dp.take_refusal()
         _dp.restore_refusal(_outer_refusal)
@@ -332,7 +345,13 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             duplicate_guard.release(tool.name, _fp)
             _kb_record(tool.name, resolved, _no_mesh, status="refused")
             return _json.dumps(_no_mesh)
-        _claim = work_claims.check(tool.name, current_agent_name())
+        # B362: a call the FRAMEWORK issues from inside another call (the cruise-point set in set_inputs / run_cycle,
+        # the B187 / B272 re-applies, the auto-export) is not a peer taking work. It carries the calling peer's
+        # identity, so in a networked link the propulsion peer's framework set_aircraft_parameters was refused as the
+        # mission peer's claimed work (or auto-claimed the mission TODO from it). Claims apply to agents' own calls.
+        from src.tools.call_scope import framework_initiated
+
+        _claim = None if framework_initiated() else work_claims.check(tool.name, current_agent_name())
         if _claim is not None:
             duplicate_guard.release(tool.name, _fp)     # nothing ran; drop any in-flight claim
             _kb_record(tool.name, resolved, _claim, status="refused")
@@ -400,7 +419,10 @@ def wrap_tool_with_middleware(tool: Tool) -> Tool:
             # budget (1,800 + 300 s) it was abandoned and the mission did not fly.
             from src.tools import data_plane as _dp2
             try:
-                call_watchdog.bounded("generate_engine_deck", _dp2.prebuild_engine_deck, tool.name, kwargs)
+                from src.tools.call_scope import run_as_framework
+
+                call_watchdog.bounded("generate_engine_deck", run_as_framework, _dp2.prebuild_engine_deck, tool.name,
+                                      kwargs)    # B362: its deck calls are the framework's
             except call_watchdog.ToolCallTimeout as exc:
                 import json as _json1
                 refusal = {"success": False, "error_code": "ENGINE_DECK_NOT_READY",

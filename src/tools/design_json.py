@@ -136,14 +136,52 @@ def write_design(state: Any) -> str | None:
         path = design_path()
         if not path or state is None:
             return None
-        doc = build_design(getattr(state, "data_store", {}) or {}, getattr(state, "sessions", {}) or {})
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=1, default=str)
-        os.replace(tmp, path)
+        with _WRITE_LOCK:
+            doc = _build_consistent(state)
+            _write_atomic(path, doc)
         return path
-    except Exception:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
+        _note_write_failure(state, "design.json", exc)
         return None
+
+
+# B361: networked peers write design.json from their own call threads at the same time. Every writer used the same
+# "design.json.tmp", so two writes could interleave into one file (a corrupt design.json, or os.replace failing on
+# a tmp the other writer had already moved), and build_design could raise "dictionary changed size during
+# iteration" while another peer's capture wrote the store -- swallowed, so that write (design_flown.json included,
+# which the next link starts from) silently did not happen. Writes are serialized, each has its own tmp file, the
+# build is retried on a concurrent change, and a write that still fails is recorded.
+import threading as _threading  # noqa: E402
+
+_WRITE_LOCK = _threading.Lock()
+
+
+def _build_consistent(state: Any, attempts: int = 5) -> dict:
+    for attempt in range(attempts):
+        try:
+            return build_design(dict(getattr(state, "data_store", {}) or {}), dict(getattr(state, "sessions", {}) or {}))
+        except RuntimeError:          # another thread changed a nested container while it was read
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.01)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
+def _write_atomic(path: str, doc: dict) -> None:
+    tmp = f"{path}.{os.getpid()}.{_threading.get_ident()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=1, default=str)
+    os.replace(tmp, path)
+
+
+def _note_write_failure(state: Any, what: str, exc: Exception) -> None:
+    import logging
+
+    logging.getLogger(__name__).warning("[B361] %s was not written: %s: %s", what, type(exc).__name__, exc)
+    try:
+        state.data_store.setdefault("design_json_write_errors", []).append(f"{what}: {type(exc).__name__}: {exc}")
+    except Exception:
+        pass
 
 
 FLOWN_FILE_NAME = "design_flown.json"
@@ -160,16 +198,15 @@ def write_flown_design(state: Any) -> str | None:
         if not path or state is None:
             return None
         store = getattr(state, "data_store", {}) or {}
-        doc = build_design(store, getattr(state, "sessions", {}) or {})
-        if store.get("flown_cpacs_path"):
-            doc["geometry"]["cpacs_file"] = store["flown_cpacs_path"]
         path = os.path.join(os.path.dirname(path), FLOWN_FILE_NAME)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=1, default=str)
-        os.replace(tmp, path)
+        with _WRITE_LOCK:             # B361
+            doc = _build_consistent(state)
+            if store.get("flown_cpacs_path"):
+                doc["geometry"]["cpacs_file"] = store["flown_cpacs_path"]
+            _write_atomic(path, doc)
         return path
-    except Exception:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
+        _note_write_failure(state, "design_flown.json", exc)
         return None
 
 

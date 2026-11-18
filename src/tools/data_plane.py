@@ -1096,7 +1096,12 @@ def _mark_coupled_applied(reply=None, sid=None) -> None:
 
 import threading as _threading
 
-_call_ctx = _threading.local()
+# B361: one tool call's state (pre-hook -> post-hook) lives in a per-call scope the middleware opens for every call
+# (src/tools/call_scope.py), not in a threading.local: the call_watchdog worker threads are pooled and reused, so a
+# thread-local outlived its call, and per-call reply notes kept in the shared data_store were taken by nested
+# framework calls and by parallel peers. _call_ctx keeps its attribute interface; _call_notes() holds the reply notes.
+from src.tools.call_scope import call_ctx as _call_ctx
+from src.tools.call_scope import call_notes as _call_notes
 
 import contextvars as _contextvars
 
@@ -1107,6 +1112,9 @@ import contextvars as _contextvars
 # every set_inputs went without Fn_DES and run_cycle was refused DESIGN_THRUST_NOT_AVAILABLE. call_watchdog submits
 # every call with contextvars.copy_context(), so a ContextVar set before tool.forward reaches the inner call.
 _cruise_basis: _contextvars.ContextVar = _contextvars.ContextVar("avion_cruise_basis", default=None)
+# B361: current_cruise_point's framework set + ask is one at a time across peers (see there).
+_cruise_point_lock = _threading.Lock()
+_CRUISE_POINT_LOCK_SECONDS = 1200.0
 
 
 def _refuse_call(error_code: str, message: str, **extra) -> None:
@@ -1242,8 +1250,8 @@ def _inject_target_cl(resolved: dict) -> None:
     store = _design_state.data_store
     from src.tools import coupling
 
-    store.pop("_target_cl_asked", None)          # notes of an earlier call that never reached the server
-    store.pop("_target_cl_note_last", None)
+    _call_notes().pop("_target_cl_asked", None)          # notes of an earlier call that never reached the server
+    _call_notes().pop("_target_cl_note_last", None)
     asked = resolved.get("target_cl")
     overrides = resolved.get("overrides") if isinstance(resolved.get("overrides"), dict) else None
     trim_in_overrides = {}
@@ -1318,9 +1326,9 @@ def _inject_target_cl(resolved: dict) -> None:
             resolved["initial_config"] = "\n".join(kept_lines) + ("\n" if resolved["initial_config"].endswith("\n") else "")
     if asked is not None or trim_in_overrides:
         _note_coupled_override("target_cl", asked, target)
-        if trim_in_overrides or "target_cl" in (store.get("_coupled_override_last") or {}):
-            store["_target_cl_asked"] = {"asked": asked, "used": round(target, 6),
-                                         "overrides_removed": {k: str(v) for k, v in trim_in_overrides.items()}}
+        if trim_in_overrides or "target_cl" in (_call_notes().get("_coupled_override_last") or {}):
+            _call_notes()["_target_cl_asked"] = {"asked": asked, "used": round(target, 6),
+                                                 "overrides_removed": {k: str(v) for k, v in trim_in_overrides.items()}}
     coupling.put_var(_design_state, "aero.target_cl", target, source_tool="data_plane")
     store["aero_target_cl"] = target
     store["aero_target_cl_basis"] = {"mass_kg": float(mass_kg), "mass_source": mass_source,
@@ -1697,7 +1705,7 @@ def _apply_geometry_authority(resolved: dict) -> None:
         params[key] = value
         used[key] = value
     if used or overrode:
-        _design_state.data_store["_geometry_authority_last"] = {"used": used, "overrode": overrode}
+        _call_notes()["_geometry_authority_last"] = {"used": used, "overrode": overrode}
 
 
 # G1 decision (Jessica 2026-11-18): aviary's tails follow the measured CPACS tails (Wing2H / Wing3V), the same values
@@ -1893,7 +1901,7 @@ def _note_coupled_override(key: str, asked, used: float) -> None:
             return
     except (TypeError, ValueError):
         pass
-    _design_state.data_store.setdefault("_coupled_override_last", {})[key] = {"asked": asked, "used": round(used, 6)}
+    _call_notes().setdefault("_coupled_override_last", {})[key] = {"asked": asked, "used": round(used, 6)}
 
 
 def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
@@ -1901,7 +1909,7 @@ def _annotate_su2_kept_back(tool_name: str, data: dict) -> None:
     if _design_state is None or not isinstance(data, dict) or tool_name not in (
             "update_config_entries", "create_su2_session", "configure_from_cpacs"):   # B306: all three
         return
-    kept = _design_state.data_store.pop("_su2_kept_back_last", None)
+    kept = _call_notes().pop("_su2_kept_back_last", None)
     if kept:
         data["framework_kept"] = {
             "ignored": {k: str(v) for k, v in kept.items()},
@@ -1919,7 +1927,7 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
         return
     if tool_name not in ("set_aircraft_parameters", "set_inputs"):
         return
-    last = _design_state.data_store.pop("_coupled_override_last", None)
+    last = _call_notes().pop("_coupled_override_last", None)
     if not last:
         return
     data["framework_applied"] = {
@@ -1935,12 +1943,12 @@ def _annotate_coupled_overrides(tool_name: str, data: dict) -> None:
 def _annotate_target_cl(data: dict) -> None:
     """B275: tell the caller its target_cl was replaced by the framework's, or that none could be computed."""
     store = _design_state.data_store
-    pending = store.get("_coupled_override_last") or {}
+    pending = _call_notes().get("_coupled_override_last") or {}
     pending.pop("target_cl", None)
     if not pending:
-        store.pop("_coupled_override_last", None)
-    asked = store.pop("_target_cl_asked", None)
-    missing = store.pop("_target_cl_note_last", None)
+        _call_notes().pop("_coupled_override_last", None)
+    asked = _call_notes().pop("_target_cl_asked", None)
+    missing = _call_notes().pop("_target_cl_note_last", None)
     if asked:
         data["framework_applied"] = {
             "overridden": {"target_cl": {"asked": asked.get("asked"), "used": asked.get("used"),
@@ -1957,7 +1965,7 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
     """Tell the caller the wing came from the geometry, and what it asked for instead."""
     if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
         return
-    last = _design_state.data_store.pop("_geometry_authority_last", None)
+    last = _call_notes().pop("_geometry_authority_last", None)
     if not last or not (last.get("used") or last.get("overrode")):
         return
     note = ("The wing's AREA / ASPECT_RATIO / SWEEP / TAPER_RATIO (as measured) and the fuselage's LENGTH / "
@@ -2007,7 +2015,7 @@ def _pin_study_controls(tool_name: str, resolved: dict) -> None:
                 overridden[arg] = {"asked": asked, "used": want}
         resolved[arg] = want
     if overridden and _design_state is not None:
-        _design_state.data_store.setdefault("_pinned_overrides", {})[tool_name] = overridden
+        _call_notes().setdefault("_pinned_overrides", {})[tool_name] = overridden
         logger.warning("[study controls] %s: overrode %s", tool_name, overridden)
 
 
@@ -2015,7 +2023,7 @@ def _annotate_pinned(tool_name: str, data: dict) -> None:
     """Tell the caller which requested values were replaced by the study's fixed controls."""
     if _design_state is None or not isinstance(data, dict):
         return
-    over = (_design_state.data_store.get("_pinned_overrides") or {}).pop(tool_name, None)
+    over = (_call_notes().get("_pinned_overrides") or {}).pop(tool_name, None)
     if over:
         data["study_controls"] = {
             "overridden": over,
@@ -3622,7 +3630,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         if resolved.get("oswald_efficiency") is not None:
             _kept["oswald_efficiency"] = resolved.pop("oswald_efficiency")   # su2-mcp's Raymer e is the study's
         if _kept:
-            _design_state.data_store["_su2_kept_back_last"] = _kept
+            _call_notes()["_su2_kept_back_last"] = _kept
             logger.warning("[B306] kept the framework's SU2 settings in %s; ignored %s", tool_name, sorted(map(str, _kept)))
 
         # B138: the aspect ratio su2-mcp needs for the induced-drag floor, from the geometry.
@@ -3643,13 +3651,13 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             if _mission.get(_arg) is None:
                 continue
             if resolved.get(_arg) is not None and float(resolved[_arg]) != float(_mission[_arg]):
-                _design_state.data_store.setdefault("_su2_kept_back_last", {})[_arg] = resolved[_arg]
+                _call_notes().setdefault("_su2_kept_back_last", {})[_arg] = resolved[_arg]
             resolved[_arg] = float(_mission[_arg])
 
         # B306 (F10): REF_AREA is the geometry's when the framework has it; a caller's value used to win here.
         if resolved.get("ref_area") is not None and (_cpl.get_var(_design_state, "geom.reference_area") or (
                 _design_state.data_store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA")):
-            _design_state.data_store.setdefault("_su2_kept_back_last", {})["ref_area"] = resolved.pop("ref_area")
+            _call_notes().setdefault("_su2_kept_back_last", {})["ref_area"] = resolved.pop("ref_area")
         if resolved.get("ref_area") is None:
             _area = _cpl.get_var(_design_state, "geom.reference_area")
             if _area:
@@ -3726,7 +3734,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
             kept_back = {k: updates.pop(k) for k in list(updates) if str(k).upper() in SU2_PROTECTED_KEYS
                          or str(k).strip().lower() in _SU2_FRAMEWORK_ARGS}   # B306 (F10)
             if kept_back:
-                _design_state.data_store["_su2_kept_back_last"] = kept_back
+                _call_notes()["_su2_kept_back_last"] = kept_back
                 logger.warning("[B151] kept the framework's SU2 settings; ignored %s", sorted(kept_back))
             wall_marker = _design_state.data_store.get("mesh_marker_wall", "aircraft")
             far_marker = _design_state.data_store.get("mesh_marker_farfield", "farfield")
@@ -4014,20 +4022,25 @@ def _auto_size_cycle(resolved: dict) -> None:
         return
     sid = resolved.get("session_id") or (_design_state.sessions or {}).get("pycycle")
     point, why = current_cruise_point()           # drag model decision: the engine is sized on aviary's cruise L/D
+    sizing_reply: dict = {}
     if point is not None and _cycle_sizing_key() is not None and not cycle_is_sized(sid):
         tool = (_registered_tools or {}).get("set_inputs")
         if tool is not None and sid:
             try:
-                tool.forward(session_id=sid, values={})
+                sizing_reply = _as_dict(tool.forward(session_id=sid, values={}))
                 logger.info("[B187] sized pycycle session %s before run_cycle", sid)
             except Exception as exc:  # pragma: no cover - surfaced by the refusal below
+                sizing_reply = {"error": f"set_inputs: {exc}"}
                 logger.warning("[B187] could not size pycycle session %s before run_cycle: %s", sid, exc)
     if not cycle_is_sized(sid):
         # B306 (drag model decision): never run the cycle on pycycle's default thrust.
+        # B361: the sizing call's OWN reply says why it failed; the shared engine_sizing_error may be another peer's.
+        own = (_error_text(sizing_reply) if (sizing_reply.get("error") or sizing_reply.get("error_code")
+                                             or sizing_reply.get("success") is False) else None)
         _refuse_call("DESIGN_THRUST_NOT_AVAILABLE",
                      "run_cycle was not run: the framework sizes the engine's design thrust (Fn_DES) from the mass "
                      "and aviary's cruise lift-to-drag of the current design, and could not: "
-                     + (why if point is None else (_design_state.data_store.get("engine_sizing_error")
+                     + (why if point is None else (own or _design_state.data_store.get("engine_sizing_error")
                                                    or "the sizing set_inputs was not accepted")) + ". "
                      "Apply the current design to aviary (set_aircraft_parameters) and run the cycle again.")
 
@@ -4058,7 +4071,7 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
     if point is None:
         store["engine_sizing_error"] = why
         if "Fn_DES" in values:
-            store.setdefault("_coupled_override_last", {})["Fn_DES"] = {
+            _call_notes().setdefault("_coupled_override_last", {})["Fn_DES"] = {
                 "asked": values.pop("Fn_DES"), "used": f"not set: {why}"}
             resolved["values"] = values
         return
@@ -4121,7 +4134,7 @@ def _inject_phase_k_wing_mass(resolved: dict) -> None:
     if "Aircraft.Wing.MASS" in parameters:  # B143: the framework's value wins
         _note_coupled_override("Aircraft.Wing.MASS", parameters["Aircraft.Wing.MASS"], wing_kg)
     if "Aircraft.Wing.MASS_SCALER" in parameters:
-        _design_state.data_store.setdefault("_coupled_override_last", {})["Aircraft.Wing.MASS_SCALER"] = {
+        _call_notes().setdefault("_coupled_override_last", {})["Aircraft.Wing.MASS_SCALER"] = {
             "asked": parameters["Aircraft.Wing.MASS_SCALER"], "used": "dropped: Aircraft.Wing.MASS is set directly"}
     parameters.pop("Aircraft.Wing.MASS_SCALER", None)
     parameters["Aircraft.Wing.MASS"] = wing_kg
@@ -4657,20 +4670,36 @@ def current_cruise_point() -> tuple[dict | None, str]:
             and point.get("design_fingerprint") == aviary_held_fingerprint(point.get("_session"))
 
     point = store.get("aviary_cruise_point")
+    error = None
     if not _valid(point):
         tool = (_registered_tools or {}).get(CRUISE_POINT_TOOL)
         sid = (_design_state.sessions or {}).get("aviary")
         if tool is not None and sid:
+            # B361: one framework set + ask at a time. Networked peers asked at once on the one aviary session: each
+            # popped / wrote the other's cruise_point_error, one's set could land between the other's set and ask, and
+            # both asked aviary for the same point. Under the lock a peer that waited re-reads the point first and
+            # uses it when it is valid for the current design. The nested set_aircraft_parameters / get_cruise_point
+            # never call current_cruise_point, so the lock is never wanted twice on one call path.
+            if not _cruise_point_lock.acquire(timeout=_CRUISE_POINT_LOCK_SECONDS):
+                return None, (f"another agent's request for aviary's cruise point did not finish within "
+                              f"{_CRUISE_POINT_LOCK_SECONDS:.0f} s, so the cruise point of the current design is not "
+                              "known; try again")
             try:
-                _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_source)
-            except Exception as exc:  # pragma: no cover - surfaced as the reason below
-                store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
+                point = store.get("aviary_cruise_point")
+                if not _valid(point):
+                    try:
+                        _ask_cruise_point_after_set(tool, sid, mass, basis, carried_scale, engine_source)
+                    except Exception as exc:  # pragma: no cover - surfaced as the reason below
+                        store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
+                    finally:
+                        _cruise_basis.set(None)
+                    point = store.get("aviary_cruise_point")
+                    error = store.get("cruise_point_error")      # this ask's reason, read before the lock goes
             finally:
-                _cruise_basis.set(None)
-            point = store.get("aviary_cruise_point")
+                _cruise_point_lock.release()
     if _valid(point):
         return point, f"aviary FLOPS cruise point at {mass:.1f} kg ({basis})"
-    why = store.get("cruise_point_error") or (
+    why = error or store.get("cruise_point_error") or (
         "aviary has not reported a cruise point for the design it holds now at the trim mass "
         f"{mass:.1f} kg" + ("" if (_registered_tools or {}).get(CRUISE_POINT_TOOL) else
                             f" (the aviary server has no {CRUISE_POINT_TOOL} tool)"))
@@ -4897,7 +4926,7 @@ def _pin_cycle_fixed_inputs(resolved: dict) -> None:
         except (TypeError, ValueError):
             differs = key in values
         if differs:       # any difference is reported (_note_coupled_override would accept 0.5 %)
-            _design_state.data_store.setdefault("_coupled_override_last", {})[key] = {
+            _call_notes().setdefault("_coupled_override_last", {})[key] = {
                 "asked": values[key], "used": float(value)}
         values[key] = float(value)
     resolved["values"] = values
@@ -4951,7 +4980,7 @@ def _inject_mass_engine(resolved: dict) -> None:
         return
     for arg, value in (("engine_deck_file", deck_file), ("engine_scale_factor", scale)):
         if resolved.get(arg) is not None and str(resolved[arg]) != str(value):
-            store.setdefault("_pinned_overrides", {}).setdefault("estimate_mass", {})[arg] = {
+            _call_notes().setdefault("_pinned_overrides", {}).setdefault("estimate_mass", {})[arg] = {
                 "asked": resolved[arg], "used": value}
         resolved[arg] = value
     store["mass_engine_basis"] = {"source": source, "engine_deck_file": deck_file, "engine_scale_factor": scale}

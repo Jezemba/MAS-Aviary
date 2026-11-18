@@ -208,6 +208,21 @@ def record_prompt(messages: list, prompt_tokens: int) -> None:
     _tls.prompt = {"messages": [serialize_message(m) for m in messages], "prompt_tokens": int(prompt_tokens)}
 
 
+def take_prompt() -> dict | None:
+    """B361: the prompt record_prompt kept on THIS thread (and clear it). The networked batch worker builds every
+    peer's prompt on its own thread; it hands each one to its request, and the peer's thread puts it back."""
+    prompt = getattr(_tls, "prompt", None)
+    _tls.prompt = None
+    return prompt
+
+
+def put_prompt(prompt: dict | None) -> None:
+    """B361: the prompt built for this thread's generation on another thread (batch worker), for record_generation."""
+    if _path is None or prompt is None:
+        return
+    _tls.prompt = prompt
+
+
 def record_generation(message: Any, *, attempt: int, thinking: bool, sampling: dict | None = None) -> None:
     """One raw generation attempt, BEFORE parse_tool_calls strips its think block."""
     if _path is None:
@@ -220,7 +235,7 @@ def record_generation(message: Any, *, attempt: int, thinking: bool, sampling: d
         "attempt": int(attempt),
         "thinking_enabled": bool(thinking),
         "sampling": sampling,   # B231: do_sample/temperature/top_p/top_k/seed the model was built with
-        "prompt": prompt,   # None: built on another thread (networked batch worker), not captured
+        "prompt": prompt,   # batch worker builds: handed back by put_prompt (B361)
         "raw_text": raw,
         **split_think(raw),
         "output_tokens": getattr(usage, "output_tokens", None),

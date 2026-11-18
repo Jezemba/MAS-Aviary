@@ -170,3 +170,14 @@ def sample_result():
         "constraints_satisfied": True,
         "objective": 12345.6,
     }
+
+
+@pytest.fixture(autouse=True)
+def _fresh_call_scope():
+    """B361: each test starts with its own tool-call scope (src/tools/call_scope.py), as each real call does; a test
+    that calls resolve_request / intercept_response directly would otherwise see the previous test's call state."""
+    from src.tools.call_scope import close_plain_scope, open_plain_scope
+
+    token = open_plain_scope()
+    yield
+    close_plain_scope(token)

@@ -330,7 +330,7 @@ def test_a_caller_flight_state_is_replaced_by_the_missions():
     out = dp.resolve_request("configure_from_cpacs", {"session_id": "s", "cpacs_file_path": "/x",
                                                       "cruise_altitude_ft": 36000.0})
     assert out["cruise_altitude_ft"] == 33000.0
-    assert _store()["_su2_kept_back_last"]["cruise_altitude_ft"] == 36000.0
+    assert dp._call_notes()["_su2_kept_back_last"]["cruise_altitude_ft"] == 36000.0   # B361: per call
 
 
 # ---- an unconverged engine cycle is not a result ----------------------------------------------------

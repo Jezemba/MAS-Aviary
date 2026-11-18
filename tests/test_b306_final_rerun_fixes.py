@@ -739,7 +739,7 @@ def test_m3_estimate_mass_gets_the_carried_engine(fresh, monkeypatch, tmp_path):
     out = dp.resolve_request("estimate_mass", {"cpacs_file_path": str(deck), "engine_scale_factor": 1.0})
     assert out["engine_deck_file"] == str(deck) and out["engine_scale_factor"] == 1.3314
     assert fresh.data_store["mass_engine_basis"]["source"].startswith("engine carried")
-    assert fresh.data_store["_pinned_overrides"]["estimate_mass"]["engine_scale_factor"]["asked"] == 1.0
+    assert dp._call_notes()["_pinned_overrides"]["estimate_mass"]["engine_scale_factor"]["asked"] == 1.0
 
 
 def test_m3_a_stale_deck_or_no_engine_refuses(fresh, monkeypatch, tmp_path):
