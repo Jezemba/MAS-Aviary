@@ -66,7 +66,7 @@ def plane(monkeypatch):
     # Drag model decision 2026-11-18: the engine is sized on the trim mass basis and aviary's cruise point.
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/deck_abc.deck", 1.0, "test"))
-    state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0,
+    state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0, "cd_depends_on_engine_scale": False,
                                                      "design_fingerprint": "fp"}, "aviary_design_fingerprint": "fp"})
     dp._call_ctx.__dict__.clear()
     open_sessions = {"cyc1"}

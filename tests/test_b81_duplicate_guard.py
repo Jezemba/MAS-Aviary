@@ -33,6 +33,11 @@ def _coupled_inputs_available():
     from src.tools.coupling_contract import note_capture
 
     state = dp.get_design_state()
+    # B281: a trimmed, converged solve (audit F7) and aviary's cruise point, on which the engine is sized.
+    state.data_store.update({"aero_solve_trimmed": True, "aero_solve_target_cl": 0.52, "aero_solve_converged": True,
+                             "aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0,
+                                                     "cd_depends_on_engine_scale": False, "design_fingerprint": "fp"},
+                             "aviary_design_fingerprint": "fp"})
     for name, value in (("aero.cl_cruise", 0.52), ("aero.cd_cruise", 0.0182),
                         ("mass.wing_kg", 8100.0), ("mass.mtom_kg", 72000.0),
                         ("prop.sfc_cruise", 0.58)):
