@@ -47,6 +47,7 @@ def _coupled_inputs_available():
     state.data_store["prop_cycle_key"] = dp._cycle_sizing_key()
     for producer in ("su2", "mass", "pycycle"):
         note_capture(producer)
+    state.data_store["_coupled_version_applied"] = state.data_store["_coupled_version"]   # and aviary holds them (B306)
     # B3: and its deck is on the aviary session these tests fly (as the framework attaches it).
     state.data_store["engine_deck"] = {"file": "/decks/d.deck", "key": "d", "reference_fn_des_lbf": 5900.0,
                                      "cycle_key": state.data_store["prop_cycle_key"]}
