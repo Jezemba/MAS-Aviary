@@ -119,8 +119,21 @@ mission:
 # Until it is set, every first-iteration SU2 configuration is REFUSED (NO_TRIM_TARGET) -- deliberately: there is no
 # fallback mass (audit F4). The graph-routed baseline cache key includes this value.
 baseline:
-  sized_mtom_kg: null
+  # Values 2026-11-18 (ws8 /data/Jessica/final_fix/baseline/results/iterate_run3/, driver code/a16/baseline_driver.py):
+  # the unchanged D150 (mass-mcp tests/fixtures/D150_simple.xml, opened, measured, exported) through the framework
+  # at 9a4e0ac with mass-mcp dca2b1e, aviary-mcp 9d10094, pycycle-mcp 001456b, tigl-mcp 6d1a8c8 (A16-checked slot).
+  # Mass <-> engine fixed point, iterated explicitly (H5): estimate_mass with deck + scale -> sized mass M (converged,
+  # sizing_report.driver residuals 0) -> aviary get_cruise_point at M (M0.78, 33,000 ft; FLOPS L/D 17.0530, CL 0.6509,
+  # CD 0.03817) -> Fn_DES = M g / (L/D) / 2 / 4.448 * 1.25 = 7,371.65 lbf -> pyCycle run_cycle Fn 7,371.65 lbf ->
+  # scale = Fn / 5,900 lbf (the deck's reference_fn_des_lbf). Start 88,066 kg / 1.3314; sized masses 92,092.7,
+  # 91,355.9, 91,224.6, 91,201.8, 91,197.8, 91,197.1 kg: converged (change < 1 kg) after 6 iterations.
+  sized_mtom_kg: 91197.1
   # The baseline's engine (H5, coordinator 2026-11-18): the deck and SCALE_FACTOR the first iteration's mass estimate
   # and aviary cruise point use (later iterations carry the previous iteration's flown engine). Unset = refused.
-  engine_deck_file: null
-  engine_scale_factor: null
+  # Deck = pyCycle generate_engine_deck of the canonical cycle (prompt table: BPR 5.105, T4_MAX 2857, T4_TAKEOFF 3540,
+  # T4_CLIMB 3090, fan/LPC/HPC PR 1.685/1.935/9.369, fixed efficiencies above, M0.78 / 33,000 ft), key
+  # 7815057d6edc9732 (size-normalised at 5,900 lbf; SLS 29,088.2 lbf; design TSFC 0.64324), the study deck (md5
+  # b1c1e040e4abe82782e47d1ed7666ca8). MACHINE-SPECIFIC PATH: the file must exist at this path on the run machine
+  # (data_plane refuses ENGINE_DECK_NOT_READABLE otherwise); on ws8 it is the study_decks copy.
+  engine_deck_file: /home/aipexws8/Jessica/Avion/study_decks/deck_7815057d6edc9732.deck
+  engine_scale_factor: 1.2494328339916752

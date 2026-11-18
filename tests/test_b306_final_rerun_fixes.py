@@ -72,10 +72,19 @@ def test_iteration_1_uses_the_canonical_baseline_sized_mass(monkeypatch):
     assert mass is None and "not set" in why
 
 
-def test_the_shipped_canonical_has_no_invented_baseline_mass():
+def test_the_shipped_canonical_baseline_is_the_measured_fixed_point():
+    """The shipped baseline is mass-mcp's converged sizing of the unchanged D150 with its own engine (2026-11-18,
+    6 explicit mass <-> engine iterations, ws8 /data/Jessica/final_fix/baseline/results/iterate_run3): all three
+    values set together, the scale = Fn_DES / the deck's 5,900 lbf reference with Fn_DES from that mass."""
     from src.config.canonical import load_canonical
 
-    assert (load_canonical().get("baseline") or {}).get("sized_mtom_kg") is None    # to be set from mass-mcp (A15)
+    base = load_canonical().get("baseline") or {}
+    assert base.get("sized_mtom_kg") == 91197.1
+    assert str(base.get("engine_deck_file")).endswith("deck_7815057d6edc9732.deck")
+    assert base.get("engine_scale_factor") == pytest.approx(7371.65372055 / 5900.0, rel=1e-9)
+    # Fn_DES from the shipped mass and aviary's FLOPS cruise L/D 17.05298257 (iteration 6) gives the shipped scale.
+    assert coupling.fn_des_from_lift_to_drag(91197.1, 17.05298257065294) / 5900.0 == pytest.approx(
+        base["engine_scale_factor"], rel=1e-9)
 
 
 def test_the_trim_ignores_this_iterations_estimate_and_the_cpacs_mass(fresh, monkeypatch, tmp_path):
