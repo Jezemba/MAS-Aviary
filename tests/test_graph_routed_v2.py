@@ -88,7 +88,7 @@ def test_rule_6_untrimmed_aero():
 
 
 def _engine_basis(monkeypatch, mass=78126.0):
-    """B338 (review #10): rule 4 uses the trim mass basis, a current engine and the attached deck's reference."""
+    """B340 (review #10): rule 4 uses the trim mass basis, a current engine and the attached deck's reference."""
     from src.tools import coupling as _c, data_plane as _dp
 
     monkeypatch.setattr(_dp, "trim_mass_basis", lambda: (mass, "test basis"))

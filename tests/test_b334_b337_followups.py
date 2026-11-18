@@ -74,7 +74,7 @@ def _zero():
 
 @pytest.fixture
 def engine_basis(monkeypatch):
-    """B338: rule 4 uses the trim mass basis, a current engine and the attached deck's reference (bench here)."""
+    """B340: rule 4 uses the trim mass basis, a current engine and the attached deck's reference (bench here)."""
     from src.tools import coupling as _c
 
     monkeypatch.setattr(dp, "trim_mass_basis", lambda: (78126.0, "test basis"))
@@ -107,7 +107,7 @@ def test_b335_no_engine_records_that_the_rule_was_not_evaluated(engine_basis):
 
 
 def test_b335_rule_4_is_not_evaluated_on_a_stale_engine_and_says_so(engine_basis, monkeypatch):
-    """B338 (review #9 superseded B335's L/D seed: pre-init re-sizes the engine instead)."""
+    """B340 (review #9 superseded B335's L/D seed: pre-init re-sizes the engine instead)."""
     monkeypatch.setattr(dp, "engine_is_current", lambda: False)
     d = gr.route_after_simulation(_zero(), dict(TRIMMED, **{"prop.fn_lbf": 8100.0}), None, gr.SIMPLE)
     assert (d.next_node, d.rule) == (gr.MISSION, "9") and "the engine is not current" in d.reason

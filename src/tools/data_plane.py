@@ -608,7 +608,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     store = _design_state.data_store
     from src.tools import coupling as _coupling
 
-    # B338 (review #11): mass-mcp reports a failure as status "error" + error_message (models.py), not only success
+    # B340 (review #11): mass-mcp reports a failure as status "error" + error_message (models.py), not only success
     # false / error. Any failed reply, or one without a usable breakdown, is a failure: the previous mass result (and
     # its tails) is withdrawn, as for an unusable estimate, so nothing stale flies. A framework refusal never reaches
     # this capture (the call did not run).
@@ -631,7 +631,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
             data["error_code"] = "MASS_ESTIMATE_NOT_USABLE"
             data["error"] = ("This mass estimate is not a result: its reply has no mass breakdown. The previous mass "
                              "result was withdrawn.")
-        logger.warning("[B338] estimate_mass failed, previous mass withdrawn: %s", reason)
+        logger.warning("[B340] estimate_mass failed, previous mass withdrawn: %s", reason)
         return
 
     problems = []
@@ -701,7 +701,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
 
 
 def flown_basis_problem(design) -> str | None:
-    """Why a flown design cannot carry the mass and engine into the next iteration (B338, review #4), or None.
+    """Why a flown design cannot carry the mass and engine into the next iteration (B340, review #4), or None.
 
     Needs a converged mass-mcp sizing (structures.sizing_converged, mtom_kg in [20 t, 200 t]), the engine deck it flew
     (engine_deck.file) and the SCALE_FACTOR aviary accepted (mission_applied). The runner uses it to pick the last
@@ -722,7 +722,7 @@ def flown_basis_problem(design) -> str | None:
 
 
 def flown_basis_design() -> tuple[dict | None, str]:
-    """The design the mass basis and the engine are carried from (B338, review #4): the LAST link that FLEW.
+    """The design the mass basis and the engine are carried from (B340, review #4): the LAST link that FLEW.
 
     carry_over.last_flown_design (written by the runner: the newest completed link whose design_flown.json passes
     flown_basis_problem), or None = no link has flown yet -> the canonical baseline. A link that ended without flying
@@ -745,7 +745,7 @@ def flown_basis_design() -> tuple[dict | None, str]:
 def trim_mass_basis() -> tuple[float | None, str]:
     """The mass the SU2 lift target is computed for (B306, A8 decision of 2026-11-18), and where it comes from.
 
-    mass-mcp's SIZED gross mass carried from the last flown iteration's design (B338: flown_basis_design); when no
+    mass-mcp's SIZED gross mass carried from the last flown iteration's design (B340: flown_basis_design); when no
     iteration has flown yet, the baseline's sized mass (canonical ``baseline.sized_mtom_kg``). None, with the
     reason, when that mass does not exist: the caller refuses rather than fall back.
     """
@@ -2206,7 +2206,7 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
         logger.warning("[B187] %s on a pycycle session not sized for this design; outputs not captured",
                        tool_name)
         return
-    # B338 (review #2): get_outputs reads the session's LAST run. After a re-sizing set_inputs and before run_cycle
+    # B340 (review #2): get_outputs reads the session's LAST run. After a re-sizing set_inputs and before run_cycle
     # that is the run of the previous Fn_DES; capturing it under the new sizing key made a stale engine "current".
     # get_outputs counts only when a run_cycle ran on this sizing.
     sizing = store.get("cycle_sizing") or {}
@@ -2215,7 +2215,7 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
         store["cycle_sizing"] = sizing
     elif sizing.get("ran") is not True:
         store["prop_cycle_unrun_reads"] = int(store.get("prop_cycle_unrun_reads") or 0) + 1
-        logger.warning("[B338] get_outputs before run_cycle on the current sizing; outputs not captured")
+        logger.warning("[B340] get_outputs before run_cycle on the current sizing; outputs not captured")
         return
     if tool_name == "run_cycle" and data.get("converged") is not None:
         store["prop_cycle_converged"] = bool(data["converged"])
@@ -3557,7 +3557,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name == "configure_mission" and _design_state and mcp_name == "aviary":
         _inject_takeoff_mass(resolved)
     if mcp_name == "aviary" and _design_state:
-        # B338 (#6): the session an aviary reply belongs to (held / flown fingerprints are per session).
+        # B340 (#6): the session an aviary reply belongs to (held / flown fingerprints are per session).
         _call_ctx.aviary_sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary") or "") or None
     if tool_name == "set_aircraft_parameters" and _design_state:
         _call_ctx.engine_pending = None
@@ -3740,7 +3740,7 @@ def _tails_signature() -> list | None:
 
 
 def design_basis() -> list:
-    """B338 (review #1): the design an aviary cruise point must belong to -- the CURRENT geometry (coupling_contract's
+    """B340 (review #1): the design an aviary cruise point must belong to -- the CURRENT geometry (coupling_contract's
     design fingerprint: the CPACS the design session was opened from and its morph epoch) and the measured tails."""
     from src.tools.coupling_contract import current_design_fingerprint
 
@@ -3752,7 +3752,7 @@ def _cycle_sizing_key() -> list | None:
 
     Drag model decision 2026-11-18: Fn_DES comes from aviary's FLOPS cruise point, not SU2 CL/CD (and no friction
     chord any more, B278 removed). None until both exist, so no engine counts as current without them.
-    B338 (review #1): the point counts only for the design it was evaluated on (design_basis: geometry fingerprint +
+    B340 (review #1): the point counts only for the design it was evaluated on (design_basis: geometry fingerprint +
     measured tails). It used to count while it matched the design AVIARY HOLDS, which a TiGL morph does not change:
     morph -> estimate_mass -> set_inputs sized Fn_DES on the old wing's L/D, and engine_is_current() stayed True after
     run_simulation re-applied the new wing. The basis is part of the key, so any morph makes the engine not current
@@ -3873,7 +3873,7 @@ def _inject_phase_k_b_fn_des(resolved: dict) -> None:
              f"engine scale used {point.get('engine_scale_used')}) at {float(mass):.1f} kg ({basis_mass})")
     store["engine_fn_des_basis"] = basis
     # B187: which session was sized, on which inputs -- run_cycle re-sizes when either changes.
-    # B338: "ran" -- a run_cycle has run on this sizing (get_outputs before that reads the previous Fn_DES's run).
+    # B340: "ran" -- a run_cycle has run on this sizing (get_outputs before that reads the previous Fn_DES's run).
     store["cycle_sizing"] = {"session": resolved.get("session_id"), "key": _cycle_sizing_key(), "ran": False}
     logger.info("Fn_DES=%.0f lbf from %s", fn_des_lbf, basis)
 
@@ -4237,6 +4237,9 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     basis = getattr(_call_ctx, "cruise_basis", None) if tool_name == CRUISE_POINT_TOOL else None
     if tool_name == CRUISE_POINT_TOOL:
         _call_ctx.cruise_basis = None
+    # aviary-mcp B339: every reply, success or error, names the design the session holds (a set whose validation
+    # crashed is applied server-side and says so), so the fingerprints are read before any failure return.
+    _note_aviary_fingerprints(tool_name, data, sid)
     if (data.get("success") is False or data.get("error_code")) and tool_name == CRUISE_POINT_TOOL:
         # aviary-mcp 3c4e6b6: CRUISE_POINT_INPUT / CRUISE_POINT_ERROR -- the reason reaches the engine-sizing refusal.
         _design_state.data_store["cruise_point_error"] = (f"{CRUISE_POINT_TOOL}: {data.get('error_code')}: "
@@ -4245,7 +4248,6 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     if data.get("success") is False or data.get("error_code"):
         return
     store = _design_state.data_store
-    _note_aviary_fingerprints(tool_name, data, sid)
     point = data.get("cruise_point")
     if not isinstance(point, dict):
         return
@@ -4259,7 +4261,7 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
         store["cruise_point_error"] = f"cruise_point lift_to_drag {ld} / mass {mass} is not physical"
         return
     fp = point.get("design_fingerprint")
-    # B338: the design the point was asked for (current_cruise_point stamps it before the call); a point nobody asked
+    # B340: the design the point was asked for (current_cruise_point stamps it before the call); a point nobody asked
     # for has no basis and is never valid. The aviary session it was evaluated on is kept with it (#6).
     store["aviary_cruise_point"] = dict(point, _design_basis=basis, _session=sid)
     store.pop("cruise_point_error", None)
@@ -4273,12 +4275,12 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
 
 # The aviary-mcp tool that evaluates the cruise point on demand (contract above; aviary-mcp 3c4e6b6).
 CRUISE_POINT_TOOL = "get_cruise_point"
-# B338 (review #6): replies that describe a FLOWN mission, not the design the session holds now.
+# B340 (review #6): replies that describe a FLOWN mission, not the design the session holds now.
 _FLOWN_FINGERPRINT_TOOLS = frozenset({"run_simulation", "get_results", "get_trajectory", "check_constraints"})
 
 
 def _note_aviary_fingerprints(tool_name: str, data: dict, sid) -> None:
-    """B338 (review #6): which design an aviary session HOLDS (per session) and which one a mission FLEW.
+    """B340 (review #6): which design an aviary session HOLDS (per session) and which one a mission FLEW.
 
     aviary-mcp's get_results used to put the FLOWN design's fingerprint under ``design_fingerprint``, the key every
     other reply uses for the design the session holds; reading it as "held" made a stored point of the flown design
@@ -4304,6 +4306,11 @@ def _note_aviary_fingerprints(tool_name: str, data: dict, sid) -> None:
             if key:
                 by_session[key] = held
                 store["aviary_design_fingerprint"] = held
+        elif isinstance(held, str) and (data.get("success") is False or data.get("error_code")):
+            # aviary-mcp B339: an error reply names the held design (no result was reported, nothing flown).
+            if key:
+                by_session[key] = held
+            store["aviary_design_fingerprint"] = held
         elif isinstance(held, str):
             store.setdefault("aviary_flown_fingerprint_by_session", {})[str(key)] = held
             if key:
@@ -4319,7 +4326,7 @@ def _note_aviary_fingerprints(tool_name: str, data: dict, sid) -> None:
 
 
 def aviary_held_fingerprint(session_id) -> str | None:
-    """The design fingerprint aviary last reported HOLDING on this session (B338), or None."""
+    """The design fingerprint aviary last reported HOLDING on this session (B340), or None."""
     store = _design_state.data_store if _design_state is not None else {}
     return (store.get("aviary_held_fingerprint_by_session") or {}).get(str(session_id)) if session_id else None
 
@@ -4353,7 +4360,7 @@ def current_cruise_point() -> tuple[dict | None, str]:
                           or abs(float(point.get("engine_scale_used")) - carried_scale) <= 1e-9 * carried_scale)
         except (TypeError, ValueError):
             return False
-        # B338 (review #1, #6): of the CURRENT design (geometry + tails), and of the design its aviary session holds.
+        # B340 (review #1, #6): of the CURRENT design (geometry + tails), and of the design its aviary session holds.
         return same_mass and same_scale and point.get("_design_basis") == design_basis() \
             and point.get("design_fingerprint") is not None \
             and point.get("design_fingerprint") == aviary_held_fingerprint(point.get("_session"))
@@ -4364,7 +4371,7 @@ def current_cruise_point() -> tuple[dict | None, str]:
         sid = (_design_state.sessions or {}).get("aviary")
         if tool is not None and sid:
             try:
-                _call_ctx.cruise_basis = design_basis()      # B338: the design this point is asked for
+                _call_ctx.cruise_basis = design_basis()      # B340: the design this point is asked for
                 # The point must be of the CURRENT design: apply it first (geometry authority puts the measured wing and
                 # fuselage on the call, the wing-mass injection the current mass), recorded in the KB like any call.
                 setter = (_registered_tools or {}).get("set_aircraft_parameters")
@@ -4445,7 +4452,7 @@ def _inject_engine_scale(resolved: dict) -> None:
 
 def engine_scale_reference(session_id=None) -> tuple[float, str]:
     """The thrust an aviary engine scale of 1.0 means on this session: the attached deck's reference (B279), else the
-    bench deck's (no deck attached = the bench engine flies). Shared by _inject_engine_scale and the router (B338)."""
+    bench deck's (no deck attached = the bench engine flies). Shared by _inject_engine_scale and the router (B340)."""
     from src.tools import coupling
 
     store = _design_state.data_store if _design_state is not None else {}
@@ -4617,12 +4624,12 @@ def prebuild_engine_deck(tool_name: str, kwargs: dict) -> None:
 
 
 def _inject_mass_engine(resolved: dict) -> None:
-    """estimate_mass: size the aircraft with the CARRIED engine (B306 mass-mcp M3 framework side; B338 H5 decision).
+    """estimate_mass: size the aircraft with the CARRIED engine (B306 mass-mcp M3 framework side; B340 H5 decision).
 
     mass-mcp 5b7368c takes ``engine_deck_file`` and ``engine_scale_factor``; without them it sizes with aviary's bench
     engine. The framework always passes the engine carried into this iteration (carried_engine): the last flown
     iteration's deck and the SCALE_FACTOR it flew; iteration 1 (or no flown iteration yet): the canonical baseline's.
-    Never this iteration's engine (B338: tool-order dependence and a mass <-> engine deadlock). None on record:
+    Never this iteration's engine (B340: tool-order dependence and a mass <-> engine deadlock). None on record:
     refused (no bench-engine default). Caller values are replaced (framework values win, B143) and the basis is
     recorded (mass_engine_basis, design.json).
     """
@@ -4630,7 +4637,7 @@ def _inject_mass_engine(resolved: dict) -> None:
     if not engine_deck_enabled():
         store["mass_engine_basis"] = {"source": "bench engine (AVION_ENGINE_DECK=0)"}
         return
-    # B338 (review #2, #3; H5 decision): ALWAYS the carried engine. Using this iteration's engine when its deck was
+    # B340 (review #2, #3; H5 decision): ALWAYS the carried engine. Using this iteration's engine when its deck was
     # current made the mass depend on tool order (structures before / after propulsion), and refusing a stale deck
     # (ENGINE_NOT_CURRENT) deadlocked with run_cycle's stale-mass refusal.
     deck_file, scale, source = carried_engine()
@@ -4655,11 +4662,11 @@ def _inject_mass_engine(resolved: dict) -> None:
 def carried_engine() -> tuple[str | None, float | None, str]:
     """The engine carried into this iteration: (deck file, scale factor, source), or (None, None, reason).
 
-    The last flown iteration's engine (B338; design_flown.json: its engine deck and the Aircraft.Engine.SCALE_FACTOR
+    The last flown iteration's engine (B340; design_flown.json: its engine deck and the Aircraft.Engine.SCALE_FACTOR
     it flew); no flown iteration yet: the baseline's engine (canonical baseline.engine_deck_file / engine_scale_factor). Used for
     the mass estimate (mass-mcp M3) and for aviary's cruise point (H5, coordinator 2026-11-18). No default.
     """
-    previous, which = flown_basis_design()       # B338 (review #4): the last flown iteration
+    previous, which = flown_basis_design()       # B340 (review #4): the last flown iteration
     if isinstance(previous, dict) and previous:
         deck = (previous.get("engine_deck") or {}).get("file")
         scale = (previous.get("mission_applied") or {}).get("Aircraft.Engine.SCALE_FACTOR")

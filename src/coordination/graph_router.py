@@ -152,7 +152,7 @@ def route_after_simulation(records: list, registry: dict, failure: dict | None, 
                         f"the mission did not fly and the aero is not trimmed to the cruise lift (CL {cl}, target {target})")
     ld = registry.get("aviary.cruise_l_over_d")
     not_evaluated = ""
-    # B338 (review #10): rule 4 uses what Fn_DES uses -- the trim mass basis (carried sized mass, not this link's
+    # B340 (review #10): rule 4 uses what Fn_DES uses -- the trim mass basis (carried sized mass, not this link's
     # mass.mtom_kg) and aviary's cruise L/D -- and the scale bound uses the reference of the deck attached to the
     # aviary session (B279), not the bench 5,936 lbf. With a different mass a re-sized engine gave the same Fn_DES and
     # the rule routed to PROPULSION until the budget ran out. Only a CURRENT engine is checked (a stale one is refused

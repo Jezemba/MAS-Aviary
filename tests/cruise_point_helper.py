@@ -1,6 +1,6 @@
-"""Test helper (B338): make a hand-built aviary cruise point count for the CURRENT design.
+"""Test helper (B340): make a hand-built aviary cruise point count for the CURRENT design.
 
-Since B338 a cruise point counts only for the design it was asked for (data_plane.design_basis: geometry fingerprint +
+Since B340 a cruise point counts only for the design it was asked for (data_plane.design_basis: geometry fingerprint +
 measured tails) and when its aviary session still holds that design (per-session held fingerprint). Tests that put a
 point in the store by hand call stamp() right after, so the point belongs to the design as it is at that moment; a
 later morph in the test then makes it stale, as in a run.

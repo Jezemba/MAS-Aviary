@@ -115,7 +115,7 @@ def test_run_simulation_reapplies_the_current_engine_after_a_cycle_rerun(plane):
 
 
 def test_graph_preinit_seed_is_not_a_current_engine(plane):
-    """B338 (review #9, was test_graph_preinit_seed_counts_as_sized): the engine RESULT is not seeded; pre-init
+    """B340 (review #9, was test_graph_preinit_seed_counts_as_sized): the engine RESULT is not seeded; pre-init
     re-sizes and runs the cycle on the link, so a seeded engine is never half-current."""
     from src.coordination import graph_preinit
 

@@ -1,4 +1,4 @@
-"""B338 (independent review of integration/final-rerun-2026-11-18): engine sized on the CURRENT design, mass with the
+"""B340 (independent review of integration/final-rerun-2026-11-18): engine sized on the CURRENT design, mass with the
 carried engine, the last FLOWN link carries, pre-init seeds only its own geometry, aviary fingerprints per session,
 router rule 4 on the Fn_DES basis, mass-mcp's error status.
 
@@ -161,7 +161,7 @@ ORDERS = {
 
 
 @pytest.mark.parametrize("order", list(ORDERS))
-def test_b338_morph_then_propulsion_gives_the_same_fn_des_in_every_order(world, order):
+def test_b340_morph_then_propulsion_gives_the_same_fn_des_in_every_order(world, order):
     _start_on_A(world)
     world.morph("B")
     assert not dp.engine_is_current()                  # review #1: a morph makes the engine not current
@@ -182,7 +182,7 @@ def test_b338_morph_then_propulsion_gives_the_same_fn_des_in_every_order(world, 
     assert world.fn_des_sent()[-1] == pytest.approx(_expected(world), rel=1e-12)
 
 
-def test_b338_the_old_wings_point_is_never_used_after_a_morph(world):
+def test_b340_the_old_wings_point_is_never_used_after_a_morph(world):
     """The review's order: morph -> estimate_mass -> set_inputs sized Fn_DES on A's L/D (aviary still held A)."""
     _start_on_A(world)
     fn_a = coupling.get_var(dp._design_state, "prop.fn_lbf")
@@ -193,7 +193,7 @@ def test_b338_the_old_wings_point_is_never_used_after_a_morph(world):
     assert world.fn_des_sent()[-1] == pytest.approx(_expected(world))
 
 
-def test_b338_a_new_mass_estimate_with_other_tails_resizes(world):
+def test_b340_a_new_mass_estimate_with_other_tails_resizes(world):
     _start_on_A(world)
     world.morph("B")
     world.call("set_inputs", session_id="pc", values={})          # sized before the new tails were measured
@@ -206,7 +206,7 @@ def test_b338_a_new_mass_estimate_with_other_tails_resizes(world):
 
 # ---- #2 / #3: mass always with the carried engine -------------------------------------------------------------
 
-def test_b338_mass_uses_the_carried_engine_before_and_after_propulsion(world):
+def test_b340_mass_uses_the_carried_engine_before_and_after_propulsion(world):
     world.call("estimate_mass", cpacs_file_path=str(world.cpacs))
     before = [r for t, r in world.calls if t == "estimate_mass"][-1]
     world.call("set_inputs", session_id="pc", values={})
@@ -218,7 +218,7 @@ def test_b338_mass_uses_the_carried_engine_before_and_after_propulsion(world):
         assert r["engine_deck_file"] == str(world.deck) and r["engine_scale_factor"] == 1.33
 
 
-def test_b338_no_deadlock_after_a_morph_with_a_stale_deck(world):
+def test_b340_no_deadlock_after_a_morph_with_a_stale_deck(world):
     _start_on_A(world)
     dp._design_state.data_store["engine_deck"] = {"file": "/decks/a.deck", "cycle_key": "old"}
     world.morph("B")
@@ -228,7 +228,7 @@ def test_b338_no_deadlock_after_a_morph_with_a_stale_deck(world):
     assert dp.engine_is_current()
 
 
-def test_b338_get_outputs_before_run_cycle_does_not_record_the_previous_thrust(world):
+def test_b340_get_outputs_before_run_cycle_does_not_record_the_previous_thrust(world):
     _start_on_A(world)
     world.morph("B")
     world.call("estimate_mass", cpacs_file_path=str(world.cpacs))
@@ -240,7 +240,7 @@ def test_b338_get_outputs_before_run_cycle_does_not_record_the_previous_thrust(w
 
 # ---- #6: aviary fingerprints -------------------------------------------------------------------------------
 
-def test_b338_get_results_without_flown_fingerprint_is_not_taken_as_held(world):
+def test_b340_get_results_without_flown_fingerprint_is_not_taken_as_held(world):
     _start_on_A(world)
     point = dp._design_state.data_store["aviary_cruise_point"]
     dp._call_ctx.aviary_sid = "av"
@@ -250,7 +250,7 @@ def test_b338_get_results_without_flown_fingerprint_is_not_taken_as_held(world):
         dp._design_state.data_store["aviary_fingerprint_ambiguous"]
 
 
-def test_b338_flown_and_held_fingerprints_are_kept_apart_per_session(world):
+def test_b340_flown_and_held_fingerprints_are_kept_apart_per_session(world):
     dp._call_ctx.aviary_sid = "av"
     dp.intercept_response("get_results", json.dumps({"success": True, "design_fingerprint": "held-Y",
                                                      "flown_design_fingerprint": "flown-X"}))
@@ -265,7 +265,7 @@ def test_b338_flown_and_held_fingerprints_are_kept_apart_per_session(world):
 
 # ---- #10: router rule 4 on the Fn_DES basis ---------------------------------------------------------------------
 
-def test_b338_rule_4_uses_the_trim_mass_and_the_attached_decks_reference(world, monkeypatch):
+def test_b340_rule_4_uses_the_trim_mass_and_the_attached_decks_reference(world, monkeypatch):
     from src.coordination import graph_router as gr
 
     _start_on_A(world)
@@ -288,7 +288,7 @@ def test_b338_rule_4_uses_the_trim_mass_and_the_attached_decks_reference(world, 
         "components": {"mWing_kg": 7800.0}, "mTOM_sized_kg": 88000.0, "sizing_converged": True}},
     {"status": "success", "mass_breakdown": "not a dict"},
 ])
-def test_b338_a_failed_mass_reply_withdraws_the_previous_mass(world, reply):
+def test_b340_a_failed_mass_reply_withdraws_the_previous_mass(world, reply):
     world.call("estimate_mass", cpacs_file_path=str(world.cpacs))
     store = dp._design_state.data_store
     assert store.get("mass_wing_kg") and store.get("geometry_tails")
@@ -305,7 +305,7 @@ FLOWN = {"structures": {"mtom_kg": 88000.0, "sizing_converged": True},
          "aero": {"cl_cruise": 0.56, "cd_cruise": 0.02}}
 
 
-def test_b338_trim_mass_and_engine_come_from_the_last_flown_link(monkeypatch):
+def test_b340_trim_mass_and_engine_come_from_the_last_flown_link(monkeypatch):
     from src.coordination import prompt_assembly
 
     unflown = {"structures": {"mtom_kg": None, "sizing_converged": False}, "mission_applied": {}}
@@ -323,7 +323,7 @@ def test_b338_trim_mass_and_engine_come_from_the_last_flown_link(monkeypatch):
     assert dp.trim_mass_basis()[0] == 87500.0 and dp.carried_engine()[:2] == ("/decks/base.deck", 1.2)
 
 
-def test_b338_the_runner_carries_the_last_flown_link(tmp_path):
+def test_b340_the_runner_carries_the_last_flown_link(tmp_path):
     from scripts import stat_batch_runner as sbr
 
     flown_dir = tmp_path / "repeat_000" / "c"
@@ -348,7 +348,7 @@ def test_b338_the_runner_carries_the_last_flown_link(tmp_path):
 
 # ---- #5: graph pre-init seeds only its own geometry -----------------------------------------------------------
 
-def test_b338_preinit_seeds_the_flown_design_only_on_its_geometry(tmp_path):
+def test_b340_preinit_seeds_the_flown_design_only_on_its_geometry(tmp_path):
     from src.coordination import graph_preinit
 
     g1, g2 = tmp_path / "g1.xml", tmp_path / "g2.xml"
@@ -376,7 +376,7 @@ STRUCTURES = {
 
 
 @pytest.mark.parametrize("structure", list(STRUCTURES))
-def test_b338_a_full_link_flies_the_same_engine_in_every_structure(world, structure, monkeypatch):
+def test_b340_a_full_link_flies_the_same_engine_in_every_structure(world, structure, monkeypatch):
     def attach_deck(resolved):        # what _ensure_engine_deck does: the current cycle's deck on the session
         store = dp._design_state.data_store
         store["engine_deck"] = {"file": "/decks/now.deck", "key": "now", "reference_fn_des_lbf": 5900.0,
@@ -411,3 +411,14 @@ def test_b338_a_full_link_flies_the_same_engine_in_every_structure(world, struct
     assert held["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(_expected(world) / 5900.0)
     masses = [r for t, r in world.calls if t == "estimate_mass"]
     assert all(r["engine_deck_file"] == str(world.deck) and r["engine_scale_factor"] == 1.33 for r in masses)
+
+
+def test_b340_an_error_reply_still_names_the_held_design(world):
+    """aviary-mcp B339: a set whose validation crashed is applied server-side and its reply names the held design."""
+    dp._call_ctx.aviary_sid = "av"
+    dp.intercept_response("set_aircraft_parameters", json.dumps({
+        "success": False, "error_code": "VALIDATION_ERROR", "applied_on_server": True, "design_fingerprint": "fp-Y"}))
+    assert dp.aviary_held_fingerprint("av") == "fp-Y"
+    dp.intercept_response("get_results", json.dumps({"success": False, "error_code": "LAST_RUN_FAILED",
+                                                     "design_fingerprint": "fp-Y2"}))
+    assert dp.aviary_held_fingerprint("av") == "fp-Y2"

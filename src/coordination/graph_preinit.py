@@ -134,13 +134,13 @@ def seed_from_design(design: dict) -> list[str]:
     elif st:
         store["mass_seed_skipped"] = (f"structures not seeded: sizing_converged {st.get('sizing_converged')!r}, "
                                       f"mtom_kg {st.get('mtom_kg')!r}")
-    # B338 (review #9): the engine RESULT is not seeded. Its sizing key (mass basis, aviary cruise point of THIS
+    # B340 (review #9): the engine RESULT is not seeded. Its sizing key (mass basis, aviary cruise point of THIS
     # geometry session) cannot be reproduced from design.json, so a seeded result was never current (prop_cycle_key
     # None) yet still sat in the registry -- a half state. The engine INPUTS are seeded (design_space.engine below) and
     # prepare() re-sizes and runs the cycle on this link (_resize_engine): the engine is then either current, with
     # its cruise point and key recorded, or explicitly not current with the reason (engine_seed_note).
     if (design.get("propulsion") or {}).get("sfc_cruise") is not None:
-        store["engine_seed_note"] = "engine result not seeded: re-sized and run on this link by graph pre-init (B338)"
+        store["engine_seed_note"] = "engine result not seeded: re-sized and run on this link by graph pre-init (B340)"
     if producers:
         from src.tools.coupling_contract import current_design_fingerprint
 
@@ -194,7 +194,7 @@ def _open_sessions(cpacs: str, mission: dict) -> dict:
 
 
 def _resize_engine(design: dict | None, report: dict) -> None:
-    """B338 (review #9): size the engine on this link's design and run the cycle, through the middleware.
+    """B340 (review #9): size the engine on this link's design and run the cycle, through the middleware.
 
     set_inputs gets Fn_DES from the carried mass and aviary's cruise point of the current geometry (the framework asks
     aviary for it); run_cycle records the result with its sizing key. When that is not possible (no mass basis, no
@@ -214,7 +214,7 @@ def _resize_engine(design: dict | None, report: dict) -> None:
 
 
 def _seed_source(carry_over: dict, cpacs: str) -> tuple[dict | None, str]:
-    """B338 (review #5): the recorded design whose results may be seeded on this link, or None with the reason.
+    """B340 (review #5): the recorded design whose results may be seeded on this link, or None with the reason.
 
     The last link that FLEW (carry_over.last_flown_design, as trim_mass_basis / carried_engine use), and only when it
     flew THIS link's geometry: when an unflown link exported another wing (G2), the flown design's mass, tails and aero
@@ -237,7 +237,7 @@ def _seed_source(carry_over: dict, cpacs: str) -> tuple[dict | None, str]:
         return None, f"the last flown geometry {flown_geometry} cannot be compared ({exc}); nothing seeded"
     if not same:
         return None, (f"the last flown link flew {flown_geometry}, this link starts from {cpacs}: its results are not "
-                      "this geometry's, so they are computed here (B338)")
+                      "this geometry's, so they are computed here (B340)")
     return design, "last flown link's end-state"
 
 

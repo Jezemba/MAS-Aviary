@@ -48,7 +48,7 @@ def plane(monkeypatch):
     monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/deck_abc.deck", 1.0, "test"))
     state.data_store.update({"aviary_cruise_point": {"lift_to_drag": 17.0, "mass_kg": 78126.0, "cd_depends_on_engine_scale": False,
                                                      "design_fingerprint": "fp"}, "aviary_design_fingerprint": "fp"})
-    stamp(state)    # B338
+    stamp(state)    # B340
     dp._call_ctx.__dict__.clear()
     stubs = {n: _Stub(n) for n in ("set_inputs", "set_aircraft_parameters", "set_engine_deck")}
     stubs["generate_engine_deck"] = _Stub("generate_engine_deck", dict(DECK))

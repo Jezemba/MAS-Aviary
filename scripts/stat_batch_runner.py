@@ -482,7 +482,7 @@ def link_design(link_dir) -> dict | None:
 
 
 def last_flown_of(link_dir) -> dict | None:
-    """B338 (review #4): a link's design_flown.json when it can carry the mass basis and the engine, else None.
+    """B340 (review #4): a link's design_flown.json when it can carry the mass basis and the engine, else None.
 
     Only a mission that converged writes design_flown.json (B306/F3); it must also hold a converged mass-mcp sizing and
     the engine it flew (data_plane.flown_basis_problem). A link that ended without such a flight carries nothing.
@@ -548,7 +548,7 @@ def write_carry_over(link_dir, link: int, integrator_text: str | None, cpacs: st
     # B180: the recommendation the previous link's integrator RECORDED (record_recommendation), if it did.
     recorded = [s for s in ((previous_design or {}).get("coordination_signals") or [])
                 if isinstance(s, dict) and s.get("kind") == "recommendation"]
-    # B338 (review #4, #5): the LAST link that flew (not the last completed one) carries the mass basis and the engine;
+    # B340 (review #4, #5): the LAST link that flew (not the last completed one) carries the mass basis and the engine;
     # its geometry is recorded so graph pre-init seeds its results only on that same geometry. "" = no link flew yet
     # (-> canonical baseline). None (not given) = an older caller: the keys are left out.
     flown_keys = {}
@@ -1458,7 +1458,7 @@ def run_stat_batch(
         chain_integrator: str | None = None
         chain_design_space: dict | None = None      # the previous link's design.json design_space
         chain_design_dir = ""      # B268: folder of the last COMPLETED link ("" = none yet); previous_design comes from it
-        # B338: folder and geometry of the last link that FLEW and can carry mass + engine ("" = none yet).
+        # B340: folder and geometry of the last link that FLEW and can carry mass + engine ("" = none yet).
         chain_flown_dir, chain_flown_cpacs = "", None
         for prev in range(n_repeats):
             done = checkpoint["completed"].get(run_key(prev, combo.name))
@@ -1827,7 +1827,7 @@ def run_stat_batch(
                                           or chain_design_space)
                     result_dict["chain_design_space"] = chain_design_space
                     chain_design_dir = str(out_path / f"repeat_{repeat_idx:03d}" / combo.name)   # B268
-                    if last_flown_of(chain_design_dir):           # B338: this link flew; it carries mass + engine
+                    if last_flown_of(chain_design_dir):           # B340: this link flew; it carries mass + engine
                         chain_flown_dir, chain_flown_cpacs = chain_design_dir, chain_cpacs
 
                     if _integrator or _num:

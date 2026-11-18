@@ -62,7 +62,7 @@ def _board(seed=SEED):
 def _tool(name, response=None):
     import inspect
 
-    if response is None and name == "estimate_mass":     # B338: a success reply carries its breakdown
+    if response is None and name == "estimate_mass":     # B340: a success reply carries its breakdown
         response = {"success": True, "mass_breakdown": {"components": {"mWing_kg": 7833.0}, "mTOM_sized_kg": 88066.0,
                                                         "sizing_converged": True,
                                                         "sizing_report": {"driver": {"converged": True}}}}

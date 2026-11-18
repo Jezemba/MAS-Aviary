@@ -34,7 +34,7 @@ def _coupled_inputs_available():
     from src.tools.coupling_contract import note_capture
 
     state = dp.get_design_state()
-    # G1: the measured CPACS tails, and aviary holds them (set before the cruise point: B338 binds the point to them).
+    # G1: the measured CPACS tails, and aviary holds them (set before the cruise point: B340 binds the point to them).
     tails = {k: 1.0 + i for i, k in enumerate(dp.TAIL_KEYS)}
     state.data_store["geometry_tails"] = dict(tails)
     state.data_store["design_params_applied"] = {**(state.data_store.get("design_params_applied") or {}), **tails}
@@ -44,7 +44,7 @@ def _coupled_inputs_available():
                                                      "cd_depends_on_engine_scale": False, "design_fingerprint": "fp"},
                              "aviary_design_fingerprint": "fp",
                              "takeoff_mass_applied": {"a": 78126.0}})      # aviary already holds the take-off mass
-    stamp(state)    # B338
+    stamp(state)    # B340
     for name, value in (("aero.cl_cruise", 0.52), ("aero.cd_cruise", 0.0182),
                         ("mass.wing_kg", 8100.0), ("mass.mtom_kg", 72000.0),
                         ("prop.sfc_cruise", 0.58)):
@@ -295,7 +295,7 @@ def test_estimate_mass_once_per_geometry_and_mass_config_even_after_g1_write_bac
     def write_back(kw):
         with open(kw["cpacs_file_path"], "a") as h:   # mass-mcp writes its breakdown into the file it is given
             h.write("<massBreakdown/>")
-        # B338: a success reply carries its breakdown (one without is not a result and is withdrawn).
+        # B340: a success reply carries its breakdown (one without is not a result and is withdrawn).
         return {"status": "success", "mass_breakdown": {
             "components": {"mWing_kg": 7833.0}, "mTOM_sized_kg": 88066.0, "sizing_converged": True,
             "sizing_report": {"driver": {"converged": True}}}}
