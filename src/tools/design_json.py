@@ -91,6 +91,12 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         "structures": {"wing_mass_kg": store.get("mass_wing_kg"), "mtom_kg": store.get("mass_mtom_kg"),
                        "sizing_converged": store.get("mass_sizing_converged"),
                        "estimate_error": store.get("mass_estimate_error"),
+                       # G1: the measured CPACS tails mass-mcp sized with; the framework puts them on aviary.
+                       "tails": ({k: v for k, v in store["geometry_tails"].items() if not str(k).startswith("_")}
+                                 if isinstance(store.get("geometry_tails"), dict) else None),
+                       "tails_source": (store.get("geometry_tails") or {}).get("_source")
+                       if isinstance(store.get("geometry_tails"), dict) else None,
+                       "tail_error": store.get("tail_geometry_error"),
                        "wing_mass_source": store.get("mass_wing_source")},
         "propulsion": {"sfc_cruise": cycle.get("prop.sfc_cruise"), "fn_lbf": cycle.get("prop.fn_lbf"),
                        "cycle_converged": store.get("prop_cycle_converged")},

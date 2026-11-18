@@ -23,6 +23,8 @@ REPO = Path(__file__).resolve().parents[1]
 def fresh(monkeypatch):
     for var in ("AVION_REQUIRE_PHYSICAL_AERO", "AVION_ENGINE_DECK", "AVION_REQUIRE_COUPLED_INPUTS"):
         monkeypatch.delenv(var, raising=False)
+    # G1 (measured CPACS tails) is tested in tests/test_g1_cpacs_tails_and_cycle_keys.py; these tests use no tails.
+    monkeypatch.setenv("AVION_CPACS_TAILS", "0")
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
     monkeypatch.setattr(dp, "_registered_tools", {})

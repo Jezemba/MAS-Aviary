@@ -52,7 +52,8 @@ def baseline_cpacs() -> str:
 # B306 (audit F9): bumped. "b254" caches were computed before B274-B306 (trim at the CPACS 78,126 kg, untrimmed
 # fallbacks, CPACS-mass Fn_DES); they are left on disk (nothing is deleted) and never read again. The trim mass is
 # part of the key too, so a changed canonical baseline.sized_mtom_kg never reuses a cache trimmed at another mass.
-BASELINE_VERSION = "b306"
+# G1 (2026-11-18): bumped again -- a "b306" cache has no measured tails (structures.tails); left on disk, never read.
+BASELINE_VERSION = "b306g1"
 
 
 def _cache_path(cpacs: str) -> Path:
@@ -118,6 +119,16 @@ def seed_from_design(design: dict) -> list[str]:
         store["mass_mtom_kg"] = st["mtom_kg"]
         coupling.put_var(ds, "mass.mtom_kg", st["mtom_kg"], source_tool="graph pre-init")
         store["mass_sizing_converged"] = True
+        # G1: the measured tails come with the mass result they were sized with; a design.json without them (older
+        # code) seeds none, and the mission is refused until estimate_mass runs on this design.
+        from src.tools.data_plane import TAIL_KEYS
+
+        tails = st.get("tails") if isinstance(st.get("tails"), dict) else None
+        if tails and all(isinstance(tails.get(k), (int, float)) for k in TAIL_KEYS):
+            store["geometry_tails"] = {k: float(tails[k]) for k in TAIL_KEYS}
+            store["geometry_tails"]["_source"] = f"graph pre-init ({st.get('tails_source')})"
+        else:
+            store["tail_geometry_error"] = "the seeded design.json has no measured tails (structures.tails)"
         seeded.append("structures")
         producers.append("mass")
     elif st:
@@ -250,7 +261,8 @@ def prepare(carry_over: dict | None) -> dict:
                     ("no SU2 CL/CD", aero.get("cl_cruise") is not None),
                     ("the SU2 solve was not trimmed", aero.get("solve_trimmed") is True),
                     ("the SU2 solve did not converge", aero.get("solve_converged") is True),
-                    ("the mass sizing did not converge", st.get("sizing_converged") is True)) if not ok]
+                    ("the mass sizing did not converge", st.get("sizing_converged") is True),
+                    ("no measured tails (G1)", isinstance(st.get("tails"), dict))) if not ok]
                 if not problems:
                     CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     cache.write_text(json.dumps(doc, indent=1, default=str))

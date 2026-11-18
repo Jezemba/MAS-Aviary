@@ -643,7 +643,7 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         message = "; ".join(problems)
         store["mass_estimate_error"] = message
         store["mass_sizing_converged"] = converged
-        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source"):
+        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source", "geometry_tails", "tail_geometry_error"):
             store.pop(key, None)
         reg = store.get(_coupling.REGISTRY_KEY) or {}
         for name in ("mass.wing_kg", "mass.mtom_kg"):
@@ -662,6 +662,16 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     store["mass_wing_source"] = str(components.get("mWing_source", "unknown"))
     store["mass_mtom_kg"] = mtom_f
     _coupling.put_var(_design_state, "mass.mtom_kg", mtom_f, source_tool="estimate_mass")
+    # G1 (Jessica 2026-11-18): the tails mass-mcp measured on this file are the tails aviary flies. Recorded with the
+    # mass result (same file, same staleness); without them the mission is refused (mission_input_refusal).
+    tails, tail_error = _tails_from_mass_estimate(breakdown)
+    if tails:
+        tails["_sized_on"] = data.get("cpacs_file_path")
+        store["geometry_tails"] = tails
+        store.pop("tail_geometry_error", None)
+    else:
+        store.pop("geometry_tails", None)
+        store["tail_geometry_error"] = tail_error
     # B84: the design this mass was sized for, plus the CPACS it actually read -- the
     # baseline fixture and the exported morph are easy to confuse (B21/B30).
     from src.tools.coupling_contract import note_capture
@@ -1558,6 +1568,108 @@ def _apply_geometry_authority(resolved: dict) -> None:
         used[key] = value
     if used or overrode:
         _design_state.data_store["_geometry_authority_last"] = {"used": used, "overrode": overrode}
+
+
+# G1 decision (Jessica 2026-11-18): aviary's tails follow the measured CPACS tails (Wing2H / Wing3V), the same values
+# mass-mcp sizes them with (B304: TiGL chord points + wingGetReferenceArea of the file it read; D150 HT 31.12 m^2,
+# VT 21.50 m^2), not the bench file's 355 / 284 ft^2. These are every tail planform input Aviary's FLOPS geometry,
+# aerodynamics and mass read (geometry/flops_based prep_geom + characteristic_lengths, mass/flops_based
+# horizontal_tail / vertical_tail / surface_controls / hydraulics); tail sweep is read by none of them. Areas in m^2
+# (as aviary-mcp's Aircraft.Wing.AREA). Value: (tail, key of mass-mcp's sizing_report.tails[tail]).
+TAIL_KEYS = {
+    "Aircraft.HorizontalTail.AREA": ("horizontal", "area_m2"),
+    "Aircraft.HorizontalTail.ASPECT_RATIO": ("horizontal", "aspect_ratio"),
+    "Aircraft.HorizontalTail.TAPER_RATIO": ("horizontal", "taper_ratio"),
+    "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": ("horizontal", "tc_avg"),
+    "Aircraft.VerticalTail.AREA": ("vertical", "area_m2"),
+    "Aircraft.VerticalTail.ASPECT_RATIO": ("vertical", "aspect_ratio"),
+    "Aircraft.VerticalTail.TAPER_RATIO": ("vertical", "taper_ratio"),
+    "Aircraft.VerticalTail.THICKNESS_TO_CHORD": ("vertical", "tc_avg"),
+}
+_TAIL_TOLERANCE = 1e-6       # relative; the framework's own values round-trip exactly
+
+
+def cpacs_tails_enabled() -> bool:
+    """G1 on (default). AVION_CPACS_TAILS=0 flies the bench tails (regression runs against an older aviary-mcp)."""
+    return os.environ.get("AVION_CPACS_TAILS", "1") != "0"
+
+
+def _tails_from_mass_estimate(breakdown: dict) -> tuple[dict | None, str | None]:
+    """The measured tails mass-mcp sized with (mass_breakdown.sizing_report.tails), as aviary parameters, or the reason
+    there are none. Never a default: a missing or implausible value is a reason, not a substitute."""
+    report = breakdown.get("sizing_report") if isinstance(breakdown.get("sizing_report"), dict) else {}
+    tails = report.get("tails") if isinstance(report.get("tails"), dict) else None
+    if not tails:
+        return None, ("mass-mcp's reply has no measured tails (mass_breakdown.sizing_report.tails; mass-mcp "
+                      "fix/a7-quarter-chord-sweep 5b7368c or later reports them)")
+    record, bad = {}, []
+    for key, (tail, field) in TAIL_KEYS.items():
+        try:
+            value = float((tails.get(tail) or {}).get(field))
+        except (TypeError, ValueError):
+            bad.append(f"{tail} {field} {(tails.get(tail) or {}).get(field)!r}")
+            continue
+        if not (math.isfinite(value) and value > 0.0):
+            bad.append(f"{tail} {field} {value!r}")
+            continue
+        record[key] = value
+    if bad:
+        return None, "mass-mcp's measured tails are incomplete: " + ", ".join(bad)
+    record["_source"] = "mass-mcp estimate_mass sizing_report.tails ({}; {})".format(
+        (tails.get("horizontal") or {}).get("uid"), (tails.get("vertical") or {}).get("uid"))
+    return record, None
+
+
+def _inject_tail_geometry(resolved: dict) -> None:
+    """set_aircraft_parameters: the tails are the measured CPACS tails (G1); a caller cannot set them to another value.
+
+    The framework puts the eight TAIL_KEYS on every set call once a usable mass estimate has measured the tails. A
+    caller's value that differs (relative 1e-6), or any caller value while no measurement exists, refuses the call
+    with the reason (TAIL_FROM_GEOMETRY) -- the same rule as the drag keys (B324), not a silent replacement.
+    """
+    if _design_state is None or not cpacs_tails_enabled():
+        return
+    parameters = resolved.get("parameters")
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if parameters is None:
+        parameters = {}
+    if not isinstance(parameters, dict):
+        return
+    tails = _design_state.data_store.get("geometry_tails")
+    asked = {k: parameters[k] for k in TAIL_KEYS if k in parameters}
+    conflicts = {}
+    for key, value in asked.items():
+        if not tails:
+            conflicts[key] = {"asked": value, "framework": None}
+            continue
+        try:
+            same = abs(float(value) - tails[key]) <= _TAIL_TOLERANCE * abs(tails[key])
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            conflicts[key] = {"asked": value, "framework": tails[key]}
+    if conflicts:
+        if getattr(_call_ctx, "refusal", None) is None:
+            why = ("the tails are the measured tails of the current CPACS geometry (the values mass-mcp sizes them "
+                   "with); the framework sets them on every call")
+            if not tails:
+                why += ", and no usable mass estimate of the current design has measured them yet"
+            _refuse_call("TAIL_FROM_GEOMETRY",
+                         "set_aircraft_parameters was not run: " + ", ".join(sorted(conflicts)) + " cannot be set: "
+                         + why + ". To change a tail, morph Wing2H / Wing3V in TiGL and export the geometry. Send the "
+                         "call again without " + ("this key." if len(conflicts) == 1 else "these keys."),
+                         asked={k: str(v["asked"]) for k, v in conflicts.items()},
+                         framework_values={k: v["framework"] for k, v in conflicts.items()})
+        return
+    if not tails:
+        return
+    for key in TAIL_KEYS:
+        parameters[key] = tails[key]
+    resolved["parameters"] = parameters
 
 
 def _note_coupled_override(key: str, asked, used: float) -> None:
@@ -2499,7 +2611,8 @@ def _reapply_current_engine(resolved: dict) -> None:
         # Only settable parameters go back: aviary refuses a whole call that names a derived one (READ_ONLY_PARAMETER),
         # and the mission then flew the previous engine scale (B3 smoke test 2026-11-01: 1.6589 flown, 1.6690 meant).
         derived = set(store.get("design_params_derived") or ())
-        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
+        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived
+                  and k not in TAIL_KEYS}   # G1: the tails are injected fresh (the measured ones)
         _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
         logger.info("[B187] re-applied the design to aviary session %s with the current engine before "
                     "run_simulation", sid)
@@ -2536,7 +2649,8 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
     sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
     try:
         derived = set(store.get("design_params_derived") or ())
-        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived}
+        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived
+                  and k not in TAIL_KEYS}   # G1: the tails are injected fresh (the measured ones)
         _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
         logger.info("[B272] re-applied the design to aviary session %s before run_simulation (wing mass %s -> %s, "
                     "coupled results %s, aviary had %s)", sid, applied, wing_kg, version, store.get("_coupled_version_applied"))
@@ -3325,9 +3439,11 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _call_ctx.engine_pending = None
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
+        _inject_tail_geometry(resolved)
         _inject_phase_k_wing_mass(resolved)
         _inject_engine_scale(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
+        _refuse_unknown_cycle_keys(resolved)
         _inject_carried_engine(resolved)
         _pin_cycle_fixed_inputs(resolved)
         _inject_phase_k_b_fn_des(resolved)
@@ -3381,6 +3497,49 @@ def _inject_carried_engine(resolved: dict) -> None:
         values.update(added)
         resolved["values"] = values
         logger.info("[B261] carried engine inputs from the previous link: %s", added)
+
+
+# F12 follow-up (2026-11-18): the cycle keys of the design table (config/mdo_f25_sequential_agents.yaml rows "pycycle:
+# ..."): the Set inputs (_ENGINE_INPUTS), the Set (fixed) efficiencies (canonical propulsion.fixed_inputs, pinned by
+# _pin_cycle_fixed_inputs), the framework's Fn_DES and the flight condition fc.alt / fc.MN / fc.dTs.
+_CYCLE_CONDITION_KEYS = ("Fn_DES", "fc.alt", "fc.MN", "fc.dTs")
+
+
+def accepted_cycle_keys() -> tuple[str, ...]:
+    try:
+        from src.config.canonical import load_canonical
+
+        fixed = tuple(((load_canonical().get("propulsion") or {}).get("fixed_inputs") or {}).keys())
+    except Exception:      # pragma: no cover - _pin_cycle_fixed_inputs refuses the call then
+        fixed = ()
+    return tuple(_ENGINE_INPUTS) + fixed + _CYCLE_CONDITION_KEYS
+
+
+def _refuse_unknown_cycle_keys(resolved: dict) -> None:
+    """pycycle set_inputs: only the design table's cycle keys (F12 follow-up; B318 left them unchecked).
+
+    pyCycle's set_inputs sets ANY variable of the OpenMDAO problem (pycycle-mcp tools/variables.py: problem.set_val),
+    so a caller could change a solver balance or an internal (e.g. balance.lpt_PR) and fly a cycle that is not the
+    design table's -- with nothing recorded. A caller key outside accepted_cycle_keys() refuses the call
+    (UNKNOWN_CYCLE_KEY), naming the accepted keys. Checked before the framework adds its own keys.
+    """
+    values = resolved.get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if not isinstance(values, dict):
+        return
+    accepted = accepted_cycle_keys()
+    unknown = sorted(str(k) for k in values if k not in accepted)
+    if unknown and getattr(_call_ctx, "refusal", None) is None:
+        _refuse_call("UNKNOWN_CYCLE_KEY",
+                     "set_inputs was not run: " + ", ".join(unknown) + (" is" if len(unknown) == 1 else " are")
+                     + " not a cycle input of this study. The accepted keys are: " + ", ".join(accepted)
+                     + " (the efficiencies are fixed and Fn_DES is set by the framework). Send the call again with "
+                     "accepted keys only.",
+                     unknown_keys=unknown, accepted_keys=list(accepted))
 
 
 def _inject_cycle_flight_condition(resolved: dict) -> None:
@@ -4115,6 +4274,26 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
     if version > 0 and store.get("_coupled_version_applied") != version:
         problems.append("results produced since aviary's last accepted set_aircraft_parameters were not applied "
                         "(the framework's re-apply was not accepted)")
+    if cpacs_tails_enabled():
+        # G1: the mission flies the measured CPACS tails, never the bench file's 355 / 284 ft^2.
+        tails = store.get("geometry_tails")
+        applied = store.get("design_params_applied") or {}
+        if not tails:
+            problems.append("the measured tails of the current geometry are not known ("
+                            + (store.get("tail_geometry_error") or "they come with a usable estimate_mass of the "
+                               "current design") + ")")
+        else:
+            off = []
+            for key in TAIL_KEYS:
+                have = applied.get(key)
+                try:
+                    ok = abs(float(have) - tails[key]) <= _TAIL_TOLERANCE * abs(tails[key])
+                except (TypeError, ValueError):
+                    ok = False
+                if not ok:
+                    off.append(f"{key} {have!r} (measured {tails[key]:.6g})")
+            if off:
+                problems.append("aviary does not hold the measured tails: " + ", ".join(off))
     if not problems:
         return None
     return {
