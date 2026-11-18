@@ -422,3 +422,40 @@ def test_b340_an_error_reply_still_names_the_held_design(world):
     dp.intercept_response("get_results", json.dumps({"success": False, "error_code": "LAST_RUN_FAILED",
                                                      "design_fingerprint": "fp-Y2"}))
     assert dp.aviary_held_fingerprint("av") == "fp-Y2"
+
+
+# ---- B344: the seeded aero says what it is ---------------------------------------------------------------------
+
+def test_b344_seeded_aero_is_recorded_as_seeded_with_its_own_trim(world, monkeypatch):
+    from src.coordination import graph_preinit
+    from src.tools.design_json import build_design
+
+    design = {"aero": {"cl_cruise": 0.55, "cd_cruise": 0.02, "solve_target_cl": 0.5512, "solve_trimmed": True,
+                       "solve_converged": True, "solve_trim_basis": {"mass_kg": 89100.0, "wing_area_m2": 122.8}}}
+    graph_preinit.seed_from_design(design)
+    aero = build_design(dp._design_state.data_store)["aero"]
+    prov = aero["provenance"]
+    assert prov["solved_on_this_link"] is False and prov["trim_mass_kg"] == 89100.0
+    assert prov["trim_target_cl"] == 0.5512 and prov["this_link_trim_mass_kg"] == TRIM_MASS
+    assert "SEEDED from the last flown link" in prov["note"] and "89100.0 kg" in prov["note"] \
+        and "90000.0 kg" in prov["note"]
+    kb = kbm.get_kb()
+    entry = [e for e in kb.entries if e["tool"] == "graph_preinit_seed_aero"][-1]
+    assert "not solved on this link" in entry["note"]
+
+
+def test_b344_a_solve_on_this_link_replaces_the_seeded_provenance(world):
+    from src.coordination import graph_preinit
+    from src.tools.design_json import build_design
+
+    graph_preinit.seed_from_design({"aero": {"cl_cruise": 0.55, "cd_cruise": 0.02, "solve_target_cl": 0.55}})
+    store = dp._design_state.data_store
+    store["aero_target_cl_basis"] = {"mass_kg": TRIM_MASS, "mass_source": "t", "wing_area_m2": 122.8}
+    dp.note_su2_trim("create_su2_session", {}, {"session_id": "su2-1", "configured": True,
+                                                "trim": {"target_cl": 0.5601}})
+    dp._call_ctx.su2_session = "su2-1"
+    dp._call_ctx.su2_config_override = None
+    dp._note_solve_trim()
+    aero = build_design(store)["aero"]
+    assert aero["provenance"]["solved_on_this_link"] is True
+    assert aero["solve_trim_basis"]["mass_kg"] == TRIM_MASS and aero["solve_target_cl"] == 0.5601

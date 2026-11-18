@@ -11,7 +11,27 @@ from src.coordination.design_state import DesignState
 from src.tools import coupling, coupling_contract, data_plane as dp, mission_guard
 
 SERVERS = {"set_inputs": "pycycle", "run_cycle": "pycycle", "get_outputs": "pycycle",
-           "set_aircraft_parameters": "aviary", "run_simulation": "aviary", "configure_mission": "aviary"}
+           "set_aircraft_parameters": "aviary", "run_simulation": "aviary", "configure_mission": "aviary",
+           "get_cruise_point": "aviary"}
+CRUISE_LD = 15.0          # aviary's FLOPS cruise L/D of the design the stub aviary holds
+
+
+class _CruisePoint:
+    """aviary-mcp get_cruise_point (3c4e6b6 contract), through the data plane as the real middleware runs it."""
+    name = "get_cruise_point"
+
+    def __init__(self):
+        self.calls = []
+
+    def forward(self, **kwargs):
+        resolved = dp.resolve_request(self.name, kwargs)
+        self.calls.append(resolved)
+        reply = json.dumps({"success": True, "design_fingerprint": "fp-held", "cruise_point": {
+            "mach": resolved["mach"], "altitude_ft": resolved["altitude_ft"], "mass_kg": resolved["mass_kg"],
+            "cl": 0.56, "cd": 0.56 / CRUISE_LD, "lift_to_drag": CRUISE_LD, "engine_scale_used": resolved["engine_scale"],
+            "cd_depends_on_engine_scale": False, "design_fingerprint": "fp-held"}})
+        dp.intercept_response(self.name, reply)
+        return reply
 
 
 class _Stub:
@@ -26,20 +46,35 @@ class _Stub:
         return json.dumps({"success": True})
 
 
+# B340 fixture repair (coordinator 2026-11-18): since B306 the engine is sized on the TRIM MASS BASIS (mass-mcp's sized
+# mass carried into the iteration) and aviary's cruise point of the current design, with the carried engine scale.
+# The fixture gives the data plane those inputs and a stub get_cruise_point, so the tests run the real B187 sizing and
+# re-apply paths again. "A new mass" is a new trim mass basis -- what Fn_DES is sized on. The engine deck (B3) is off:
+# it has its own tests (test_b3_engine_deck_coupling); without it the bench reference is the engine's scale basis.
 @pytest.fixture
 def plane(monkeypatch):
+    monkeypatch.setenv("AVION_ENGINE_DECK", "0")
     state = DesignState()
     state.sessions["pycycle"] = "cyc1"
     state.sessions["aviary"] = "av1"
     dp.init_data_plane(state, SERVERS)
     monkeypatch.setattr(dp, "_registered_tools", {})
+    basis = {"mass": None}
+    monkeypatch.setattr(dp, "trim_mass_basis",
+                        lambda: (basis["mass"], "test trim basis") if basis["mass"] else (None, "no sized mass yet"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/carried.deck", 1.0, "test carried engine"))
+    state.data_store["_test_basis"] = basis
     stubs = {n: _Stub(n) for n in ("set_inputs", "set_aircraft_parameters")}
+    stubs["get_cruise_point"] = _CruisePoint()
     dp.register_tools(list(stubs.values()))
+    dp._call_ctx.__dict__.clear()
     yield state, stubs
+    dp._call_ctx.__dict__.clear()
     dp.init_data_plane(DesignState(), {})
 
 
 def _design(state, mtom=78126.0, cl=0.5587, cd=0.0223):
+    state.data_store["_test_basis"]["mass"] = mtom          # the trim mass basis the engine is sized on (B306)
     state.data_store["mass_mtom_kg"] = mtom
     coupling.put_var(state, "mass.mtom_kg", mtom, source_tool="estimate_mass")
     coupling.put_var(state, "aero.cl_cruise", cl, source_tool="run_su2_solver")
@@ -55,7 +90,9 @@ def test_run_cycle_on_an_unsized_session_is_sized_first(plane):
     _design(state)
     dp.resolve_request("run_cycle", {"session_id": "cyc1"})
     sized = stubs["set_inputs"].calls[-1]["values"]
-    assert sized["Fn_DES"] > 7000 and sized["fc.alt"] == 33000 and sized["fc.MN"] == 0.78
+    # B306: Fn_DES from the trim mass and aviary's cruise L/D (exact, not just "> 7000")
+    assert sized["Fn_DES"] == pytest.approx(coupling.fn_des_from_lift_to_drag(78126.0, CRUISE_LD))
+    assert sized["fc.alt"] == 33000 and sized["fc.MN"] == 0.78
     assert dp.cycle_is_sized("cyc1")
     stubs["set_inputs"].calls.clear()
     dp.resolve_request("run_cycle", {"session_id": "cyc1"})

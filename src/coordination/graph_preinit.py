@@ -78,7 +78,40 @@ def _size_engine_session(design: dict | None = None) -> None:
     _call("set_inputs", session_id=(get_design_state().sessions or {}).get("pycycle"), values=dict(engine))
 
 
-def seed_from_design(design: dict) -> list[str]:
+def _record_seeded_aero(store: dict, aero: dict, source: str = "the last flown link") -> None:
+    """B344 (coordinator 2026-11-18, review #9): the seeded aero is kept, but recorded as what it is -- solved on the last
+    flown link with ITS trim target (its trim mass), not at this link's trim mass -- in design.json (aero.provenance)
+    and in the knowledge base, so nobody reads it as this link's current solve. A new SU2 solve on this link replaces
+    the provenance (data_plane._note_solve_trim)."""
+    from src.tools.data_plane import trim_mass_basis
+
+    basis = aero.get("solve_trim_basis") if isinstance(aero.get("solve_trim_basis"), dict) else {}
+    store["aero_solve_trim_basis"] = basis or None
+    mass_then = basis.get("mass_kg")
+    mass_now, now_source = trim_mass_basis()
+    text = (f"SU2 aero SEEDED from {source} by graph pre-init, not solved on this link: CL "
+            f"{aero.get('cl_cruise')}, CD {aero.get('cd_cruise')}, trimmed there to target CL {aero.get('solve_target_cl')} "
+            + (f"at trim mass {float(mass_then):.1f} kg" if isinstance(mass_then, (int, float)) else
+               "at a trim mass not recorded in that design.json")
+            + "; this link's trim mass is "
+            + (f"{float(mass_now):.1f} kg ({now_source})" if mass_now is not None else f"not available ({now_source})")
+            + ". Re-solve SU2 for a solve at this link's trim mass.")
+    store["aero_provenance"] = {"source": f"seeded from {source} (graph pre-init)",
+                                "trim_target_cl": aero.get("solve_target_cl"), "trim_mass_kg": mass_then,
+                                "this_link_trim_mass_kg": mass_now, "solved_on_this_link": False, "note": text}
+    try:
+        from src.tools.knowledge_base import get_kb
+
+        kb = get_kb()
+        if kb is not None:
+            kb.append(tool="graph_preinit_seed_aero", server="framework", agent="framework", role="graph pre-init",
+                      status="success", outputs={"aero_provenance": dict(store["aero_provenance"])}, note=text,
+                      discipline="aerodynamics")
+    except Exception as exc:      # pragma: no cover - recording must never stop pre-init
+        logger.warning("[B344] could not record the seeded aero in the knowledge base: %s", exc)
+
+
+def seed_from_design(design: dict, source: str = "the last flown link") -> list[str]:
     """Put a recorded design.json's discipline results into the data plane (as scripts/stage_sandbox.py).
 
     B306: a mass result is seeded only when its sizing converged (audit F4: no CPACS-mass fallback), the aero keeps
@@ -110,6 +143,7 @@ def seed_from_design(design: dict) -> list[str]:
         store["aero_solve_trimmed"] = aero.get("solve_trimmed")
         store["aero_solve_target_cl"] = aero.get("solve_target_cl")
         store["aero_solve_converged"] = aero.get("solve_converged")
+        _record_seeded_aero(store, aero, source)
         seeded.append("aero")
         producers.append("su2")
     st = design.get("structures") or {}
@@ -283,7 +317,7 @@ def prepare(carry_over: dict | None) -> dict:
             if cache.is_file():
                 report["results"] = f"cached baseline {cache.name}"
                 cached = json.loads(cache.read_text())
-                report["seeded"] = seed_from_design(cached)
+                report["seeded"] = seed_from_design(cached, source=f"the cached baseline {cache.name}")
                 _resize_engine(cached, report)
             else:
                 report["results"] = "baseline computed now (first run for this CPACS)"

@@ -73,6 +73,10 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
             "solve_trimmed": store.get("aero_solve_trimmed"),
             "solve_converged": store.get("aero_solve_converged"),
             "solve_residual": store.get("aero_solve_residual"),
+            # B344: the mass / wing area the solve was trimmed for, and whether it was solved on this link or seeded
+            # from the last flown link (graph pre-init) with that link's own trim target.
+            "solve_trim_basis": store.get("aero_solve_trim_basis"),
+            "provenance": store.get("aero_provenance"),
             # Drag model decision 2026-11-18: SU2 is solved and recorded; the mission flies aviary's FLOPS drag.
             "drag_coupling": "solved, not coupled to drag (the mission flies aviary's FLOPS drag)",
             # C5 (B284) + drag decision (B324), merged: what aviary ACCEPTED for the design CL and the drag factor,

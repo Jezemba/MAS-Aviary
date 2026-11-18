@@ -2081,6 +2081,10 @@ def note_su2_trim(tool_name: str, resolved: dict, result) -> None:
             target = resolved.get("target_cl")
     _design_state.data_store.setdefault("su2_session_trim", {})[str(session)] = (
         float(target) if isinstance(target, (int, float)) else None)
+    # B344: and the mass / wing area that target was computed for (the framework's, B275), per session.
+    basis = _design_state.data_store.get("aero_target_cl_basis")
+    _design_state.data_store.setdefault("su2_session_trim_basis", {})[str(session)] = (
+        dict(basis) if isinstance(target, (int, float)) and isinstance(basis, dict) else None)
 
 
 def _note_solve_convergence(reported, rows) -> None:
@@ -2136,6 +2140,9 @@ def _note_solve_trim() -> None:
         store["aero_solve_target_cl"] = None
         store["aero_solve_trimmed"] = None
     store["aero_solve_session"] = sid
+    # B344: a solve captured on this link: its own trim basis; a seeded aero's provenance no longer applies.
+    store["aero_solve_trim_basis"] = (store.get("su2_session_trim_basis") or {}).get(str(sid)) if sid is not None else None
+    store["aero_provenance"] = {"source": "solved on this link", "solved_on_this_link": True}
 
 
 def _induced_floor(cl: float) -> float | None:
