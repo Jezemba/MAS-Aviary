@@ -101,6 +101,12 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
                        "tails_source": (store.get("geometry_tails") or {}).get("_source")
                        if isinstance(store.get("geometry_tails"), dict) else None,
                        "tail_error": store.get("tail_geometry_error"),
+                       # J2: the measured wing t/c mass-mcp sized with; the framework puts it on aviary.
+                       "wing_thickness_to_chord": (store["geometry_wing_tc"].get("Aircraft.Wing.THICKNESS_TO_CHORD")
+                                                   if isinstance(store.get("geometry_wing_tc"), dict) else None),
+                       "wing_thickness_to_chord_source": (store["geometry_wing_tc"].get("_source")
+                                                          if isinstance(store.get("geometry_wing_tc"), dict) else None),
+                       "wing_thickness_to_chord_error": store.get("wing_tc_error"),
                        "wing_mass_source": store.get("mass_wing_source")},
         "propulsion": {"sfc_cruise": cycle.get("prop.sfc_cruise"), "fn_lbf": cycle.get("prop.fn_lbf"),
                        "cycle_converged": store.get("prop_cycle_converged")},

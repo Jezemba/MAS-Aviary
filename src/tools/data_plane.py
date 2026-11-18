@@ -621,7 +621,8 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
                   if failed else "the reply has no mass_breakdown.components")
         store["mass_estimate_error"] = f"estimate_mass failed: {reason}"
         store["mass_sizing_converged"] = False
-        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source", "geometry_tails", "tail_geometry_error"):
+        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source", "geometry_tails", "tail_geometry_error",
+                    "geometry_wing_tc", "wing_tc_error"):          # J2: the measured wing t/c goes with the mass
             store.pop(key, None)
         reg = store.get(_coupling.REGISTRY_KEY) or {}
         for name in ("mass.wing_kg", "mass.mtom_kg"):
@@ -663,7 +664,8 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
         message = "; ".join(problems)
         store["mass_estimate_error"] = message
         store["mass_sizing_converged"] = converged
-        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source", "geometry_tails", "tail_geometry_error"):
+        for key in ("mass_wing_kg", "mass_mtom_kg", "mass_wing_source", "geometry_tails", "tail_geometry_error",
+                    "geometry_wing_tc", "wing_tc_error"):          # J2: the measured wing t/c goes with the mass
             store.pop(key, None)
         reg = store.get(_coupling.REGISTRY_KEY) or {}
         for name in ("mass.wing_kg", "mass.mtom_kg"):
@@ -692,6 +694,15 @@ def _capture_wing_mass_from_mass_estimate(tool_name: str, data: dict) -> None:
     else:
         store.pop("geometry_tails", None)
         store["tail_geometry_error"] = tail_error
+    # J2 decision (Jessica 2026-11-18): the wing t/c mass-mcp measured on this file is the one aviary flies.
+    wing_tc, wing_tc_error = _wing_tc_from_mass_estimate(breakdown)
+    if wing_tc:
+        wing_tc["_sized_on"] = data.get("cpacs_file_path")
+        store["geometry_wing_tc"] = wing_tc
+        store.pop("wing_tc_error", None)
+    else:
+        store.pop("geometry_wing_tc", None)
+        store["wing_tc_error"] = wing_tc_error
     # B84: the design this mass was sized for, plus the CPACS it actually read -- the
     # baseline fixture and the exported morph are easy to confuse (B21/B30).
     from src.tools.coupling_contract import note_capture
@@ -1026,7 +1037,7 @@ def _reapply_source(session_id) -> dict:
     held, _ = aviary_holds(session_id)
     source = held or dict(store.get("design_params_applied") or {})
     derived = set(store.get("design_params_derived") or ())
-    return {k: v for k, v in source.items() if k not in derived and k not in TAIL_KEYS}
+    return {k: v for k, v in source.items() if k not in derived and k not in TAIL_KEYS and k != WING_TC_KEY}
 
 
 def _on_aviary_session(session_id) -> None:
@@ -1727,6 +1738,90 @@ def _tails_from_mass_estimate(breakdown: dict) -> tuple[dict | None, str | None]
     record["_source"] = "mass-mcp estimate_mass sizing_report.tails ({}; {})".format(
         (tails.get("horizontal") or {}).get("uid"), (tails.get("vertical") or {}).get("uid"))
     return record, None
+
+
+# J2 decision (Jessica 2026-11-18): aviary flies the wing's MEASURED thickness-to-chord, the chord-weighted mean mass-mcp
+# sizes the wing with (sizing_report.wing_stations.tc_avg; D150 0.1164), not the bench file's 0.13 (aviary-mcp J2
+# b82381b accepts the parameter). Framework-owned exactly like the G1 tails: captured with a usable mass estimate (same
+# file, same staleness), withdrawn with an unusable one, put on every set_aircraft_parameters, agents' values refused,
+# required by the mission, part of the cruise-point design basis and of design.json. AVION_CPACS_WING_TC=0 flies the
+# bench value (regression runs against an aviary-mcp without the parameter).
+WING_TC_KEY = "Aircraft.Wing.THICKNESS_TO_CHORD"
+_WING_TC_PLAUSIBLE = (0.02, 0.30)
+
+
+def cpacs_wing_tc_enabled() -> bool:
+    return os.environ.get("AVION_CPACS_WING_TC", "1") != "0"
+
+
+def _wing_tc_from_mass_estimate(breakdown: dict) -> tuple[dict | None, str | None]:
+    """The measured wing t/c mass-mcp sized with (mass_breakdown.sizing_report.wing_stations.tc_avg), as an aviary
+    parameter, or the reason there is none. Never a default."""
+    report = breakdown.get("sizing_report") if isinstance(breakdown.get("sizing_report"), dict) else {}
+    stations = report.get("wing_stations") if isinstance(report.get("wing_stations"), dict) else None
+    if not stations:
+        return None, ("mass-mcp's reply has no measured wing stations (mass_breakdown.sizing_report.wing_stations; "
+                      "mass-mcp fix/a7-quarter-chord-sweep 5b7368c or later reports them)")
+    raw = stations.get("tc_avg")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None, f"mass-mcp's measured wing t/c is not a number (sizing_report.wing_stations.tc_avg {raw!r})"
+    lo, hi = _WING_TC_PLAUSIBLE
+    if not (math.isfinite(value) and lo <= value <= hi):
+        return None, f"mass-mcp's measured wing t/c {value!r} is outside [{lo}, {hi}]"
+    return {WING_TC_KEY: value, "_source": "mass-mcp estimate_mass sizing_report.wing_stations.tc_avg"}, None
+
+
+def _inject_wing_tc(resolved: dict) -> None:
+    """set_aircraft_parameters: the wing t/c is the measured one (J2); a caller cannot set it (WING_TC_FROM_GEOMETRY),
+    the same rule as the tails (G1): a different value, or any value while none is measured, refuses the call."""
+    if _design_state is None or not cpacs_wing_tc_enabled():
+        return
+    parameters = resolved.get("parameters")
+    if isinstance(parameters, str):
+        try:
+            parameters = json.loads(parameters)
+        except (json.JSONDecodeError, TypeError):
+            return
+    if parameters is None:
+        parameters = {}
+    if not isinstance(parameters, dict):
+        return
+    record = _design_state.data_store.get("geometry_wing_tc")
+    measured = record.get(WING_TC_KEY) if isinstance(record, dict) else None
+    if WING_TC_KEY in parameters:
+        asked = parameters[WING_TC_KEY]
+        try:
+            same = measured is not None and abs(float(asked) - measured) <= _TAIL_TOLERANCE * abs(measured)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            if getattr(_call_ctx, "refusal", None) is None:
+                why = ("the wing thickness-to-chord is the measured mean t/c of the current CPACS wing (the value "
+                       "mass-mcp sizes the wing with); the framework sets it on every call")
+                if measured is None:
+                    why += ", and no usable mass estimate of the current design has measured it yet"
+                _refuse_call("WING_TC_FROM_GEOMETRY",
+                             f"set_aircraft_parameters was not run: {WING_TC_KEY} cannot be set: {why}. The airfoil is "
+                             "not a design variable. Send the call again without this key.",
+                             asked={WING_TC_KEY: str(asked)}, framework_values={WING_TC_KEY: measured})
+            return
+    if measured is None:
+        return
+    parameters[WING_TC_KEY] = measured
+    resolved["parameters"] = parameters
+
+
+def _wing_tc_signature() -> float | None:
+    """The measured wing t/c the design carries (J2), as part of what aviary's cruise L/D depends on."""
+    record = _design_state.data_store.get("geometry_wing_tc") if _design_state is not None else None
+    if not cpacs_wing_tc_enabled() or not isinstance(record, dict):
+        return None
+    try:
+        return round(float(record[WING_TC_KEY]), 6)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _inject_tail_geometry(resolved: dict) -> None:
@@ -3666,6 +3761,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
         _inject_tail_geometry(resolved)
+        _inject_wing_tc(resolved)
         _inject_phase_k_wing_mass(resolved)
         _inject_engine_scale(resolved)
     if tool_name == "set_inputs" and _design_state and mcp_name == "pycycle":
@@ -3842,10 +3938,11 @@ def _tails_signature() -> list | None:
 
 def design_basis() -> list:
     """B340 (review #1): the design an aviary cruise point must belong to -- the CURRENT geometry (coupling_contract's
-    design fingerprint: the CPACS the design session was opened from and its morph epoch) and the measured tails."""
+    design fingerprint: the CPACS the design session was opened from and its morph epoch), the measured tails and (J2)
+    the measured wing t/c."""
     from src.tools.coupling_contract import current_design_fingerprint
 
-    return [current_design_fingerprint(), _tails_signature()]
+    return [current_design_fingerprint(), _tails_signature(), _wing_tc_signature()]
 
 
 def _cycle_sizing_key() -> list | None:
@@ -4727,6 +4824,23 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
                     off.append(f"{key} {have!r} (measured {tails[key]:.6g})")
             if off:
                 problems.append("aviary does not hold the measured tails: " + ", ".join(off))
+    if cpacs_wing_tc_enabled():
+        # J2: the mission flies the measured wing t/c, never the bench file's 0.13.
+        record = store.get("geometry_wing_tc")
+        measured = record.get(WING_TC_KEY) if isinstance(record, dict) else None
+        if measured is None:
+            problems.append("the measured wing thickness-to-chord of the current geometry is not known ("
+                            + (store.get("wing_tc_error") or "it comes with a usable estimate_mass of the current "
+                               "design") + ")")
+        else:
+            have = held.get(WING_TC_KEY)
+            try:
+                ok = abs(float(have) - measured) <= _TAIL_TOLERANCE * abs(measured)
+            except (TypeError, ValueError):
+                ok = False
+            if not ok:
+                problems.append(f"aviary does not hold the measured wing thickness-to-chord: {WING_TC_KEY} {have!r} "
+                                f"(measured {measured:.6g})")
     if not problems:
         return None
     return {

@@ -53,7 +53,9 @@ def baseline_cpacs() -> str:
 # fallbacks, CPACS-mass Fn_DES); they are left on disk (nothing is deleted) and never read again. The trim mass is
 # part of the key too, so a changed canonical baseline.sized_mtom_kg never reuses a cache trimmed at another mass.
 # G1 (2026-11-18): bumped again -- a "b306" cache has no measured tails (structures.tails); left on disk, never read.
-BASELINE_VERSION = "b306g1"
+# J2 (2026-11-18): bumped again -- a "b306g1" cache has no measured wing t/c (structures.wing_thickness_to_chord) and
+# was flown with J1-less mission bounds; left on disk, never read.
+BASELINE_VERSION = "b306g1j2"
 
 
 def _cache_path(cpacs: str) -> Path:
@@ -163,6 +165,17 @@ def seed_from_design(design: dict, source: str = "the last flown link") -> list[
             store["geometry_tails"]["_source"] = f"graph pre-init ({st.get('tails_source')})"
         else:
             store["tail_geometry_error"] = "the seeded design.json has no measured tails (structures.tails)"
+        # J2: the measured wing t/c comes with the same mass result; without it the mission is refused until
+        # estimate_mass runs on this design.
+        from src.tools.data_plane import WING_TC_KEY
+
+        tc = st.get("wing_thickness_to_chord")
+        if isinstance(tc, (int, float)) and not isinstance(tc, bool):
+            store["geometry_wing_tc"] = {WING_TC_KEY: float(tc),
+                                         "_source": f"graph pre-init ({st.get('wing_thickness_to_chord_source')})"}
+        else:
+            store["wing_tc_error"] = ("the seeded design.json has no measured wing thickness-to-chord "
+                                      "(structures.wing_thickness_to_chord)")
         seeded.append("structures")
         producers.append("mass")
     elif st:

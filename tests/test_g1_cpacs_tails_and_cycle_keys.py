@@ -25,7 +25,7 @@ D150_TAILS = {
 
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
-    for var in ("AVION_CPACS_TAILS", "AVION_REQUIRE_COUPLED_INPUTS"):
+    for var in ("AVION_CPACS_TAILS", "AVION_CPACS_WING_TC", "AVION_REQUIRE_COUPLED_INPUTS"):
         monkeypatch.delenv(var, raising=False)
     state = DesignState()
     monkeypatch.setattr(dp, "_design_state", state)
@@ -39,7 +39,8 @@ def fresh(monkeypatch):
 
 
 def _estimate(tails=D150_TAILS):
-    report = {"driver": {"converged": True}}
+    # J2: mass-mcp sizing_report.wing_stations (D150 chord-weighted t/c 0.1164, mass-mcp B303), which the framework flies.
+    report = {"driver": {"converged": True}, "wing_stations": {"input_station_dist": [0.0, 0.3, 1.0], "tc_avg": 0.1164}}
     if tails is not None:
         report["tails"] = tails
     return {"success": True, "cpacs_file_path": "/x/D150.xml", "mass_breakdown": {
@@ -178,6 +179,7 @@ def test_g1_the_graph_cache_version_moved_past_b306():
 
 def test_g1_switch_off_restores_the_bench_tails_explicitly(fresh, monkeypatch):
     monkeypatch.setenv("AVION_CPACS_TAILS", "0")
+    monkeypatch.setenv("AVION_CPACS_WING_TC", "0")          # J2 switch tested in test_j2_wing_tc_framework
     dp._capture_wing_mass_from_mass_estimate("estimate_mass", _estimate())
     out, refusal = _set({})
     assert refusal is None and not any(k in out["parameters"] for k in dp.TAIL_KEYS)
