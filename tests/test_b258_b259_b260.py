@@ -127,7 +127,8 @@ def test_a_session_closed_with_no_deck_says_what_to_do(plane):
 def test_closing_an_engine_not_sized_on_this_design_builds_no_deck(plane):
     state, stubs, _ = plane
     _sized_engine(state)
-    coupling.put_var(state, "aero.cd_cruise", 0.0250, source_tool="run_su2_solver")  # the drag changed since
+    # the drag changed since (drag model decision: aviary's cruise point sizes the engine)
+    state.data_store["aviary_cruise_point"] = dict(state.data_store["aviary_cruise_point"], lift_to_drag=15.0)
     dp.resolve_request("close_cycle_model", {"session_id": "cyc1"})
     assert stubs["generate_engine_deck"].calls == []
 

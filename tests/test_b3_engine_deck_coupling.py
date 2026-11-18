@@ -196,8 +196,8 @@ def test_coupled_is_judged_when_the_mission_flew(plane):
     _sized_engine(state)
     dp.resolve_request("run_simulation", {"session_id": "av1"})
     dp._capture_mission_engine("run_simulation", {"engine": {"deck": DECK["deck_file"], "external_deck": True}})
-    coupling.put_var(state, "mass.mtom_kg", 80000.0, source_tool="estimate_mass")   # design moves on afterwards
-    state.data_store["mass_mtom_kg"] = 80000.0
+    # the design moves on afterwards (drag model decision: the engine is sized on aviary's cruise point)
+    state.data_store["aviary_cruise_point"] = dict(state.data_store["aviary_cruise_point"], lift_to_drag=15.0)
     assert not dp.engine_is_current()
     assert coupling_contract.coupling_status()["propulsion_coupled"] is True        # it was current when flown
     dp._capture_mission_engine("run_simulation", {"engine": {"deck": DECK["deck_file"], "external_deck": True}})

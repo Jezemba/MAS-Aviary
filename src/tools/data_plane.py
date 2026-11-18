@@ -4106,7 +4106,10 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
         problems.append(f"aviary did not take the take-off mass: {store['takeoff_mass_error']}")
     if store.get("engine_sizing_error") and engine_is_current() is False:
         problems.append(f"the engine could not be sized: {store['engine_sizing_error']}")
-    if engine_is_current() and (store.get("engine_injected_key") or {}).get(sid) != _engine_scale_key(sid):
+    from src.tools import coupling as _cpl
+
+    if engine_is_current() and _cpl.get_var(_design_state, "prop.fn_lbf") is not None \
+            and (store.get("engine_injected_key") or {}).get(sid) != _engine_scale_key(sid):
         problems.append("aviary does not hold the current engine scale (the framework's set of it was not accepted)")
     version = int(store.get("_coupled_version") or 0)
     if version > 0 and store.get("_coupled_version_applied") != version:
