@@ -262,6 +262,8 @@ def register_presession(mcp_name: str, session_id: str | None) -> None:
         )
     _design_state.sessions[mcp_name] = session_id
     _presessions[mcp_name] = session_id
+    if mcp_name == "aviary":
+        _on_aviary_session(session_id)
 
 
 def pycycle_session_refusal(tool_name: str, kwargs: dict) -> dict | None:
@@ -922,22 +924,71 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
     _call_ctx.engine_pending = None
     if pending and not (data.get("success") is False or data.get("error_code")):
         _design_state.data_store.setdefault("engine_injected_key", {})[pending[0]] = pending[1]
+    sid = getattr(_call_ctx, "aviary_set_sid", None)
+    _call_ctx.aviary_set_sid = None
     applied = data.get("applied")
     if not isinstance(applied, list):
         return
-    current = dict(_design_state.data_store.get("design_params_applied") or {})
+    store = _design_state.data_store
+    # B335: what a session holds is per aviary session -- a new session holds nothing until it is set.
+    by_session = store.setdefault("design_params_applied_by_session", {})
+    current = dict((by_session.get(sid) if sid else store.get("design_params_applied")) or {})
     for item in applied:
         if isinstance(item, dict) and item.get("name") is not None and "new_value" in item:
             current[str(item["name"])] = item["new_value"]
             if item.get("derived"):     # aviary computes it (SPAN from AREA and AR); not settable
-                derived = set(_design_state.data_store.get("design_params_derived") or ())
-                _design_state.data_store["design_params_derived"] = sorted(derived | {str(item["name"])})
+                derived = set(store.get("design_params_derived") or ())
+                store["design_params_derived"] = sorted(derived | {str(item["name"])})
     if current:
-        _design_state.data_store["design_params_applied"] = current
-    _mark_coupled_applied()
+        if sid:
+            by_session[sid] = current
+            store["design_params_applied_session"] = sid
+        store["design_params_applied"] = current          # the design last accepted (design.json, guards)
+    _mark_coupled_applied(sid=sid)
 
 
-def _mark_coupled_applied(reply=None) -> None:
+def aviary_holds(session_id) -> tuple[dict, int | None]:
+    """B335: (the parameters this aviary session accepted, the coupled-results version it holds).
+
+    Keyed by session: a session that was never set holds nothing ({}, None), so a new or replacement session must be
+    re-applied before a mission. Only when no set was ever recorded per session (no session id known for any set)
+    are the store-wide values returned (the pre-B335 record).
+    """
+    store = _design_state.data_store if _design_state is not None else {}
+    by_session = store.get("design_params_applied_by_session") or {}
+    versions = store.get("_coupled_version_applied_by_session") or {}
+    if by_session or versions:
+        sid = str(session_id) if session_id else None
+        return dict(by_session.get(sid) or {}), versions.get(sid)
+    return dict(store.get("design_params_applied") or {}), store.get("_coupled_version_applied")
+
+
+def _reapply_source(session_id) -> dict:
+    """The design to (re-)apply to an aviary session: what it holds, else the design last accepted by any session
+    (a replacement session takes the run's design over). Without derived keys (aviary refuses the whole call,
+    READ_ONLY_PARAMETER) and without the tails (injected fresh, G1)."""
+    store = _design_state.data_store
+    held, _ = aviary_holds(session_id)
+    source = held or dict(store.get("design_params_applied") or {})
+    derived = set(store.get("design_params_derived") or ())
+    return {k: v for k, v in source.items() if k not in derived and k not in TAIL_KEYS}
+
+
+def _on_aviary_session(session_id) -> None:
+    """B335: the aviary session in use changed -- design.json's mirror shows what THAT session holds."""
+    if _design_state is None or not session_id:
+        return
+    store = _design_state.data_store
+    by_session = store.get("design_params_applied_by_session") or {}
+    if not by_session:
+        return
+    sid = str(session_id)
+    store["design_params_applied"] = dict(by_session.get(sid) or {})
+    store["design_params_applied_session"] = sid
+    store["_coupled_version_applied"] = (store.get("_coupled_version_applied_by_session") or {}).get(sid)
+
+
+def _mark_coupled_applied(reply=None, sid=None) -> None:
     """B272: aviary now holds the coupled results captured so far.
 
     Called for a successful set_aircraft_parameters (an "applied" list; a refused call has none) and after the
@@ -949,7 +1000,10 @@ def _mark_coupled_applied(reply=None) -> None:
         data = _as_dict(reply)
         if data.get("success") is False or data.get("error_code") or data.get("error"):
             return
-    _design_state.data_store["_coupled_version_applied"] = int(_design_state.data_store.get("_coupled_version") or 0)
+    version = int(_design_state.data_store.get("_coupled_version") or 0)
+    _design_state.data_store["_coupled_version_applied"] = version
+    if sid:     # B335: per aviary session
+        _design_state.data_store.setdefault("_coupled_version_applied_by_session", {})[str(sid)] = version
 
 
 
@@ -2355,6 +2409,8 @@ def _capture_session(tool_name: str, data: dict) -> None:
                            mcp_name, session_id, pinned)
             return
         _design_state.sessions[mcp_name] = session_id
+        if mcp_name == "aviary":
+            _on_aviary_session(session_id)
         logger.info("Captured session: sessions[%s] = %s", mcp_name, session_id)
 
 
@@ -2538,6 +2594,8 @@ def _auto_create_session(mcp_name: str) -> str | None:
         sid = (data or {}).get("session_id")
         if sid:
             _design_state.sessions[mcp_name] = sid
+            if mcp_name == "aviary":
+                _on_aviary_session(sid)
             logger.info(
                 "Auto-created %s session %s (%s was never called)",
                 mcp_name, sid, tool_name,
@@ -2610,10 +2668,8 @@ def _reapply_current_engine(resolved: dict) -> None:
     try:
         # Only settable parameters go back: aviary refuses a whole call that names a derived one (READ_ONLY_PARAMETER),
         # and the mission then flew the previous engine scale (B3 smoke test 2026-11-01: 1.6589 flown, 1.6690 meant).
-        derived = set(store.get("design_params_derived") or ())
-        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived
-                  and k not in TAIL_KEYS}   # G1: the tails are injected fresh (the measured ones)
-        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
+        params = _reapply_source(sid)        # B335: this session's design (G1: tails injected fresh)
+        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params), sid=sid)
         logger.info("[B187] re-applied the design to aviary session %s with the current engine before "
                     "run_simulation", sid)
     except Exception as exc:  # pragma: no cover - never break a run on this
@@ -2633,27 +2689,26 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
         return
     store = _design_state.data_store
     wing_kg = store.get("mass_wing_kg")
-    applied = (store.get("design_params_applied") or {}).get("Aircraft.Wing.MASS")
+    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
+    held, held_version = aviary_holds(sid)       # B335: what THIS session holds
+    applied = held.get("Aircraft.Wing.MASS")
     mass_behind = isinstance(wing_kg, (int, float)) and not (
         isinstance(applied, (int, float)) and abs(float(applied) - float(wing_kg)) <= 0.01)
     # l20c networked_iterative_feedback link 11 (2026-11-14): the parameters were set BEFORE SU2 finished (no CL or
     # drag factor to inject yet), SU2 then solved, and the mission flew aviary's default drag (16,602 kg). Any coupled
     # result captured after aviary's last successful set call is re-applied the same way.
     version = int(store.get("_coupled_version") or 0)
-    results_behind = version > 0 and store.get("_coupled_version_applied") != version
+    results_behind = version > 0 and held_version != version
     if not (mass_behind or results_behind):
         return
     setter = (_registered_tools or {}).get("set_aircraft_parameters")
     if setter is None:
         return
-    sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary"))
     try:
-        derived = set(store.get("design_params_derived") or ())
-        params = {k: v for k, v in (store.get("design_params_applied") or {}).items() if k not in derived
-                  and k not in TAIL_KEYS}   # G1: the tails are injected fresh (the measured ones)
-        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params))
+        params = _reapply_source(sid)        # B335: this session's design, else the run's (G1: tails injected fresh)
+        _mark_coupled_applied(setter.forward(session_id=sid, parameters=params), sid=sid)
         logger.info("[B272] re-applied the design to aviary session %s before run_simulation (wing mass %s -> %s, "
-                    "coupled results %s, aviary had %s)", sid, applied, wing_kg, version, store.get("_coupled_version_applied"))
+                    "coupled results %s, aviary had %s)", sid, applied, wing_kg, version, held_version)
     except Exception as exc:  # pragma: no cover - never break a run on this
         logger.warning("[B272] could not re-apply the current wing mass to %s: %s", sid, exc)
 
@@ -2880,12 +2935,12 @@ def _restore_aviary_session(session_id: str) -> None:
             logger.info("[B113] re-applied the canonical mission to replacement session %s", session_id)
     except Exception as exc:      # pragma: no cover - recovery must never break a run
         logger.warning("[B113] could not re-apply the mission to %s: %s", session_id, exc)
-    applied = ((_design_state.data_store.get("design_params_applied") or {})
-               if _design_state is not None else {})
+    # B335: the run's design without derived keys or tails (the old code sent SPAN, which aviary refuses whole).
+    applied = _reapply_source(session_id) if _design_state is not None else {}
     setter = tools.get("set_aircraft_parameters")
     if applied and setter is not None:
         try:
-            setter.forward(session_id=session_id, parameters=dict(applied))
+            _mark_coupled_applied(setter.forward(session_id=session_id, parameters=dict(applied)), sid=session_id)
             logger.info("[B113] re-applied %d design parameter(s) to %s", len(applied), session_id)
         except Exception as exc:  # pragma: no cover
             logger.warning("[B113] could not re-apply design parameters to %s: %s", session_id, exc)
@@ -3437,6 +3492,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _inject_takeoff_mass(resolved)
     if tool_name == "set_aircraft_parameters" and _design_state:
         _call_ctx.engine_pending = None
+        _call_ctx.aviary_set_sid = str(resolved.get("session_id") or (_design_state.sessions or {}).get("aviary") or "") or None
         _apply_geometry_authority(resolved)
         _inject_phase_h_aero(resolved)
         _inject_tail_geometry(resolved)
@@ -3543,11 +3599,14 @@ def _refuse_unknown_cycle_keys(resolved: dict) -> None:
 
 
 def _inject_cycle_flight_condition(resolved: dict) -> None:
-    """Size the engine at the mission cruise point (B132).
+    """Size the engine at the mission cruise point (B132); the condition is the framework's (B333).
 
-    pycycle's HBTF defaults to fc.alt 35,000 ft / fc.MN 0.8, while SU2 and the mission fly the
-    canonical cruise (M0.78, FL330). Fill fc.alt / fc.MN from the canonical mission when the caller
-    did not set them; a value the caller chose explicitly always wins.
+    pycycle's HBTF defaults to fc.alt 35,000 ft / fc.MN 0.8, while SU2 and the mission fly the canonical cruise
+    (M0.78, FL330). fc.alt / fc.MN are put on every set_inputs from the canonical mission. B333 (coordinator
+    2026-11-18): the design table lists the cruise Mach, altitude and ISA offset (fc.dTs, 0) as fixed conditions, but
+    a caller's value used to win, so an engine could be sized at another flight condition. A caller value that differs
+    (relative 1e-9; fc.dTs absolute 1e-9) now refuses the call (FLIGHT_CONDITION_FIXED), the same rule as the tails
+    (TAIL_FROM_GEOMETRY). fc.dTs is checked, not injected (pyCycle's own default is the table's 0).
     """
     values = resolved.get("values")
     if isinstance(values, str):
@@ -3555,21 +3614,48 @@ def _inject_cycle_flight_condition(resolved: dict) -> None:
             values = json.loads(values)
         except (json.JSONDecodeError, TypeError):
             return
+    if values is None:
+        values = {}
     if not isinstance(values, dict):
         return
     try:
         from src.config.canonical import load_canonical
 
         mission = load_canonical().get("mission", {}) or {}
-    except Exception:      # pragma: no cover - never block a cycle on config
+        fixed = {"fc.alt": float(mission["cruise_altitude_ft"]), "fc.MN": float(mission["cruise_mach"])}
+    except Exception as exc:
+        _refuse_call("CANONICAL_CYCLE_SETTINGS_UNAVAILABLE",
+                     f"set_inputs was not run: the framework could not load the study's cruise condition ({exc}). "
+                     "Nothing an agent can change; report it.")
         return
-    added = {}
-    for name, key in (("fc.alt", "cruise_altitude_ft"), ("fc.MN", "cruise_mach")):
-        if name not in values and mission.get(key) is not None:
-            values[name] = float(mission[key])
-            added[name] = values[name]
+    checked = dict(fixed, **{"fc.dTs": 0.0})
+    conflicts = {}
+    for name, value in checked.items():
+        if name not in values:
+            continue
+        try:
+            same = abs(float(values[name]) - value) <= 1e-9 * max(1.0, abs(value))
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            conflicts[name] = {"asked": values[name], "framework": value}
+    if conflicts:
+        if getattr(_call_ctx, "refusal", None) is None:
+            _refuse_call("FLIGHT_CONDITION_FIXED",
+                         "set_inputs was not run: " + ", ".join(
+                             f"{k} {v['asked']!r} (the study's value is {v['framework']:g})"
+                             for k, v in sorted(conflicts.items()))
+                         + ". The engine is designed at the mission's cruise condition (Mach "
+                         f"{fixed['fc.MN']:g}, {fixed['fc.alt']:g} ft, ISA offset 0), which is fixed for the study; "
+                         "the framework sets it on every call. Send the call again without "
+                         + ("this key." if len(conflicts) == 1 else "these keys."),
+                         asked={k: str(v["asked"]) for k, v in conflicts.items()},
+                         framework_values={k: v["framework"] for k, v in conflicts.items()})
+        return
+    added = {k: v for k, v in fixed.items() if k not in values}
+    values.update(fixed)
+    resolved["values"] = values
     if added:
-        resolved["values"] = values
         logger.info("[B132] pycycle design point from the mission: %s", added)
 
 
@@ -4039,9 +4125,11 @@ def _inject_phase_h_aero(resolved: dict) -> None:
 def _capture_cruise_point(tool_name: str, data: dict) -> None:
     """Record aviary's FLOPS cruise point of the current design, which sizes the engine (drag model decision).
 
-    Contract with aviary-mcp (coordinator, 2026-11-18; field names to be confirmed by the aviary-mcp agent): a reply
-    -- of set_aircraft_parameters or of a dedicated cruise-point tool -- carries ``cruise_point: {mach, altitude_ft,
-    mass_kg, cl, cd, lift_to_drag, engine_scale_used, design_fingerprint}``: FLOPS aerodynamics of the session's
+    Contract with aviary-mcp, confirmed by aviary-mcp fix/final-rerun 3c4e6b6 (B305): the tool get_cruise_point(session_id,
+    mass_kg, mach, altitude_ft, engine_scale) replies ``cruise_point: {mach, altitude_ft, mass_kg, cl, cd, lift_to_drag,
+    engine_scale_used, cd_depends_on_engine_scale, design_fingerprint}`` plus a top-level ``design_fingerprint``
+    (errors CRUISE_POINT_INPUT / CRUISE_POINT_ERROR); set_aircraft_parameters, run_simulation and get_results carry the
+    top-level ``design_fingerprint`` of the design aviary holds. The point is FLOPS aerodynamics of the session's
     current design at the stated condition, no trajectory and no optimizer. Recorded with the aviary-reported
     fingerprint of the design it belongs to. Any aviary reply's top-level ``design_fingerprint`` updates which design
     aviary holds now.
@@ -4080,7 +4168,7 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     coupling.put_var(_design_state, "aviary.cruise_l_over_d", ld, source_tool=tool_name)
 
 
-# The aviary-mcp tool that evaluates the cruise point on demand (contract above; name to be confirmed).
+# The aviary-mcp tool that evaluates the cruise point on demand (contract above; aviary-mcp 3c4e6b6).
 CRUISE_POINT_TOOL = "get_cruise_point"
 
 
@@ -4271,13 +4359,14 @@ def mission_input_refusal(tool_name: str, resolved: dict) -> dict | None:
             and (store.get("engine_injected_key") or {}).get(sid) != _engine_scale_key(sid):
         problems.append("aviary does not hold the current engine scale (the framework's set of it was not accepted)")
     version = int(store.get("_coupled_version") or 0)
-    if version > 0 and store.get("_coupled_version_applied") != version:
-        problems.append("results produced since aviary's last accepted set_aircraft_parameters were not applied "
-                        "(the framework's re-apply was not accepted)")
+    held, held_version = aviary_holds(sid)       # B335: what the session this mission flies on holds
+    if version > 0 and held_version != version:
+        problems.append(f"results produced since aviary session {sid}'s last accepted set_aircraft_parameters were "
+                        "not applied to it (the framework's re-apply was not accepted, or the session is new)")
     if cpacs_tails_enabled():
         # G1: the mission flies the measured CPACS tails, never the bench file's 355 / 284 ft^2.
         tails = store.get("geometry_tails")
-        applied = store.get("design_params_applied") or {}
+        applied = held
         if not tails:
             problems.append("the measured tails of the current geometry are not known ("
                             + (store.get("tail_geometry_error") or "they come with a usable estimate_mass of the "

@@ -372,15 +372,9 @@ def test_c5_a_refused_set_is_not_recorded_as_injected():
     assert doc["aero"]["drag_coupling"].startswith("solved, not coupled to drag")
 
 
-def test_c5_a_later_refused_set_leaves_the_earlier_accepted_values():
-    from src.tools.design_json import build_design
-
-    store = get_design_state().data_store
-    store["design_params_applied"] = {"Mission.Design.LIFT_COEFFICIENT": 0.55,
-                                      "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR": 1.2}
-    store["aero_injected_cl"], store["aero_injected_drag_factor"] = 0.63, 1.7   # prepared, then refused
-    assert build_design(store)["aero"]["injected_into_aviary"] == {"LIFT_COEFFICIENT": 0.55,
-                                                                   "SUBSONIC_DRAG_COEFF_FACTOR": 1.2}
+# test_c5_a_later_refused_set_leaves_the_earlier_accepted_values removed (B336, 2026-11-18): it set an SU2 design CL and
+# drag factor in aviary's applied list, which cannot happen since B324 (the framework injects neither and refuses an
+# agent's set of either, DRAG_FROM_AVIARY_MODEL). The refused-set rule is covered by the test above.
 
 
 # ---- C7: a suggestion at the current level does not tell the peers to request it --------------------------------

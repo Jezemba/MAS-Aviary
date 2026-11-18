@@ -112,10 +112,14 @@ def test_set_inputs_gets_the_mission_flight_condition():
     assert out["values"]["splitter.BPR"] == 8.0
 
 
-def test_an_explicit_flight_condition_is_kept():
-    out = dp.resolve_request("set_inputs", {"session_id": "p", "values": {"fc.alt": 36000.0}})
-    assert out["values"]["fc.alt"] == 36000.0
-    assert out["values"]["fc.MN"] == 0.78
+def test_an_explicit_other_flight_condition_is_refused():
+    """B333 (coordinator 2026-11-18): the design table's cruise condition is fixed; was 'an explicit value is kept'."""
+    dp.take_refusal()
+    dp.resolve_request("set_inputs", {"session_id": "p", "values": {"fc.alt": 36000.0}})
+    refusal = dp.take_refusal()
+    assert refusal["error_code"] == "FLIGHT_CONDITION_FIXED" and "fc.alt" in refusal["error"]
+    out = dp.resolve_request("set_inputs", {"session_id": "p", "values": {"fc.alt": 33000.0}})
+    assert dp.take_refusal() is None and out["values"]["fc.alt"] == 33000.0 and out["values"]["fc.MN"] == 0.78
 
 
 def test_json_string_values_are_handled():
