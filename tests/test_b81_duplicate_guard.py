@@ -37,6 +37,9 @@ def _coupled_inputs_available():
     # G1: the measured CPACS tails, and aviary holds them (set before the cruise point: B340 binds the point to them).
     tails = {k: 1.0 + i for i, k in enumerate(dp.TAIL_KEYS)}
     state.data_store["geometry_tails"] = dict(tails)
+    # J2: and the measured wing t/c (D150 0.1164), held by aviary like the tails.
+    state.data_store["geometry_wing_tc"] = {dp.WING_TC_KEY: 0.1164, "_source": "test"}
+    tails[dp.WING_TC_KEY] = 0.1164
     state.data_store["design_params_applied"] = {**(state.data_store.get("design_params_applied") or {}), **tails}
     # B306: a trimmed, converged solve (audit F7) and aviary's cruise point, on which the engine is sized.
     state.data_store.update({"aero_solve_trimmed": True, "aero_solve_target_cl": 0.52, "aero_solve_converged": True,
