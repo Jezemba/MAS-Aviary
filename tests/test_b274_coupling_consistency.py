@@ -372,7 +372,7 @@ def test_s_gr_5_the_attached_deck_reference_is_used_after_a_resize(fresh, monkey
     resolved = {"session_id": "av", "parameters": {}}
     dp._inject_engine_scale(resolved)
     assert resolved["parameters"]["Aircraft.Engine.SCALE_FACTOR"] == pytest.approx(20087.769907364054 / 5900.0)
-    assert fresh.data_store["engine_scale_basis"] == "engine deck deck_7815057d6edc9732.deck"
+    assert fresh.data_store["engine_scale_basis"] == "engine deck 7815057d6edc9732"
 
 
 def test_no_deck_attached_flies_the_bench_reference(fresh, monkeypatch):
@@ -399,5 +399,5 @@ def test_the_deck_reference_is_recorded_per_file(fresh, monkeypatch):
     fresh.sessions.update({"aviary": "av", "pycycle": "pc"})
     fresh.data_store["prop_cycle_session"] = "pc"
     dp._ensure_engine_deck({"session_id": "av"})
-    assert fresh.data_store["engine_deck_references"] == {"d1.deck": 5900.0}
+    assert fresh.data_store["engine_deck_references"] == {"d1.deck": {"reference_fn_des_lbf": 5900.0, "key": "k1"}}
     assert fresh.data_store["engine_deck_attached"] == {"av": "d1.deck"}

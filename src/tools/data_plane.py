@@ -2488,7 +2488,8 @@ def _ensure_engine_deck(resolved: dict) -> None:
     }
     # B279: the reference thrust of every deck file, so an injected engine scale is always divided by the reference of
     # the deck ATTACHED to the session (the deck that flies), whatever the cycle bookkeeping says at that moment.
-    store.setdefault("engine_deck_references", {})[out["deck_file"]] = float(out["reference_fn_des_lbf"])
+    store.setdefault("engine_deck_references", {})[out["deck_file"]] = {
+        "reference_fn_des_lbf": float(out["reference_fn_des_lbf"]), "key": out.get("design_key")}
     attached = store.setdefault("engine_deck_attached", {})
     if attached.get(sid) != out["deck_file"]:
         try:
@@ -3878,9 +3879,11 @@ def _inject_engine_scale(resolved: dict) -> None:
     deck = store.get("engine_deck") or {}
     if attached and attached not in references and deck.get("file") == attached \
             and deck.get("reference_fn_des_lbf") is not None:
-        references = {**references, attached: float(deck["reference_fn_des_lbf"])}
+        references = {**references, attached: {"reference_fn_des_lbf": float(deck["reference_fn_des_lbf"]),
+                                               "key": deck.get("key")}}
     if engine_deck_enabled() and attached and attached in references:
-        reference, basis = float(references[attached]), f"engine deck {attached}"
+        ref = references[attached]
+        reference, basis = float(ref["reference_fn_des_lbf"]), f"engine deck {ref.get('key') or attached}"
     else:
         reference, basis = coupling.BENCH_ENGINE_CRUISE_FN_LBF, "bench deck"
     scale = coupling.fn_to_aviary_engine_scale(fn_lbf, reference)
