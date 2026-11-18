@@ -232,34 +232,15 @@ def test_o_sp_6_is_refused(fresh):
     """The recorded O_SP 6 solve: fixed AOA, su2_unchecked, CD 0.00532 below CL^2/(pi e AR) = 0.0093."""
     _aero(fresh, 0.4609687869, 0.005323192215)
     fresh.data_store["aero_solve_trimmed"] = False
+    fresh.data_store["aero_solve_converged"] = True
     fresh.data_store["aero_drag_assessment"] = {"source": "su2_unchecked", "cd_reported": 0.005323192215}
     fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.788, "Aircraft.Wing.ASPECT_RATIO": 9.3693}
     refusal = aero_guard.aero_nonphysical("run_simulation", {})
     assert refusal["error_code"] == "AERO_NONPHYSICAL"
-    assert "no target CL" in refusal["error"] and "su2_unchecked" in refusal["error"]
-    assert "below the induced drag" in refusal["error"]
-
-
-@pytest.mark.parametrize("record,expect", [
-    ({"aero_solve_trimmed": False}, "no target CL"),
-    ({"aero_drag_assessment": {"source": "su2_unchecked", "cd_reported": 0.03}}, "su2_unchecked"),
-    ({"aero_drag_assessment": {"source": "su2", "aspect_ratio": 9.3693, "oswald_efficiency": 0.7732,
-                               "cd_reported": 0.008}}, "below the induced drag"),
-])
-def test_each_new_reason_alone_refuses(fresh, record, expect):
-    _aero(fresh, 0.5587, 0.03 if "su2_unchecked" in str(record) else (0.008 if "induced" in expect else 0.03))
-    fresh.data_store.update(record)
-    refusal = aero_guard.aero_nonphysical("run_simulation", {})
-    assert refusal is not None and expect in refusal["error"]
-
-
-def test_the_geometry_ar_and_su2_mcps_e_check_a_solve_without_an_assessment(fresh):
-    _aero(fresh, 0.5587, 0.009)
-    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.788, "Aircraft.Wing.ASPECT_RATIO": 9.3693}
-    floor = 0.5587 ** 2 / (math.pi * 9.3693 * aero_guard.oswald_efficiency(9.3693))
-    assert aero_guard.oswald_efficiency(9.3693) == pytest.approx(0.7732, abs=5e-4)    # the e of l20 O_SP 5
-    assert floor > 0.009
-    assert "below the induced drag" in aero_guard.aero_nonphysical("run_simulation", {})["error"]
+    assert "no target CL" in refusal["error"]
+    # Drag model decision 2026-11-18: the CD-based rules (su2_unchecked, induced drag) were removed with the drag
+    # coupling -- the trim rule is what refuses this solve now.
+    assert "su2_unchecked" not in refusal["error"] and "induced" not in refusal["error"]
 
 
 def test_a_trimmed_checked_solve_flies(fresh):
@@ -331,32 +312,6 @@ def test_graph_preinit_creates_the_su2_session_on_the_carried_mass(fresh, monkey
     assert seen["mass_at_su2"] == 89455.7
     assert report["mass_seeded_before_su2"] == 89455.7
     assert fresh.data_store["aero_solve_trimmed"] is True
-
-
-# ---- B278 (e): the friction MAC comes from the geometry, never a 4.0 m default ----------------------------
-
-def test_the_friction_mac_is_the_files_whatever_an_agent_measured(fresh, tmp_path):
-    fresh.cpacs_file_path = _wing_xml(tmp_path)
-    mac, source = dp._friction_mac()
-    assert mac == pytest.approx(13.0 / 3.0) and source.startswith("cpacs file")
-    coupling.put_var(fresh, "geom.mac_length", 4.19, source_tool="get_wing_summary")    # an agent measured
-    assert dp._friction_mac()[0] == pytest.approx(13.0 / 3.0)                        # same design, same MAC
-    re1, _ = dp._friction_inputs()
-    assert re1 == pytest.approx(coupling.reynolds_number(0.78, 33000, 13.0 / 3.0))
-
-
-def test_an_unexported_morph_uses_its_measured_mac(fresh, tmp_path):
-    fresh.cpacs_file_path = _wing_xml(tmp_path)
-    fresh.data_store["morph_unexported"] = {"session_id": "t"}
-    coupling.put_var(fresh, "geom.mac_length", 3.3, source_tool="set_high_level_parameters")
-    assert dp._friction_mac() == (3.3, "measured on the unexported morph (tigl)")
-
-
-def test_with_no_geometry_there_is_no_default_chord(fresh):
-    mac, source = dp._friction_mac()
-    assert mac is None and "none" in source
-    reynolds, _ = dp._friction_inputs()
-    assert reynolds is None
 
 
 # ---- B279 (f): the engine scale divides by the reference of the deck that is attached ---------------------

@@ -2545,7 +2545,8 @@ def _reapply_current_wing_mass(resolved: dict) -> None:
 
 # B3: the framework, not an agent, turns the designed cycle into the mission's engine. These tools are
 # registered for the data plane even when no agent's allowed_tools lists them (tool_loader).
-ENGINE_DECK_TOOLS = ("generate_engine_deck", "set_engine_deck")
+# B281 (drag model decision): get_cruise_point (aviary-mcp) is called by the framework only, like the deck tools.
+ENGINE_DECK_TOOLS = ("generate_engine_deck", "set_engine_deck", "get_cruise_point")
 
 
 def engine_deck_enabled() -> bool:
@@ -2665,7 +2666,7 @@ def _ensure_engine_deck(resolved: dict) -> None:
 
 # Agent tools the data plane also calls itself; registered for it even when a stage's toolset lacks them (unlike
 # ENGINE_DECK_TOOLS they stay visible to agents).
-FRAMEWORK_CALLED_TOOLS = ("configure_mission",)
+FRAMEWORK_CALLED_TOOLS = ("configure_mission", "set_aircraft_parameters")   # B281: the framework applies the design
 
 
 def _takeoff_mass_kg() -> float | None:
@@ -3931,15 +3932,23 @@ def current_cruise_point() -> tuple[dict | None, str]:
     mass, basis = trim_mass_basis()
     if mass is None:
         return None, f"no trim mass ({basis})"
+    # H5 (coordinator 2026-11-18): the point is evaluated with the CARRIED engine scale (previous iteration's flown
+    # scale; iteration 1 the baseline's), the engine estimate_mass sizes with, so nacelle drag (if CD depends on the
+    # scale) never makes thrust and scale chase each other. Recorded with the point.
+    _, carried_scale, engine_source = carried_engine()
+    if carried_scale is None:
+        return None, f"no carried engine scale for the cruise point ({engine_source})"
 
     def _valid(point):
         if not isinstance(point, dict):
             return False
         try:
             same_mass = abs(float(point.get("mass_kg")) - mass) <= 1e-6 * mass
+            same_scale = (point.get("cd_depends_on_engine_scale") is False
+                          or abs(float(point.get("engine_scale_used")) - carried_scale) <= 1e-9 * carried_scale)
         except (TypeError, ValueError):
             return False
-        return same_mass and point.get("design_fingerprint") is not None \
+        return same_mass and same_scale and point.get("design_fingerprint") is not None \
             and point.get("design_fingerprint") == store.get("aviary_design_fingerprint")
 
     point = store.get("aviary_cruise_point")
@@ -3957,7 +3966,9 @@ def current_cruise_point() -> tuple[dict | None, str]:
 
                 mission = load_canonical().get("mission", {}) or {}
                 tool.forward(session_id=sid, mass_kg=mass, mach=mission.get("cruise_mach"),
-                             altitude_ft=mission.get("cruise_altitude_ft"))
+                             altitude_ft=mission.get("cruise_altitude_ft"), engine_scale=carried_scale)
+                store["cruise_point_request"] = {"mass_kg": mass, "mass_basis": basis, "engine_scale": carried_scale,
+                                                 "engine_basis": engine_source}
             except Exception as exc:  # pragma: no cover - surfaced as the reason below
                 store["cruise_point_error"] = f"{CRUISE_POINT_TOOL}: {exc}"
             point = store.get("aviary_cruise_point")
@@ -4173,8 +4184,10 @@ def _inject_mass_engine(resolved: dict) -> None:
     * this iteration's engine when its deck is current for the design (engine_deck_current) -- the deck file and
       the scale the mission flies (pycycle Fn / the deck's reference, as _inject_engine_scale computes it);
     * otherwise, when this iteration has no engine yet, the engine carried from the previous iteration's flown design
-      (its deck file and the SCALE_FACTOR it flew): within an iteration mass runs before the engine is redesigned;
-    * nothing on the first iteration before any engine exists (mass-mcp then uses its bench engine and says so).
+      (carried_engine: its deck file and the SCALE_FACTOR it flew): within an iteration mass runs before the engine
+      is redesigned;
+    * on iteration 1, the baseline's engine (canonical baseline.engine_deck_file / engine_scale_factor);
+    * none on record: refused (no bench-engine default).
     A deck that exists but is stale for the design is refused, not replaced by a default. Caller values are
     replaced (framework values win, B143) and the basis is recorded (mass_engine_basis, design.json).
     """
@@ -4204,24 +4217,11 @@ def _inject_mass_engine(resolved: dict) -> None:
         deck_file, scale = deck.get("file"), coupling.fn_to_aviary_engine_scale(fn, float(ref))
         source = f"this iteration's engine (deck {deck.get('key')})"
     else:
-        from src.coordination.prompt_assembly import read_carry_over
-
-        previous = (read_carry_over() or {}).get("previous_design") or {}
-        carried_deck = (previous.get("engine_deck") or {}).get("file") if isinstance(previous, dict) else None
-        carried_scale = ((previous.get("mission_applied") or {}).get("Aircraft.Engine.SCALE_FACTOR")
-                         if isinstance(previous, dict) else None)
-        if carried_deck and carried_scale is not None:
-            deck_file, scale = carried_deck, float(carried_scale)
-            source = "engine carried from the previous iteration (its flown deck and scale)"
-        elif previous:
+        deck_file, scale, source = carried_engine()
+        if deck_file is None:
             _refuse_call("ENGINE_NOT_ON_RECORD",
-                         "estimate_mass was not run: the previous iteration's flown engine (deck and scale) is not on "
-                         "record, so the aircraft cannot be sized with the engine it flies. Run the engine cycle on "
-                         "the current design first.")
-            return
-        else:
-            store["mass_engine_basis"] = {"source": "bench engine: first iteration, no designed engine yet "
-                                                    "(mass-mcp default, reported in its warnings)"}
+                         f"estimate_mass was not run: the aircraft is sized with the engine it flies, and no engine is "
+                         f"on record for it: {source}. Run the engine cycle on the current design first.")
             return
     if deck_file and not os.path.isfile(str(deck_file)):
         _refuse_call("ENGINE_DECK_NOT_READABLE",
@@ -4234,3 +4234,36 @@ def _inject_mass_engine(resolved: dict) -> None:
                 "asked": resolved[arg], "used": value}
         resolved[arg] = value
     store["mass_engine_basis"] = {"source": source, "engine_deck_file": deck_file, "engine_scale_factor": scale}
+
+
+def carried_engine() -> tuple[str | None, float | None, str]:
+    """The engine carried into this iteration: (deck file, scale factor, source), or (None, None, reason).
+
+    The previous iteration's flown engine (design_flown.json: its engine deck and the Aircraft.Engine.SCALE_FACTOR it
+    flew); iteration 1: the baseline's engine (canonical baseline.engine_deck_file / engine_scale_factor). Used for
+    the mass estimate (mass-mcp M3) and for aviary's cruise point (H5, coordinator 2026-11-18). No default.
+    """
+    try:
+        from src.coordination.prompt_assembly import read_carry_over
+
+        previous = (read_carry_over() or {}).get("previous_design")
+    except Exception:      # pragma: no cover
+        previous = None
+    if isinstance(previous, dict) and previous:
+        deck = (previous.get("engine_deck") or {}).get("file")
+        scale = (previous.get("mission_applied") or {}).get("Aircraft.Engine.SCALE_FACTOR")
+        if deck and isinstance(scale, (int, float)) and scale > 0:
+            return str(deck), float(scale), "engine carried from the previous iteration (its flown deck and scale)"
+        return None, None, (f"the previous iteration's flown engine is not on record (deck {deck!r}, "
+                            f"scale {scale!r})")
+    try:
+        from src.config.canonical import load_canonical
+
+        base = load_canonical().get("baseline") or {}
+    except Exception as exc:      # pragma: no cover
+        return None, None, f"the canonical baseline could not be read ({exc})"
+    deck, scale = base.get("engine_deck_file"), base.get("engine_scale_factor")
+    if deck and isinstance(scale, (int, float)) and scale > 0:
+        return str(deck), float(scale), "baseline engine (canonical baseline.engine_deck_file / engine_scale_factor)"
+    return None, None, (f"canonical baseline.engine_deck_file / engine_scale_factor are not set ({deck!r}, "
+                        f"{scale!r})")

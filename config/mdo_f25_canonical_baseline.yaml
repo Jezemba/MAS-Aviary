@@ -120,3 +120,7 @@ mission:
 # fallback mass (audit F4). The graph-routed baseline cache key includes this value.
 baseline:
   sized_mtom_kg: null
+  # The baseline's engine (H5, coordinator 2026-11-18): the deck and SCALE_FACTOR the first iteration's mass estimate
+  # and aviary cruise point use (later iterations carry the previous iteration's flown engine). Unset = refused.
+  engine_deck_file: null
+  engine_scale_factor: null

@@ -150,79 +150,22 @@ def test_an_unusable_baseline_is_not_cached(fresh, monkeypatch, tmp_path):
     assert not (tmp_path / "cache").exists()
 
 
-def test_the_engine_key_includes_the_friction_chord(fresh, tmp_path):
-    fresh.data_store["mass_mtom_kg"] = 90000.0
-    a = dp._cycle_sizing_key()
-    coupling.put_var(fresh, "geom.mac_length", 4.19, source_tool="get_wing_summary")
-    b = dp._cycle_sizing_key()
-    assert a[:3] == b[:3] and a[3] is None and b[3] == pytest.approx(4.19)
 
 
 # ---- F1 / F2: no clamps; only the impossible fails ------------------------------------------------------
 
-def test_the_drag_factor_is_not_clamped():
-    f = coupling.aero_cd_to_aviary_drag_factor(0.15, 0.95, 9.0)
-    assert f > 2.0
-    with pytest.raises(ValueError):
-        coupling.aero_cd_to_aviary_drag_factor(-0.5, 0.5, 9.0)
-    with pytest.raises(ValueError):
-        coupling.aero_cd_to_aviary_drag_factor(float("nan"), 0.5, 9.0)
 
 
-def test_the_design_thrust_is_not_clamped():
-    assert coupling.fn_des_from_drag(150000.0, 0.99, 0.2) > 25000.0
-    assert coupling.mtom_to_pycycle_fn_des(10000.0) < 2000.0
-    for args in ((90000.0, 0.5, 0.0), (90000.0, 0.0, 0.03), (0.0, 0.5, 0.03)):
-        with pytest.raises(ValueError):
-            coupling.fn_des_from_drag(*args)
 
 
-def test_an_impossible_design_thrust_refuses_set_inputs(fresh, monkeypatch):
-    monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle"})
-    fresh.data_store["mass_mtom_kg"] = 90000.0
-    coupling.put_var(fresh, "aero.cl_cruise", 0.5, source_tool="run_su2_solver")
-    coupling.put_var(fresh, "aero.cd_cruise", -0.5, source_tool="run_su2_solver")
-    dp.take_refusal()
-    dp.resolve_request("set_inputs", {"session_id": "pc", "values": {}})
-    refusal = dp.take_refusal()
-    assert refusal["error_code"] == "DESIGN_THRUST_NOT_PHYSICAL" and "Check those inputs" in refusal["error"]
 
 
-def test_an_unclamped_factor_is_flown_and_an_impossible_one_refuses_the_mission(fresh):
-    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 75.0, "Aircraft.Wing.ASPECT_RATIO": 12.0}
-    coupling.put_var(fresh, "aero.cl_cruise", 0.91, source_tool="run_su2_solver")
-    coupling.put_var(fresh, "aero.cd_cruise", 0.1266, source_tool="run_su2_solver")
-    resolved = {"parameters": {}}
-    dp._inject_phase_h_aero(resolved)
-    assert resolved["parameters"]["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] > 2.0     # S_GR 5: flew 2.0
-    coupling.put_var(fresh, "aero.cd_cruise", -0.5, source_tool="run_su2_solver")
-    resolved = {"parameters": {}}
-    dp._inject_phase_h_aero(resolved)
-    assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in resolved["parameters"]
-    assert "not physical" in dp.mission_input_refusal("run_simulation", {"session_id": "av"})["error"]
 
 
 # ---- A9: the measured AR ----------------------------------------------------------------------------------
 
-def test_the_drag_factor_uses_the_measured_ar_not_the_typed_one(fresh):
-    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.79, "Aircraft.Wing.ASPECT_RATIO": 10.0}
-    coupling.put_var(fresh, "aero.cl_cruise", 0.4627, source_tool="run_su2_solver")
-    coupling.put_var(fresh, "aero.cd_cruise", 0.0044, source_tool="run_su2_solver")
-    resolved = {"parameters": {"Aircraft.Wing.ASPECT_RATIO": 7.0}}
-    dp._inject_phase_h_aero(resolved)
-    reynolds, swet = dp._friction_inputs()
-    want = coupling.aero_cd_to_aviary_drag_factor(0.0044, 0.4627, 10.0, reynolds=reynolds, swet_sref=swet)
-    assert resolved["parameters"]["Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"] == pytest.approx(want)
-    assert fresh.data_store["aero_drag_factor_ar"] == 10.0
 
 
-def test_no_measured_ar_means_no_factor_and_no_mission(fresh):
-    coupling.put_var(fresh, "aero.cl_cruise", 0.5, source_tool="run_su2_solver")
-    coupling.put_var(fresh, "aero.cd_cruise", 0.03, source_tool="run_su2_solver")
-    resolved = {"parameters": {"Aircraft.Wing.ASPECT_RATIO": 9.0}}
-    dp._inject_phase_h_aero(resolved)
-    assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in resolved["parameters"]
-    assert "aspect ratio" in dp.mission_input_refusal("run_simulation", {})["error"]
 
 
 # ---- A10 / F11: a refused set leaves nothing stale; failed pre-mission steps refuse the mission ------------
@@ -505,6 +448,7 @@ def test_f16_an_undeclared_coupled_argument_refuses(fresh, monkeypatch):
     from src.tools.type_coercion import wrap_tool_with_middleware
 
     monkeypatch.setattr(dp, "_tool_server_map", {"configure_mission": "aviary"})
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "test"))
     fresh.data_store["mass_mtom_kg"] = 90000.0
     coupling.put_var(fresh, "mass.mtom_kg", 90000.0, source_tool="estimate_mass")
 
@@ -602,3 +546,213 @@ def test_f3_the_batch_runner_reports_the_last_converged_mission(monkeypatch, tmp
     monkeypatch.setattr(kbm, "_run_config", {"path": str(kb)})
     out = batch_runner._mission_metrics_from_kb()
     assert out["flown"] is True and out["fuel_burned_kg"] == 21000.0 and out["gtow_kg"] == 99000.0
+
+
+# ---- Drag model decision (Jessica, 2026-11-18): aviary FLOPS drag only -------------------------------------
+
+def test_drag_the_su2_drag_coupling_code_is_gone():
+    for name in ("aero_cd_to_aviary_drag_factor", "skin_friction_cd", "total_cruise_cd", "fn_des_from_drag",
+                 "mtom_to_pycycle_fn_des", "reynolds_number", "FN_DES_PER_KG_LBF"):
+        assert not hasattr(coupling, name), name
+    for name in ("_friction_inputs", "_friction_mac"):
+        assert not hasattr(dp, name), name
+
+
+def test_drag_no_drag_keys_are_injected_and_agents_cannot_set_them(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "_tool_server_map", {"set_aircraft_parameters": "aviary"})
+    fresh.data_store["geometry_wing"] = {"Aircraft.Wing.AREA": 122.83, "Aircraft.Wing.ASPECT_RATIO": 9.36}
+    coupling.put_var(fresh, "aero.cl_cruise", 0.559, source_tool="run_su2_solver")
+    coupling.put_var(fresh, "aero.cd_cruise", 0.025, source_tool="run_su2_solver")
+    dp.take_refusal()
+    out = dp.resolve_request("set_aircraft_parameters", {"session_id": "av", "parameters": {}})
+    assert "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR" not in out["parameters"]
+    assert "Mission.Design.LIFT_COEFFICIENT" not in out["parameters"]
+    assert dp.take_refusal() is None
+    assert fresh.data_store["aero_coupling_status"] == "solved_not_coupled_to_drag"
+    for key in ("Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR", "Mission.Design.LIFT_COEFFICIENT"):
+        dp.resolve_request("set_aircraft_parameters", {"session_id": "av", "parameters": {key: 1.2}})
+        refusal = dp.take_refusal()
+        assert refusal["error_code"] == "DRAG_FROM_AVIARY_MODEL" and key in refusal["error"]
+
+
+def test_drag_design_json_says_solved_not_coupled(fresh):
+    from src.tools.design_json import build_design
+
+    doc = build_design({"aero_cl_cruise": 0.559, "aero_cd_cruise": 0.025})
+    assert doc["aero"]["drag_coupling"].startswith("solved, not coupled to drag")
+    assert "injected_into_aviary" not in doc["aero"]
+
+
+def test_drag_the_mission_still_needs_the_su2_solve():
+    from src.tools import coupling_contract as cc
+
+    req = cc.REQUIRED_BY_TOOL["run_simulation"]
+    assert cc.AERO_SOLVE in req and cc.AERO_SOLVE.parameter == ""
+    assert not hasattr(cc, "AERO_CL") and not hasattr(cc, "AERO_CD")
+
+
+# ---- Fn_DES from aviary's cruise point ------------------------------------------------------------------------
+
+def _cruise(fresh, monkeypatch, ld=17.5, fp="fp-1", mass=90000.0, scale=1.33, depends=True):
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (mass, "carried sized mass"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/d.deck", 1.33, "carried"))
+    monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle", "get_cruise_point": "aviary",
+                                                 "set_aircraft_parameters": "aviary", "run_cycle": "pycycle"})
+    dp.intercept_response("get_cruise_point", json.dumps({
+        "success": True, "design_fingerprint": fp,
+        "cruise_point": {"mach": 0.78, "altitude_ft": 33000, "mass_kg": mass, "cl": 0.62, "cd": 0.62 / ld,
+                         "lift_to_drag": ld, "engine_scale_used": scale, "cd_depends_on_engine_scale": depends,
+                         "design_fingerprint": fp}}))
+
+
+def test_fn_des_is_sized_on_aviarys_cruise_lift_to_drag(fresh, monkeypatch):
+    _cruise(fresh, monkeypatch)
+    out = dp.resolve_request("set_inputs", {"session_id": "pc", "values": {"Fn_DES": 6336.0}})
+    assert out["values"]["Fn_DES"] == pytest.approx(coupling.fn_des_from_lift_to_drag(90000.0, 17.5))
+    assert out["values"]["Fn_DES"] == pytest.approx(90000.0 * 9.81 / 17.5 / 2 / 4.448 * 1.25)
+    assert "aviary cruise L/D 17.500" in fresh.data_store["engine_fn_des_basis"]
+
+
+def test_fn_des_is_deterministic_whatever_the_tool_order(fresh, monkeypatch):
+    """The same design gives the same Fn_DES whether SU2, mass or the mission ran first: SU2 CL/CD and this
+    iteration's mass estimate do not enter it."""
+    _cruise(fresh, monkeypatch)
+    a = dp.resolve_request("set_inputs", {"session_id": "pc", "values": {}})["values"]["Fn_DES"]
+    coupling.put_var(fresh, "aero.cl_cruise", 0.71, source_tool="run_su2_solver")      # another SU2 answer
+    coupling.put_var(fresh, "aero.cd_cruise", 0.0575, source_tool="run_su2_solver")
+    fresh.data_store["mass_mtom_kg"] = 95000.0                                          # this iteration's estimate
+    b = dp.resolve_request("set_inputs", {"session_id": "pc", "values": {}})["values"]["Fn_DES"]
+    assert a == b
+
+
+def test_a_cruise_point_of_another_design_or_mass_is_not_used(fresh, monkeypatch):
+    _cruise(fresh, monkeypatch, fp="fp-old")
+    fresh.data_store["aviary_design_fingerprint"] = "fp-new"          # aviary now holds another design
+    point, why = dp.current_cruise_point()
+    assert point is None and "has not reported a cruise point" in why
+    _cruise(fresh, monkeypatch, mass=80000.0)
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "carried sized mass"))
+    assert dp.current_cruise_point()[0] is None
+
+
+def test_a_cruise_point_at_another_engine_scale_counts_only_if_cd_depends_on_it(fresh, monkeypatch):
+    _cruise(fresh, monkeypatch, scale=1.0, depends=True)
+    assert dp.current_cruise_point()[0] is None                       # carried scale is 1.33
+    _cruise(fresh, monkeypatch, scale=1.0, depends=False)
+    assert dp.current_cruise_point()[0] is not None
+
+
+def test_without_a_cruise_point_fn_des_is_not_set_and_run_cycle_is_refused(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "carried sized mass"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/d.deck", 1.33, "carried"))
+    monkeypatch.setattr(dp, "_tool_server_map", {"set_inputs": "pycycle", "run_cycle": "pycycle"})
+    fresh.sessions["pycycle"] = "pc"
+    out = dp.resolve_request("set_inputs", {"session_id": "pc", "values": {"Fn_DES": 6336.0}})
+    assert "Fn_DES" not in out["values"]
+    assert "get_cruise_point" in fresh.data_store["engine_sizing_error"]
+    dp.take_refusal()
+    dp.resolve_request("run_cycle", {"session_id": "pc"})
+    refusal = dp.take_refusal()
+    assert refusal["error_code"] == "DESIGN_THRUST_NOT_AVAILABLE"
+
+
+def test_the_framework_asks_aviary_for_the_point_with_the_carried_scale(fresh, monkeypatch):
+    calls = []
+
+    class Point:
+        def forward(self, **kw):
+            calls.append(kw)
+            return dp.intercept_response("get_cruise_point", json.dumps({
+                "success": True, "design_fingerprint": "fp-9", "cruise_point": {
+                    "mass_kg": kw["mass_kg"], "lift_to_drag": 16.0, "engine_scale_used": kw["engine_scale"],
+                    "cd_depends_on_engine_scale": True, "design_fingerprint": "fp-9"}}))
+
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "carried sized mass"))
+    monkeypatch.setattr(dp, "carried_engine", lambda: ("/decks/d.deck", 1.33, "carried"))
+    monkeypatch.setattr(dp, "_tool_server_map", {"get_cruise_point": "aviary"})
+    dp._registered_tools["get_cruise_point"] = Point()
+    fresh.sessions["aviary"] = "av"
+    point, why = dp.current_cruise_point()
+    assert point["lift_to_drag"] == 16.0
+    assert calls == [{"session_id": "av", "mass_kg": 90000.0, "mach": 0.78, "altitude_ft": 33000,
+                      "engine_scale": 1.33}]
+    assert fresh.data_store["cruise_point_request"]["engine_basis"] == "carried"
+    assert coupling.get_var(fresh, "aviary.cruise_l_over_d") == 16.0
+
+
+def test_an_impossible_cruise_point_is_not_recorded(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "_tool_server_map", {"get_cruise_point": "aviary"})
+    dp.intercept_response("get_cruise_point", json.dumps({"success": True, "cruise_point": {
+        "mass_kg": 90000.0, "lift_to_drag": -3.0, "design_fingerprint": "x"}}))
+    assert "aviary_cruise_point" not in fresh.data_store and "not physical" in fresh.data_store["cruise_point_error"]
+
+
+def test_fn_des_is_not_clamped_and_only_the_impossible_fails():
+    assert coupling.fn_des_from_lift_to_drag(150000.0, 5.0) > 25000.0
+    assert coupling.fn_des_from_lift_to_drag(20000.0, 30.0) < 2000.0
+    for args in ((90000.0, 0.0), (90000.0, -2.0), (0.0, 17.0), (90000.0, float("nan"))):
+        with pytest.raises(ValueError):
+            coupling.fn_des_from_lift_to_drag(*args)
+
+
+def test_the_engine_key_is_the_mass_basis_and_the_cruise_point(fresh, monkeypatch):
+    _cruise(fresh, monkeypatch)
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1"]
+    fresh.data_store["mass_mtom_kg"] = 95000.0                    # this iteration's estimate does not enter
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1"]
+
+
+def test_take_off_mass_is_the_one_mass_basis(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "trim_mass_basis", lambda: (90000.0, "carried sized mass"))
+    fresh.data_store["mass_mtom_kg"] = 95000.0
+    assert dp._takeoff_mass_kg() == 90000.0
+
+
+# ---- mass-mcp M3: the mass estimate flies the engine ----------------------------------------------------------
+
+def test_m3_estimate_mass_gets_the_carried_engine(fresh, monkeypatch, tmp_path):
+    deck = tmp_path / "deck_7815.deck"
+    deck.write_text("deck")
+    monkeypatch.setattr(dp, "carried_engine", lambda: (str(deck), 1.3314, "engine carried from the previous iteration"))
+    monkeypatch.setattr(dp, "_tool_server_map", {"estimate_mass": "mass"})
+    out = dp.resolve_request("estimate_mass", {"cpacs_file_path": str(deck), "engine_scale_factor": 1.0})
+    assert out["engine_deck_file"] == str(deck) and out["engine_scale_factor"] == 1.3314
+    assert fresh.data_store["mass_engine_basis"]["source"].startswith("engine carried")
+    assert fresh.data_store["_pinned_overrides"]["estimate_mass"]["engine_scale_factor"]["asked"] == 1.0
+
+
+def test_m3_a_stale_deck_or_no_engine_refuses(fresh, monkeypatch, tmp_path):
+    monkeypatch.setattr(dp, "_tool_server_map", {"estimate_mass": "mass"})
+    monkeypatch.setattr(dp, "carried_engine", lambda: (None, None, "canonical baseline.engine_deck_file / "
+                                                                     "engine_scale_factor are not set"))
+    dp.take_refusal()
+    dp.resolve_request("estimate_mass", {"cpacs_file_path": "x.xml"})
+    assert dp.take_refusal()["error_code"] == "ENGINE_NOT_ON_RECORD"
+    fresh.data_store["engine_deck"] = {"file": "/decks/old.deck", "cycle_key": "old"}
+    dp.resolve_request("estimate_mass", {"cpacs_file_path": "x.xml"})
+    assert dp.take_refusal()["error_code"] == "ENGINE_NOT_CURRENT"
+
+
+def test_m3_an_unreadable_deck_refuses(fresh, monkeypatch):
+    monkeypatch.setattr(dp, "_tool_server_map", {"estimate_mass": "mass"})
+    monkeypatch.setattr(dp, "carried_engine", lambda: ("/home/otherhost/decks/d.deck", 1.3, "carried"))
+    dp.take_refusal()
+    dp.resolve_request("estimate_mass", {"cpacs_file_path": "x.xml"})
+    assert dp.take_refusal()["error_code"] == "ENGINE_DECK_NOT_READABLE"
+
+
+def test_m3_carried_engine_comes_from_the_flown_design_or_the_canonical_baseline(monkeypatch):
+    _carry(monkeypatch, {"engine_deck": {"file": "/d/a.deck"}, "mission_applied": {"Aircraft.Engine.SCALE_FACTOR": 1.4}})
+    assert dp.carried_engine()[:2] == ("/d/a.deck", 1.4)
+    _carry(monkeypatch, {"mission_applied": {}})
+    assert dp.carried_engine()[0] is None
+    _carry(monkeypatch, None)
+    _canonical(monkeypatch, engine_deck_file="/d/base.deck", engine_scale_factor=1.3314)
+    assert dp.carried_engine()[:2] == ("/d/base.deck", 1.3314)
+
+
+def test_a15_the_drivers_verdict_is_read(fresh):
+    data = _estimate()
+    data["mass_breakdown"]["sizing_report"] = {"driver": {"converged": False, "range_residual_nmi": 117.0}}
+    dp._capture_wing_mass_from_mass_estimate("estimate_mass", data)
+    assert data["error_code"] == "MASS_ESTIMATE_NOT_USABLE"
