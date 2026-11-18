@@ -14,7 +14,7 @@ Also counts optimizer flights whose SU2 aero was NOT injected into aviary (coupl
 [0.05, 1.0]; the data plane then leaves aviary on its default drag polar).
 
 Usage (aipexws8, Avion venv):
-    python -m analysis.link20.budget_compare --runs /data/Jessica/optimizer_budget/runs --out out_20261028/budget_compare
+    python -m analysis.link20.budget_compare --study final --runs /data/Jessica/optimizer_budget/runs --out out_20261028/budget_compare
 """
 
 from __future__ import annotations
@@ -28,15 +28,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from analysis.link20.extract import SOURCES, ZERO_FUEL_FLOOR_KG, read_jsonl  # noqa: E402
+from analysis.link20.extract import (BASELINES, STUDIES, ZERO_FUEL_FLOOR_KG, read_jsonl,  # noqa: E402
+                                    require_study)
 
 BUDGET = 20
 GTOW_LIMIT_KG = 90_000.0
 LAMBDA_BASE, LAMBDA_GAP = 1.0e6, 1.0e5          # MAS-Aviary scripts/optimizer_budget/budget.py
 CL_BOUNDS = (0.05, 1.0)                          # aviary Mission.Design.LIFT_COEFFICIENT, as the data plane checks
 OPTIMIZERS = ("bo", "ga", "mads", "slsqp", "random")
-# Fuel saving reference: the unchanged baseline mission (reports 00-08). Saving % = (reference - fuel) / reference.
-REFERENCE_FUEL_KG = 18_197.0
+# Fuel saving reference: the selected study's own baseline mission (extract.BASELINES[--study], required; there is
+# no default). Saving % = (reference - fuel) / reference.
 SAVING_YLIM = (-100.0, 60.0)
 SHORT = {"sequential": "S", "orchestrated": "O", "networked": "N",
          "staged_pipeline": "SP", "iterative_feedback": "IF", "graph_routed": "GR"}
@@ -77,7 +78,7 @@ def mas_flights(kb: list[dict]) -> list[dict]:
     return out
 
 
-def mas_series(sources=SOURCES) -> pd.DataFrame:
+def mas_series(sources) -> pd.DataFrame:
     rows = []
     for _dataset, root, combos in sources:
         for combo in combos:
@@ -179,11 +180,11 @@ def scatter(series: pd.DataFrame, path: Path, method: str, ncols: int) -> None:
     fig.savefig(path, dpi=150, facecolor="white")
 
 
-def savings(series: pd.DataFrame) -> pd.DataFrame:
-    """Every flight's fuel saving vs REFERENCE_FUEL_KG, and the best converged saving so far."""
+def savings(series: pd.DataFrame, reference_fuel_kg: float) -> pd.DataFrame:
+    """Every flight's fuel saving vs the study's baseline fuel, and the best converged saving so far."""
     d = series[series.flight <= BUDGET].copy()
-    d["saving_pct"] = 100.0 * (REFERENCE_FUEL_KG - d.fuel) / REFERENCE_FUEL_KG
-    d["best_conv_saving_pct"] = 100.0 * (REFERENCE_FUEL_KG - d.best_conv_fuel) / REFERENCE_FUEL_KG
+    d["saving_pct"] = 100.0 * (reference_fuel_kg - d.fuel) / reference_fuel_kg
+    d["best_conv_saving_pct"] = 100.0 * (reference_fuel_kg - d.best_conv_fuel) / reference_fuel_kg
     return d
 
 
@@ -206,7 +207,7 @@ def _clipped(ax, x, y, **kw):
     ax.scatter(x[y < lo], [lo] * int((y < lo).sum()), marker="v", **kw)
 
 
-def plot_savings(sav: pd.DataFrame, path: Path) -> None:
+def plot_savings(sav: pd.DataFrame, path: Path, reference_fuel_kg: float) -> None:
     """One panel: best converged fuel saving so far against the number of evaluations, every method."""
     colours = dict(zip(OPTIMIZERS, ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#7f7f7f")))
     fig, ax = plt.subplots(figsize=(7, 4.5), facecolor="white")
@@ -224,7 +225,7 @@ def plot_savings(sav: pd.DataFrame, path: Path) -> None:
             ax.plot(m.index, m.values, color=colours[algo], lw=2, label=algo.upper())
     ax.axhline(0, color="black", lw=0.8)
     ax.set_xlabel("Number of evaluations (flights)")
-    ax.set_ylabel(f"Best converged fuel saving (%)\nvs baseline {REFERENCE_FUEL_KG:,.0f} kg")
+    ax.set_ylabel(f"Best converged fuel saving (%)\nvs baseline {reference_fuel_kg:,.0f} kg")
     ax.set_xlim(1, BUDGET + 2)
     ax.set_xticks(range(0, BUDGET + 1, 5))
     ax.legend(frameon=False, fontsize=8)
@@ -313,10 +314,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--runs", type=Path, required=True, help="optimizer budget runs root (<algo>/seed<k>/)")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="the MAS study (its runs and its own baseline fuel, extract.BASELINES)")
     args = ap.parse_args()
+    study = require_study(args.study)
+    reference = BASELINES[study]["fuel_kg"]
+    print(f"study {study}: saving reference = its baseline fuel {reference:,.1f} kg")
     args.out.mkdir(parents=True, exist_ok=True)
     opt, aero = optimizer_series(args.runs)
-    series = pd.concat([mas_series(), opt], ignore_index=True)
+    series = pd.concat([mas_series(STUDIES[study]), opt], ignore_index=True)
     series.to_csv(args.out / "budget_compare_series.csv", index=False)
     table = at_budget(series)
     table.to_csv(args.out / "budget_compare_at_20_flights.csv", index=False)
@@ -326,10 +332,10 @@ def main() -> int:
     where.to_csv(args.out / "where_best_fuel_first_20_flights.csv", index=False)
     scatter(series, args.out / "fuel_per_flight_mas.png", "mas", ncols=4)
     scatter(series, args.out / "fuel_per_flight_optimizers.png", "optimizer", ncols=len(OPTIMIZERS))
-    sav = savings(series)
+    sav = savings(series, reference)
     sav.to_csv(args.out / "fuel_saving_per_evaluation.csv", index=False)
     savings_table(sav).round(1).to_csv(args.out / "best_converged_saving_by_evaluation.csv")
-    plot_savings(sav, args.out / "fuel_saving_vs_evaluations.png")
+    plot_savings(sav, args.out / "fuel_saving_vs_evaluations.png", reference)
     plot_savings_per_evaluation(sav, args.out / "fuel_saving_per_evaluation.png")
     cols = ["method", "name", "seeds", "flights", "best_conv_fuel_mean", "best_conv_fuel_min", "best_conv_fuel_max",
             "best_loss_mean", "min_conv_gtow_mean", "min_conv_gtow_min"]

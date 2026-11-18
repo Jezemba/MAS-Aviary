@@ -11,7 +11,7 @@ targets / measured results, and which aviary keys the agents set.
 
 Usage (aipexws8, Avion venv, from ~/Jessica/avion_analysis/code):
     python -m analysis.link20.reports.scripts.design_params --links ../out_20261028/links.csv \
-        --recs ../out_20261028/recommended_changes.csv --bounds ../out/agent_bounds.json \
+        --recs ../out_20261028/recommended_changes.csv --bounds ../out_20261028/agent_bounds.json --study 20261028 \
         --plots-log ../out_20261028/plots_run.log --out ../reports_20261028/design_params
 """
 
@@ -26,7 +26,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from analysis.link20.extract import B187_SCALE, SOURCES, read_json, read_jsonl
+from analysis.link20.agent_bounds import load_checked as load_bounds
+from analysis.link20.extract import B187_SCALE, STUDIES, check_links_study, read_json, read_jsonl, require_study
 
 ABBREV = {"sequential": "S", "orchestrated": "O", "networked": "N",
           "staged_pipeline": "SP", "iterative_feedback": "IF", "graph_routed": "GR"}
@@ -83,16 +84,21 @@ def sgn(a, b) -> int | None:
     return 0 if not c else (1 if b > a else -1)
 
 
-def baseline_refs(plots_log: Path) -> dict:
+def baseline_refs(plots_log: Path, study: str) -> dict:
+    """The baseline refs line plots.py printed first: `baseline refs (<study>): {...}`, refused for another study."""
     first = plots_log.read_text().splitlines()[0]
-    return ast.literal_eval(first.split(":", 1)[1].strip())
+    tag = f"baseline refs ({study}):"
+    if not first.startswith(tag):
+        raise SystemExit(f"{plots_log} does not start with {tag!r} (it is another study's, or from before plots.py "
+                         f"recorded the study): re-run plots.py --study {study}.")
+    return ast.literal_eval(first[len(tag):].strip())
 
 
 # ---------------------------------------------------------------- raw scan
 
-def raw_scan(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def raw_scan(df: pd.DataFrame, sources) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Per link: span from design.json; per combination: what the agents set (tails, mission, aviary keys)."""
-    roots = {c: root for _, root, combos in SOURCES for c in combos}
+    roots = {c: root for _, root, combos in sources for c in combos}
     span_rows, act = [], []
     for _, r in df.iterrows():
         d = roots[r.combination] / f"repeat_{int(r.link) - 1:03d}" / r.combination
@@ -312,21 +318,27 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--links", type=Path, required=True)
     ap.add_argument("--recs", type=Path, required=True)
-    ap.add_argument("--bounds", type=Path, required=True)
+    ap.add_argument("--bounds", type=Path, required=True,
+                    help="agent_bounds.json built by analysis.link20.agent_bounds for the same --study")
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="the study of links.csv, the bounds file and the plots log (all three are checked)")
     ap.add_argument("--plots-log", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     pd.set_option("display.width", 250, "display.max_columns", 40, "display.max_rows", 500)
 
-    refs = baseline_refs(a.plots_log)
+    study = require_study(a.study)
+    bounds_doc = load_bounds(a.bounds, study)       # refused unless built from this study's runs
+    refs = baseline_refs(a.plots_log, study)
     print("baseline refs:", refs)
     df = pd.read_csv(a.links)
+    check_links_study(df, study, a.links)
     df["abbrev"] = df.structure.map(ABBREV) + "_" + df.handler.map(ABBREV)
     df["flew"] = df.flew.astype(bool)
     print("rows", len(df), "| run_status", dict(Counter(df.run_status)))
 
-    span, act = raw_scan(df)
+    span, act = raw_scan(df, STUDIES[study])
     df = df.merge(span[["combination", "link", "Aircraft.Wing.SPAN", "span_source"]], on=["combination", "link"])
     print("span source:", dict(Counter(span.span_source.fillna("none"))))
     span.to_csv(a.out / "span_and_mission_per_link.csv", index=False)
@@ -398,7 +410,7 @@ def main() -> None:
     un = df[((sf - B187_SCALE).abs() < B187_TOL) & ~df.b187.astype(bool)]
     save(un[["abbrev", "link", "Aircraft.Engine.SCALE_FACTOR", "flew", "fuel_kg", "ec_converged", "run_status"]],
          "b187_scale_unflagged", "links ending at scale 0.994 that the b187 flag does not mark")
-    bounds = json.loads(a.bounds.read_text())["bounds"]
+    bounds = bounds_doc["bounds"]
     save(pd.DataFrame([{"variable": k, **v} for k, v in bounds.items()]), "agent_bounds",
          "agent_bounds.json (every value set, incl. intermediate morphs and set_inputs)")
 
@@ -459,7 +471,7 @@ def main() -> None:
     print("\nitems per parameter:", dict(Counter(rv.param)))
     nd = rv[rv.outcome.str.startswith("no direction")]
     print("no-direction items:", nd[["abbrev", "link", "param", "kind", "prev", "target"]].to_string(index=False))
-    print("MTOM == 78126 kg link-ends:", int((num("structures.mtom_kg") == 78126.0).sum()), "of",
+    print("MTOM (flown takeoff mass) == 78126 kg:", int((num("structures.mtom_kg") == 78126.0).sum()), "of",
           int(num("structures.mtom_kg").notna().sum()))
     ex = extremes(df)
     if ex.empty:                       # no extreme value in this study (the re-run): nothing to group

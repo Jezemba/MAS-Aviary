@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20 import rec_params as rp
 from analysis.link20 import recommendations as rec
 from analysis.link20.extract import SOURCES, counted_step_log, read_jsonl
@@ -114,6 +115,7 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.links)
+    check_links_study(df, env_study(), args.links)
     df["abbr"] = [ABBR[(s, h)] for s, h in zip(df.structure, df.handler)]
     df = df.sort_values(["abbr", "link"]).reset_index(drop=True)
     sig = pd.DataFrame([{**signal_stats(c, int(l)), **call_outcomes(c, int(l))}

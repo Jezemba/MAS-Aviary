@@ -43,13 +43,33 @@ def test_where_best_reports_flight_and_link_for_any_and_converged():
 
 def test_savings_are_relative_to_the_baseline_and_tabled_per_evaluation():
     import pandas as pd
-    from analysis.link20.budget_compare import REFERENCE_FUEL_KG, savings, savings_table
+    from analysis.link20.budget_compare import savings, savings_table
+    from analysis.link20.extract import BASELINES
+
+    REFERENCE_FUEL_KG = BASELINES["final"]["fuel_kg"]          # the re-run's baseline, 16,390.5 kg
 
     rows = running([{"fuel": REFERENCE_FUEL_KG, "gtow": 97000.0, "converged": True},
                     {"fuel": 0.9 * REFERENCE_FUEL_KG, "gtow": 97000.0, "converged": False},
                     {"fuel": 0.95 * REFERENCE_FUEL_KG, "gtow": 97000.0, "converged": True}])
-    sav = savings(pd.DataFrame([{"method": "optimizer", "name": "bo", "seed": 0, **r} for r in rows]))
+    sav = savings(pd.DataFrame([{"method": "optimizer", "name": "bo", "seed": 0, **r} for r in rows]), REFERENCE_FUEL_KG)
     assert sav.saving_pct.round(6).tolist() == [0.0, 10.0, 5.0]
     assert sav.best_conv_saving_pct.round(6).tolist() == [0.0, 0.0, 5.0]       # unconverged 10 % not counted
     t = savings_table(sav)
     assert t.loc[3, "BO"] == sav.best_conv_saving_pct.iloc[2] and len(t) == 20
+
+
+def test_no_hard_coded_baseline_and_study_is_required():
+    """D2: the saving reference is the study's own baseline, passed in; budget_compare keeps no constant of its own."""
+    import pytest
+
+    from analysis.link20 import budget_compare as bc
+
+    assert not hasattr(bc, "REFERENCE_FUEL_KG")
+    import sys
+    argv = sys.argv
+    sys.argv = ["budget_compare", "--runs", "/nonexistent", "--out", "/nonexistent"]
+    try:
+        with pytest.raises(SystemExit):        # argparse: --study is required
+            bc.main()
+    finally:
+        sys.argv = argv

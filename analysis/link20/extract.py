@@ -8,7 +8,8 @@ Sources (see results/HANDOFF_METRICS_20LINK.md section 3):
     design.json, carry_over.json, plus the folder's stat_progress.json.
 
 Usage (on aipexws8, from the Avion venv):
-    python -m analysis.link20.extract --out ~/Jessica/avion_analysis/out
+    LINK20_STUDY is not read here: pass the study explicitly.
+    python -m analysis.link20.extract --study final --out /data/Jessica/<somewhere>/out
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
+
+from analysis.link20 import flown
 
 HOME = Path.home()
 
@@ -56,16 +59,69 @@ SOURCES_20261112 = [
 L20_FINAL = Path("/data/Jessica/l20_final")
 SOURCES_FINAL = [(ds, L20_FINAL / "runs" / root.name, combos) for ds, root, combos in SOURCES_20261112]
 STUDIES = {"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, "final": SOURCES_FINAL}
-# Which study the report scripts read (they import SOURCES): LINK20_STUDY=final for the finished re-run.
-STUDY = os.environ.get("LINK20_STUDY", "20261028")
-SOURCES = STUDIES[STUDY]
 # Each study's own baseline mission (the unchanged anchor design, flown once): report scripts compare against this.
 # 20261028: flown 2026-10-22 (~/Jessica/avion_analysis/baseline/baseline_run1.json); re-run: flown 2026-11-12
 # (/data/Jessica/l20_20261112/baseline/baseline_run1.json), same anchor and mission, aviary-mcp a5ef294.
+# A new study needs its own entry here (and in STUDIES); nothing falls back to another study's baseline.
 _BASE_OLD = {"fuel_kg": 18197.0, "gtow_kg": 91660.6, "wing_mass_kg": 8815.2}
 _BASE_NEW = {"fuel_kg": 16390.5, "gtow_kg": 89682.6, "wing_mass_kg": 8664.2}
 BASELINES = {"20261028": _BASE_OLD, "20261112": _BASE_NEW, "final": _BASE_NEW}
-BASELINE = BASELINES[STUDY]
+# Baseline values above are rounded to 0.1 kg; a baseline mission file must agree to within this.
+BASELINE_FILE_TOL_KG = 0.05
+
+
+def require_study(study: str | None) -> str:
+    """The study name, refused unless it is given and known (there is no default study)."""
+    if not study:
+        raise SystemExit("No study selected: set LINK20_STUDY (or pass --study) to one of "
+                         f"{sorted(STUDIES)}. There is no default; each study has its own runs and baseline.")
+    if study not in STUDIES or study not in BASELINES:
+        raise SystemExit(f"Unknown study {study!r}: known studies {sorted(STUDIES)}")
+    return study
+
+
+def env_study() -> str:
+    """The study the report scripts read: LINK20_STUDY, required."""
+    return require_study(os.environ.get("LINK20_STUDY"))
+
+
+def __getattr__(name: str):
+    # STUDY / SOURCES / BASELINE are the env-selected study's (report scripts import them); reading them without
+    # LINK20_STUDY set stops with an error instead of silently using another study's runs or baseline.
+    if name == "STUDY":
+        return env_study()
+    if name == "SOURCES":
+        return STUDIES[env_study()]
+    if name == "BASELINE":
+        return BASELINES[env_study()]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def baseline_fuel_from_file(path: Path) -> float:
+    """The fuel of a baseline mission file written by baseline_mission.py."""
+    return float(json.loads(Path(path).read_text())["run_simulation"]["summary"]["fuel_burned_kg"])
+
+
+def checked_baseline_fuel(path: Path, study: str) -> float:
+    """A baseline mission file's fuel, refused unless it is the given study's baseline (BASELINES)."""
+    study = require_study(study)
+    fuel = baseline_fuel_from_file(path)
+    want = BASELINES[study]["fuel_kg"]
+    if abs(fuel - want) > BASELINE_FILE_TOL_KG:
+        raise SystemExit(f"Baseline file {path} has fuel {fuel:.3f} kg, but study {study!r}'s baseline is "
+                         f"{want:.1f} kg: wrong baseline file for this study.")
+    return fuel
+
+
+def check_links_study(links: pd.DataFrame, study: str, path=None) -> None:
+    """Refuse a links.csv that was not extracted for the given study (its `study` column)."""
+    study = require_study(study)
+    if "study" not in links.columns:
+        raise SystemExit(f"{path or 'links table'} has no `study` column: re-extract it with "
+                         "`python -m analysis.link20.extract --study ...`.")
+    found = set(links["study"].dropna().astype(str))
+    if found != {study}:
+        raise SystemExit(f"{path or 'links table'} is from study {sorted(found)}, not {study!r}.")
 
 # Same floor the runner uses to call a mission "zero fuel" (scripts/stat_batch_runner.py).
 ZERO_FUEL_FLOOR_KG = 100.0
@@ -134,7 +190,7 @@ def mission_summaries(kb: list[dict]) -> list[dict]:
         outputs = e.get("outputs") or {}
         for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
             if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
-                out.append({"seq": e.get("seq"), "tool": e["tool"], **{
+                out.append({"seq": e.get("seq"), "tool": e["tool"], "attempt": int(e.get("attempt") or 1), **{
                     k: holder.get(k) for k in ("fuel_burned_kg", "gtow_kg", "wing_mass_kg")}})
                 break
     return out
@@ -172,7 +228,8 @@ def backward_moves(route: list[str]) -> int | None:
     return sum(1 for a, b in zip(idx, idx[1:]) if b < a)
 
 
-def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: dict) -> dict:
+def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: dict,
+                 pycycle_defaults: dict | None = None) -> dict:
     structure, handler = combo.removeprefix("mdo_f25_").split("_", 1)
     key = f"r{link - 1:03d}_{combo}"
     res = read_json(link_dir / "result.json")
@@ -331,20 +388,33 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
                                    if structure == "networked" and len(granted) > 1 else None)
     row["claim_violations_total"] = res.get("claim_violations_total")
 
-    # --- design parameters the link left ---
+    # --- what the counted mission flew (D1) ---
+    # Every coupled column (wing, fuselage, engine scale, CL, drag factor, wing mass, SU2 CL/CD, takeoff mass,
+    # engine deck) is the input of the counted run_simulation, with its source in src.<column>; plus one flag per
+    # bug signature of 11_bug_checks.md (analysis/link20/flown.py).
+    def steps_of(k: int) -> list[dict]:
+        p = link_dir / f"step_log_attempt{k}.jsonl"
+        return [s for s in read_jsonl(p) if s.get("kind") == "step"]
+
+    row.update(flown.flown_link(link_dir, kb, last, res, carry, steps_of,
+                                pycycle_defaults if pycycle_defaults is not None else {}))
+
+    # --- what the link LEFT (end state, carried to the next link) and design.json's last values ---
+    # Not what flew: a link may change the design after its counted mission (O_IF 13, N_GR 2 ...).
     end = res.get("chain_end_params") or {}
     for p in CHAIN_PARAMS:
-        row[p] = end.get(p)
+        row[f"end.{p}"] = end.get(p)
     eng = (design.get("design_space") or {}).get("engine") or {}
     for p in ENGINE_PARAMS:
         row[f"engine.{p}"] = eng.get(p)
     applied = design.get("mission_applied") or {}
     for p in APPLIED_PARAMS:
-        row[p] = applied.get(p)
+        row[f"design_json.{p}"] = applied.get(p)
     aero, struct, prop = design.get("aero") or {}, design.get("structures") or {}, design.get("propulsion") or {}
-    row.update({"aero.cl_cruise": aero.get("cl_cruise"), "aero.cd_cruise": aero.get("cd_cruise"),
-                "structures.mtom_kg": struct.get("mtom_kg"), "propulsion.sfc_cruise": prop.get("sfc_cruise"),
-                "propulsion.fn_lbf": prop.get("fn_lbf")})
+    row.update({"design_json.aero.cl_cruise": aero.get("cl_cruise"),
+                "design_json.aero.cd_cruise": aero.get("cd_cruise"),
+                "design_json.structures.mtom_kg": struct.get("mtom_kg"),
+                "propulsion.sfc_cruise": prop.get("sfc_cruise"), "propulsion.fn_lbf": prop.get("fn_lbf")})
 
     # --- checks ---
     b187, b214 = b187_hits(kb), b214_hits(kb)
@@ -358,27 +428,45 @@ def extract_link(dataset: str, combo: str, link: int, link_dir: Path, progress: 
     return row
 
 
-def build_table(sources=SOURCES) -> pd.DataFrame:
+def study_pycycle_defaults(sources) -> dict:
+    """pyCycle's design-input defaults, from the first get_design_inputs calls recorded in the study (the B270 check
+    compares the flown deck's engine with them). Empty keys stay missing; the check then reports 'unknown'."""
+    found: dict = {}
+    for _dataset, root, combos in sources:
+        for combo in combos:
+            for p in sorted(root.glob(f"repeat_*/{combo}/tool_calls_attempt*.jsonl")):
+                found.update({k: v for k, v in flown.pycycle_defaults(
+                    [{"tool": r.get("tool"), "result": r.get("result")} for r in read_jsonl(p)
+                     if r.get("tool") == "get_design_inputs"]).items() if k not in found})
+                if all(k in found for k in flown.ENGINE_KEYS):
+                    return found
+    return found
+
+
+def build_table(sources, study: str) -> pd.DataFrame:
+    study = require_study(study)
+    defaults = study_pycycle_defaults(sources)
     rows = []
     for dataset, root, combos in sources:
         progress = read_json(root / "stat_progress.json") or {}
         for combo in combos:
             for link_dir in sorted(root.glob(f"repeat_*/{combo}")):
                 link = int(link_dir.parent.name.split("_")[1]) + 1
-                rows.append(extract_link(dataset, combo, link, link_dir, progress))
+                rows.append({"study": study, **extract_link(dataset, combo, link, link_dir, progress, defaults)})
     return pd.DataFrame(rows)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--study", choices=sorted(STUDIES), default=STUDY,
-                    help="20261028 = the first 20-link study; 20261112 = the re-run after the fixes")
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="20261028 = the first 20-link study; 20261112 = the re-run after the fixes; "
+                         "final = the finished re-run (/data/Jessica/l20_final)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    df = build_table(STUDIES[args.study])
+    df = build_table(STUDIES[args.study], args.study)
     df.to_csv(args.out / "links.csv", index=False)
-    print(f"wrote {len(df)} rows to {args.out / 'links.csv'}")
+    print(f"wrote {len(df)} rows ({args.study}) to {args.out / 'links.csv'}")
 
 
 if __name__ == "__main__":

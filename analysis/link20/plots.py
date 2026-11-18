@@ -7,7 +7,7 @@ one file each) and a line plot over links. Links that did not fly are left out o
 drawn as empty circles at the bottom of line plots. Links still running are left out.
 
 Usage (aipexws8, Avion venv):
-    python -m analysis.link20.plots --links out/links.csv --baseline baseline/baseline_run1.json --out out/plots
+    python -m analysis.link20.plots --study final --links out/links.csv --baseline baseline/baseline_run1.json --out out/plots
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
 from analysis.link20 import rec_params as rp  # noqa: E402
+from analysis.link20.extract import STUDIES, check_links_study, checked_baseline_fuel  # noqa: E402
 from analysis.link20 import recommendations as rec  # noqa: E402
 
 STRUCTURES = ["sequential", "orchestrated", "networked"]
@@ -821,6 +822,8 @@ def session_defaults_from_kb(kb_path: Path, names: list[str]) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--links", type=Path, required=True)
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="the study links.csv was extracted for; the baseline file must be that study's")
     ap.add_argument("--baseline", type=Path, required=True)
     ap.add_argument("--link1-kb", type=Path, required=True,
                     help="a link-1 knowledge_base.jsonl whose first set_aircraft_parameters shows the session defaults")
@@ -829,6 +832,8 @@ def main() -> None:
     setup_style()
 
     df = pd.read_csv(args.links)
+    check_links_study(df, args.study, args.links)
+    checked_baseline_fuel(args.baseline, args.study)      # refused unless it is this study's baseline
     df = df[df.run_status != "in_progress"].copy()
     df["flew"] = df["flew"].astype(bool)
     df["graph_level_num"] = df["graph_level"].map({"simple": 1, "moderate": 2, "complex": 3})
@@ -839,7 +844,7 @@ def main() -> None:
     summ = baseline["run_simulation"]["summary"]
     defaults = session_defaults_from_kb(args.link1_kb, [p for p, _ in PARAMS[13:16]])
     refs = baseline_refs(baseline, defaults)
-    print("baseline refs:", refs)
+    print(f"baseline refs ({args.study}):", refs)   # design_params.py reads this line and checks the study
 
     base = [(summ["fuel_burned_kg"], "Baseline (unchanged design)", REF_STYLE)]
     out = args.out

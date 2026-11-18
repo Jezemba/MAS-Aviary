@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from analysis.link20.extract import SOURCES, ZERO_FUEL_FLOOR_KG, mission_summaries, read_jsonl
+from analysis.link20.extract import STUDIES, ZERO_FUEL_FLOOR_KG, mission_summaries, read_jsonl, require_study
 
 # Pipeline stage -> the MAS (server, tool) that performs it and the optimizer step name(s) that record it.
 STAGES = {
@@ -57,7 +57,7 @@ def evaluation_counts(record: dict) -> dict:
     return row
 
 
-def mas_table(sources=SOURCES) -> pd.DataFrame:
+def mas_table(sources) -> pd.DataFrame:
     rows = []
     for dataset, root, combos in sources:
         for combo in combos:
@@ -99,9 +99,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--runs", type=Path, nargs="*", default=[], help="optimizer run dirs (pso/ga/slsqp)")
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True, help="which study's MAS runs to count")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    mas = mas_table()
+    mas = mas_table(STUDIES[require_study(args.study)])
     opt = optimizer_table(args.runs)
     mas.to_csv(args.out / "eval_counts_links.csv", index=False)
     opt.to_csv(args.out / "eval_counts_optimizer_iterations.csv", index=False)

@@ -6,7 +6,7 @@ link 1 is the agents' first link. Hollow optimizer markers: that design's missio
 --converged-only the optimizers use converged missions only (an iteration with none is left out).
 
 Usage (aipexws8, Avion venv):
-    python -m analysis.link20.optimizer_compare --links out_20261028/links.csv \
+    python -m analysis.link20.optimizer_compare --study 20261028 --links out_20261028/links.csv \
         --baseline baseline/baseline_run1.json --runs <c2>/pso <c2>/ga <c2>/slsqp \
         --out out_20261028/plots/9_optimizer_baselines
 """
@@ -20,6 +20,7 @@ from pathlib import Path
 import pandas as pd
 from matplotlib.lines import Line2D
 
+from analysis.link20.extract import STUDIES, check_links_study, checked_baseline_fuel
 from analysis.link20.plots import (COMBOS, HANDLER_LABELS, HANDLER_LS, HANDLERS, REF_STYLE, STRUCT_COLORS,
                                    STRUCT_LABELS, STRUCTURES, plt, save, setup_style)
 
@@ -116,16 +117,17 @@ def figure(links: pd.DataFrame, opt: dict, baseline: float | None, panels: bool,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--links", type=Path, required=True)
-    ap.add_argument("--baseline", type=Path)
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="the study links.csv was extracted for; the baseline file must be that study's")
+    ap.add_argument("--baseline", type=Path, required=True)
     ap.add_argument("--runs", type=Path, nargs="+", required=True, help="optimizer run dirs, named pso/ga/slsqp")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
     setup_style()
     links = pd.read_csv(args.links)
-    baseline = None
-    if args.baseline and args.baseline.is_file():
-        baseline = json.loads(args.baseline.read_text())["run_simulation"]["summary"]["fuel_burned_kg"]
+    check_links_study(links, args.study, args.links)
+    baseline = checked_baseline_fuel(args.baseline, args.study)     # refused unless it is this study's baseline
     for converged_only, suffix in ((False, ""), (True, "_converged_only")):
         opt = {r.name: optimizer_series(r, converged_only) for r in args.runs if r.name in OPTIMIZERS}
         for panels, variant in ((True, "panels"), (False, "single")):

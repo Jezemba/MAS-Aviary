@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.extract import SOURCES, read_json, read_jsonl
 
 ABBREV = {"sequential": "S", "orchestrated": "O", "networked": "N",
@@ -64,6 +65,7 @@ APPLIES = {
 
 def load(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
+    check_links_study(df, env_study(), path)
     df["ab"] = df.structure.map(ABBREV) + "_" + df.handler.map(ABBREV)
     df["flew"] = df["flew"].astype(bool)
     df["graph_level_num"] = df["graph_level"].map({"simple": 1, "moderate": 2, "complex": 3})

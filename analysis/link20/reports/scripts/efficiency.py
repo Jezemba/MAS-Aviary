@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.extract import SOURCES, counted_step_log, read_json, read_jsonl
 
 from analysis.link20.extract import BASELINE as _BASELINE
@@ -181,6 +182,7 @@ def main() -> None:
     pd.set_option("display.max_columns", 60)
 
     df = pd.read_csv(args.links).copy()
+    check_links_study(df, env_study(), args.links)
     df["combo"] = [ABBR[(s, h)] for s, h in zip(df.structure, df.handler)]
     df["timed_out"] = df.fail_error.fillna("").str.contains("480m timeout")
     dirs = link_dirs()

@@ -5,14 +5,13 @@ mission_converged per combination and iteration) and the baseline mission JSON (
 the counted mission converged, hollow = it did not, x on the axis = the iteration did not fly (no fuel value; nothing
 is interpolated). Neutral dashed line = the baseline's fuel, dotted line = the 15,000 kg fuel limit.
 
-    python -m analysis.link20.fuel_panels --table reports/ladder/iterations.csv \
+    python -m analysis.link20.fuel_panels --study final --table reports/ladder/iterations.csv \
         --baseline baseline/baseline_run1.json --out out/fuel_burn_line_panels
 writes <out>.pdf (vector), <out>.png and <out>_data.csv (the plotted values).
 """
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import matplotlib
@@ -23,6 +22,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
+from analysis.link20.extract import STUDIES, checked_baseline_fuel  # noqa: E402
 from analysis.link20.plots import STRUCT_COLORS, setup_style  # noqa: E402
 
 FUEL_LIMIT_KG = 15_000.0
@@ -34,12 +34,14 @@ STRUCT = {"S": "sequential", "O": "orchestrated", "N": "networked"}
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--table", type=Path, required=True)
+    ap.add_argument("--study", choices=sorted(STUDIES), required=True,
+                    help="the study the table is from; the baseline file must be that study's")
     ap.add_argument("--baseline", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True, help="output path without suffix")
     args = ap.parse_args()
 
+    base = checked_baseline_fuel(args.baseline, args.study)     # refused unless it is this study's baseline
     t = pd.read_csv(args.table)
-    base = json.loads(args.baseline.read_text())["run_simulation"]["summary"]["fuel_burned_kg"]
     setup_style()
     fig, axes = plt.subplots(3, 3, figsize=(11.0, 8.4), sharex=True, sharey=True)
     flown = t[t.flew == "y"]

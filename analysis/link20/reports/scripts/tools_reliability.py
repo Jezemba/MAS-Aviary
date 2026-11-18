@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.extract import (B187_FN_LBF, B187_SCALE, HOME, SOURCES, ZERO_FUEL_FLOOR_KG, error_code,
                                      read_json, read_jsonl)
 
@@ -273,6 +274,7 @@ def main() -> None:
     pd.set_option("display.max_colwidth", 200)
 
     links = pd.read_csv(args.links)
+    check_links_study(links, env_study(), args.links)
     links = links.assign(abbrev=[abbrev(c) for c in links.combination])
     retries = retry_reasons()
     rows, calls, traces, fn_des = [], [], [], []

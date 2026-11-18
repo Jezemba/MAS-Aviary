@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 
 ORDER = ["S_SP", "S_IF", "S_GR", "O_SP", "O_IF", "O_GR", "N_IF", "N_GR"]
 ABBREV = {"sequential": "S", "orchestrated": "O", "networked": "N",
@@ -129,7 +130,9 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     pd.set_option("display.width", 200, "display.max_columns", 20)
 
-    table = iteration_table(pd.read_csv(args.links), pd.read_csv(args.root / "physics" / "links_physics.csv"))
+    links = pd.read_csv(args.links)
+    check_links_study(links, env_study(), args.links)
+    table = iteration_table(links, pd.read_csv(args.root / "physics" / "links_physics.csv"))
     table.to_csv(args.out / "iterations.csv", index=False)
     (args.out / "iterations_latex_rows.tex").write_text(latex_rows(table))
     print("iterations:", len(table), "rows")

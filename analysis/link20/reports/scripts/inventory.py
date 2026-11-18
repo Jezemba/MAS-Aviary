@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.extract import HOME, SOURCES, read_json
 
 ABBREV = {"sequential": "S", "orchestrated": "O", "networked": "N",
@@ -69,6 +70,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(args.links)
+    check_links_study(df, env_study(), args.links)
     inv = inventory(df)
     inv.to_csv(args.out / "inventory.csv", index=False)
     rerun = rerun_status()

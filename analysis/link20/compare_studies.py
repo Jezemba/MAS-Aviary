@@ -1,17 +1,18 @@
 """Before / after: the first 20-link study (2026-10-28) against the re-run after the fixes (2026-11-12).
 
 Fuel per link for each of the 8 combinations, both studies in one panel, from each study's links.csv (extract.py).
-The two studies have different baselines (the unchanged starting design flown on that study's aviary-mcp:
-18,197 kg before, 16,391 kg after), so a second figure shows the saving against each study's own baseline.
+The two studies have different baselines (the unchanged starting design flown on that study's aviary-mcp; each
+study's value is in extract.BASELINES and each baseline file is checked against it), so a second figure shows
+the saving against each study's own baseline.
 
 A link's fuel is the last successful mission in its knowledge base (the runner's rule, extract.py). Filled = that
 mission converged, hollow = it did not. Links that did not fly, and links still running, are left out.
 
 Usage (aipexws8, Avion venv):
     python -m analysis.link20.compare_studies \\
-        --before ~/Jessica/avion_analysis/out_20261028/links.csv \\
+        --before ~/Jessica/avion_analysis/out_20261028/links.csv --before-study 20261028 \\
         --before-baseline ~/Jessica/avion_analysis/baseline/baseline_run1.json \\
-        --after /data/Jessica/l20_20261112/links.csv \\
+        --after /data/Jessica/l20_20261112/links.csv --after-study 20261112 \\
         --after-baseline /data/Jessica/l20_20261112/baseline/baseline_run1.json \\
         --out /data/Jessica/l20_compare_20261028_vs_20261112
 """
@@ -29,13 +30,18 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
+from analysis.link20.extract import STUDIES, check_links_study, checked_baseline_fuel  # noqa: E402
 from analysis.link20.plots import HANDLER_LABELS, HANDLERS, STRUCT_COLORS, STRUCT_LABELS, STRUCTURES  # noqa: E402
 
 BEFORE_COLOUR = "0.6"
 
 
-def load(links: Path, study: str) -> pd.DataFrame:
+def load(links: Path, study: str, study_name: str | None = None) -> pd.DataFrame:
+    """links.csv as one side of the comparison (`study` = before / after). With study_name, the file must have been
+    extracted for that study (its `study` column)."""
     d = pd.read_csv(links)
+    if study_name is not None:
+        check_links_study(d, study_name, links)
     d = d[d.run_status != "in_progress"].copy()
     d["flew"] = d["flew"].astype(bool)
     d = d[d.flew & d.fuel_kg.notna()].copy()
@@ -106,14 +112,19 @@ def panels(d: pd.DataFrame, base: dict, value: str, ylabel: str, path: Path) -> 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--before", type=Path, required=True)
+    ap.add_argument("--before-study", choices=sorted(STUDIES), required=True)
     ap.add_argument("--before-baseline", type=Path, required=True)
     ap.add_argument("--after", type=Path, required=True)
+    ap.add_argument("--after-study", choices=sorted(STUDIES), required=True)
     ap.add_argument("--after-baseline", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    base = {"before": baseline_fuel(args.before_baseline), "after": baseline_fuel(args.after_baseline)}
-    d = pd.concat([load(args.before, "before"), load(args.after, "after")], ignore_index=True)
+    # Each side against its own study's baseline; a baseline file of the other study is refused.
+    base = {"before": checked_baseline_fuel(args.before_baseline, args.before_study),
+            "after": checked_baseline_fuel(args.after_baseline, args.after_study)}
+    d = pd.concat([load(args.before, "before", args.before_study), load(args.after, "after", args.after_study)],
+                  ignore_index=True)
     d["saving_pct"] = [100.0 * (base[st] - f) / base[st] for st, f in zip(d.study, d.fuel_kg)]
     d[["study", "combination", "structure", "handler", "link", "fuel_kg", "gtow_kg", "converged",
        "saving_pct"]].to_csv(args.out / "fuel_by_link_before_after.csv", index=False)

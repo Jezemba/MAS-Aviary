@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.reports.scripts import design_params as dp
 from analysis.link20.reports.scripts import recommendations_report as rr
 
@@ -154,6 +155,7 @@ def main() -> None:
     a.out.mkdir(parents=True, exist_ok=True)
 
     links = pd.read_csv(a.links)
+    check_links_study(links, env_study(), a.links)
     items = pd.read_csv(a.items)
     print("items:", len(items))
 

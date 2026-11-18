@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from analysis.link20.extract import check_links_study, env_study  # links.csv must be the LINK20_STUDY study
 from analysis.link20.extract import SOURCES, ZERO_FUEL_FLOOR_KG, read_jsonl
 
 # Baseline: the unchanged anchor design flown 2026-10-22 on a separate aviary server (SLSQP not converged).
@@ -36,6 +37,7 @@ CONTAM_COLS = ["b187", "b214"]
 
 def load_links(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
+    check_links_study(df, env_study(), path)
     df["combo"] = df["structure"].map(STRUCT_ABBR) + "_" + df["handler"].map(HANDLER_ABBR)
     df["combo"] = pd.Categorical(df["combo"], COMBO_ORDER, ordered=True)
     for c in ["flew", "b187", "b187_cycle", "b187_inherited_only", "b214"]:
