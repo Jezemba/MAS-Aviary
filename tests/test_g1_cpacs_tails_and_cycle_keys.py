@@ -181,6 +181,7 @@ def test_g1_switch_off_restores_the_bench_tails_explicitly(fresh, monkeypatch):
     dp._capture_wing_mass_from_mass_estimate("estimate_mass", _estimate())
     out, refusal = _set({})
     assert refusal is None and not any(k in out["parameters"] for k in dp.TAIL_KEYS)
+    fresh.data_store["_coupled_version_applied"] = fresh.data_store.get("_coupled_version")   # aviary took the set
     assert dp.mission_input_refusal("run_simulation", {"session_id": "av"}) is None
 
 
