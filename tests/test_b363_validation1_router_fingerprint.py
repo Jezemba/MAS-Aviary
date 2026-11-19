@@ -432,3 +432,29 @@ def test_v9_ngr_link2_a_span_refusal_does_not_route_to_geometry():
     assert (d.next_node, d.level, d.rule) == (gr.MISSION, gr.SIMPLE, "1")
     sim = gr.route_after_simulation([row], {}, None, gr.SIMPLE)
     assert sim.next_node != gr.GEOMETRY and sim.level != gr.COMPLEX
+
+
+# ======================================================================================================================
+# V1 audit -- the staged pipeline's "validation exhausted" check read the 2,000-character message copy
+# ======================================================================================================================
+
+def test_v1_staged_mission_stage_is_not_validation_exhausted_by_a_cut_reply():
+    """S_SP, O_SP (both links, both validation runs): result.json mission_architect metadata early_abort
+    "validation_exhausted" although set_aircraft_parameters answered valid: true -- its ~3.5 kB reply was cut at
+    2,000 characters in the message copy and did not parse. The check reads the stage's KB records now."""
+    from src.coordination.history import ToolCallRecord
+    from src.coordination.staged_pipeline_handler import StagedPipelineHandler
+
+    reply = next(c["result"] for c in _calls("val_seq_graph/repeat_000", "set_aircraft_parameters")
+                 if c["result"].get("success") is True)
+    assert reply["valid"] is True and len(json.dumps(reply)) > 2000
+    tc = ToolCallRecord(tool_name="set_aircraft_parameters", inputs={}, output=json.dumps(reply)[:2000],
+                        duration_seconds=0.0)
+    assert StagedPipelineHandler._validation_exhausted([tc]) is True            # the message copy: the old verdict
+    entry = kbm.get_kb().append(tool="set_aircraft_parameters", server="aviary", agent="mission_architect", role="",
+                                status="success", inputs={}, outputs=reply)
+    assert StagedPipelineHandler._validation_exhausted([tc], [entry]) is False
+    refused = kbm.get_kb().append(tool="set_aircraft_parameters", server="aviary", agent="mission_architect",
+                                  role="", status="failed", inputs={},
+                                  outputs={"success": False, "valid": False, "error_code": "INVALID"})
+    assert StagedPipelineHandler._validation_exhausted([tc], [refused]) is True

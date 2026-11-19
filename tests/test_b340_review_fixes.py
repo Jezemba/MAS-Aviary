@@ -94,12 +94,19 @@ class World:
         return json.loads(out) if isinstance(out, str) else out
 
     def morph(self, to):
-        """A TiGL morph + export: the geometry epoch moves, the measured wing is the new one."""
-        from src.tools.duplicate_guard import _state as guard_state
+        """A TiGL morph + export: the measured wing is the new one (B363: the design is the geometry's content --
+        tigl's measured before / after -- so the morph is observed as the middleware observes it)."""
+        from src.tools import duplicate_guard as dg
 
+        before = self.geometry
         self.geometry = to
-        gs = guard_state()
-        gs["geometry_epoch"]["tigl-1"] = gs["geometry_epoch"].get("tigl-1", 0) + 1
+        gs = dg._state()
+        if "tigl-1" not in gs["geometry_identity"]:
+            dg.observe("open_cpacs", {"source_type": "xml_string", "source": "<cpacs>A</cpacs>"},
+                       json.dumps({"session_id": "tigl-1"}), "success", {"seq": 1})
+        dg.observe("set_high_level_parameters", {"session_id": "tigl-1", "component_uid": "Wing1"},
+                   json.dumps({"geometry_morph": {"rebuilt": True, "before": {"design": float(ord(before))},
+                                                  "after": {"design": float(ord(to))}}}), "success", {"seq": 2})
         dp._design_state.data_store["geometry_wing"] = dict(WING[to])
 
     def fn_des_sent(self):
