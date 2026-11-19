@@ -43,13 +43,32 @@ PARAM_PRODUCER = [(re.compile(r"LIFT_COEFFICIENT|DRAG_COEFF", re.I), AERO),
                   (re.compile(r"Aircraft\.(Wing|Fuselage|HorizontalTail|VerticalTail)\.", re.I), GEOMETRY)]
 # Words in a recommended change, by the discipline that produces the variable (rules 10-13). Geometry first:
 # "increase aspect ratio to cut induced drag" is a geometry change, whatever role it was addressed to.
+#
+# W3 (validation 2, O_GR it2): checked against what each discipline can change under the current contract.
+#   * Drag, L/D, CL and CD of the mission are aviary's FLOPS aerodynamics of the GEOMETRY (B324 drag model; SU2 is
+#     solved and recorded, not flown; the design CL is the framework's W/(q S)); the aerodynamics analyst has no
+#     geometry tools, so "reduce drag / optimise L/D / lower CL" sent there changes nothing (O_GR it2 spent its
+#     budget on it). They route to GEOMETRY.
+#   * The mass result follows the geometry (and the carried engine): the mass method, material and load factor are
+#     the study's fixed controls (data_plane._PINNED_MASS_ARGS), so "reduce wing / structural mass, lightweight"
+#     sent to the structures analyst changes nothing either. They route to GEOMETRY. Asking for the estimate itself
+#     or naming the (fixed) material stays with the structures analyst, its owner.
+#   * SU2 / CFD / mesh / trim / angle-of-attack work stays with the aerodynamics analyst (it owns the solve).
+#   * Propulsion (cycle inputs; Fn_DES and the engine scale are re-sized when it re-runs) and the mission
+#     conditions are unchanged.
+# Order matters (first match wins): geometry design variables and drag words, propulsion, the mass and SU2
+# procedures, then the derived aero / mass quantities (to geometry), then the mission.
 RECOMMENDATION_WORDS = [
     (GEOMETRY, r"aspect[ _-]?ratio|wing[ _-]?area|\bspan\b|sweep|taper|planform|fuselage|chord|dihedral|"
                r"Wing1|set_high_level_parameters|\bmorph|geometry|airfoil|aerofoil|thickness|leading[ _-]?edge|"
-               r"\bcamber|\btwist|incidence"),
-    (PROPULSION, r"\bBPR\b|bypass|fan[ ._]?PR|\bLPC\b|\bHPC\b|\bT4|Fn_DES|thrust|\bengine\b|\bTSFC\b|\bSFC\b|cycle|pycycle"),
-    (MASS, r"\bmass\b|material|structur|\bOEM\b|\bMTOM\b|wing[ _]?weight|composite|aluminium|aluminum"),
-    (AERO, r"\bmesh\b|\btrim|\bCFD\b|\bSU2\b|\bAOA\b|angle of attack|\bCL\b|\bCD\b|lift coefficient"),
+               r"\bcamber|\btwist|incidence|wing[ _-]?(design|shape)|"
+               r"\bdrag\b|lift[ _-]?to[ _-]?drag|\bL\s*/\s*D\b|L_OVER_D|\bLoD\b|induced|wetted"),
+    (PROPULSION, r"\bBPR\b|bypass|fan[ ._]?PR|\bLPC\b|\bHPC\b|\bT4|Fn_DES|thrust|\bengine\b|\bTSFC\b|\bSFC\b|\bSFC_CRUISE\b|cycle|"
+                 r"pycycle"),
+    (MASS, r"estimate_mass|mass[ _-]?estimat|re-?estimat|mass[ _-]?mcp|material|composite|aluminium|aluminum"),
+    (AERO, r"\bmesh\b|\btrim|\bCFD\b|\bSU2\b|\bAOA\b|angle of attack"),
+    (GEOMETRY, r"\bCL\b|\bCD\b|\bCL_CRUISE\b|\bCD_CRUISE\b|lift coefficient|drag coefficient|"
+               r"\bmass\b|structur|\bOEM\b|\bMTOM\b|wing[ _]?weight|lightweight|light[ _-]weight"),
     (MISSION, r"\bmission\b|cruise[ _]?(mach|altitude)|\brange\b|altitude|reserve"),
 ]
 _ROLE_NODE = {"geometry": GEOMETRY, "aero": AERO, "struct": MASS, "mass": MASS, "propul": PROPULSION,

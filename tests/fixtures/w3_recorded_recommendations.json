@@ -1,0 +1,1041 @@
+{
+ "source": "integrator recommendations recorded in design.json coordination_signals (ws8 final_val2 runs + ws5/ws6/ws3 copies, final_val, l20_final), distinct (to, change) pairs; routed_before = graph_router at 0fde82e",
+ "recommendations": [
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "CL_CRUISE 0.5588 -> 0.58",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_004/mdo_f25_orchestrated_graph_routed/design.json .../repeat_004/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "CL_CRUISE 0.5799 -> 0.55",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_004/mdo_f25_orchestrated_graph_routed/design.json .../repeat_004/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Further reduce cruise drag coefficient to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_008/mdo_f25_sequential_graph_routed/design.json .../repeat_008/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Investigate the discrepancy between SU2 and Aviary aerodynamic results (CL=0.558 vs 0.948, CD=0.0139 vs 0.084)",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "aerodynamics_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_002/mdo_f25_sequential_graph_routed/design.json .../repeat_002/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce CD_cruise by optimizing wing shape or adjusting sweep angle",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_iter .../repeat_001/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient from 0.1061 to <= 0.10 to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_015/mdo_f25_sequential_graph_routed/design.json .../repeat_015/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient from 0.1448 to <= 0.10 to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_013/mdo_f25_sequential_graph_routed/design.json .../repeat_013/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient from 0.1454 to <= 0.10 to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_016/mdo_f25_sequential_graph_routed/design.json .../repeat_016/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient from 0.1455 to <= 0.10 to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_014/mdo_f25_sequential_graph_routed/design.json .../repeat_014/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient from 0.1468 to <= 0.10 to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_013/mdo_f25_sequential_graph_routed/design.json .../repeat_013/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient further to achieve target fuel burn and gross takeoff weight within constraints",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_017/mdo_f25_sequential_graph_routed/design.json .../repeat_017/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient further to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_009/mdo_f25_sequential_graph_routed/design.json .../repeat_009/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise drag coefficient to decrease fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_004/mdo_f25_sequential_graph_routed/design.json .../repeat_004/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise lift coefficient (CL_CRUISE) from 0.6045 to 0.58 to improve aerodynamic efficiency",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_005/mdo_f25_orchestrated_graph_routed/design.json .../repeat_005/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise lift coefficient further to decrease fuel burn",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_017/mdo_f25_orchestrated_graph_routed/design.json .../repeat_017/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce cruise lift coefficient further to decrease fuel burn and bring GTOW within constraints",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_018/mdo_f25_orchestrated_graph_routed/design.json .../repeat_018/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce drag coefficient by optimizing wing shape",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_017/mdo_f25_sequential_iterative_feedback/design.json .../repeat_017/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce drag coefficient further by optimizing wing shape",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_018/mdo_f25_sequential_iterative_feedback/design.json .../repeat_018/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Reduce drag coefficient or optimize lift-to-drag ratio",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_orch_graph .../repeat_001/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Slightly reduce cruise lift coefficient to decrease fuel burn marginally",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_016/mdo_f25_orchestrated_graph_routed/design.json .../repeat_016/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Wing1 aspect_ratio 10.0 -> 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_000/mdo_f25_sequential_graph_routed/design.json .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Wing1 aspect_ratio 11.0 -> 12.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_000/mdo_f25_sequential_graph_routed/design.json .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Wing1 aspect_ratio 12.0 -> 13.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_000/mdo_f25_sequential_graph_routed/design.json .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Wing1 aspect_ratio 13.0 -> 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_013/mdo_f25_sequential_graph_routed/design.json .../repeat_013/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "aerodynamics_analyst",
+   "recommended_change": "Wing1 aspect_ratio 9.36 -> 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_000/mdo_f25_sequential_graph_routed/design.json .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Adjust wing taper ratio to bring it within valid range for FLOPS estimation",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_000/mdo_f25_orchestrated_graph_routed/design.json .../repeat_000/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Adjust wing taper ratio to fall within valid ranges",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_010/mdo_f25_orchestrated_graph_routed/design.json .../repeat_010/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease Wing1 area from 110.0 to 105.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_015/mdo_f25_sequential_iterative_feedback/design.json .../repeat_015/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease Wing1 area from 122.83 m\u00b2 to 110 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_001/mdo_f25_networked_graph_routed/design.json .../repeat_001/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease Wing1 area from 122.83 to 115.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_002/mdo_f25_sequential_iterative_feedback/design.json .../repeat_002/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease wing area from 105.0 m\u00b2 to 95.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_009/mdo_f25_sequential_iterative_feedback/design.json .../repeat_009/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease wing area from 120.0 m\u00b2 to 115.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_015/mdo_f25_sequential_staged_pipeline/design.json .../repeat_015/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease wing area from 95.0 to 90.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_011/mdo_f25_sequential_iterative_feedback/design.json .../repeat_011/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease wing area to reduce MTOW and fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_017/mdo_f25_networked_iterative_feedback/design.json .../repeat_017/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Decrease wing aspect ratio to reduce MTOW and fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_015/mdo_f25_networked_iterative_feedback/design.json .../repeat_015/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Export the updated CPACS file and trigger mass estimation to provide the latest MTOM value required for engine cycle analysis.",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_015/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_015/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Further reduce wing area and optimize aspect ratio to decrease GTOW and fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_017/mdo_f25_networked_graph_routed/design.json .../repeat_017/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Further reduce wing area or adjust aspect ratio to decrease fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_009/mdo_f25_networked_iterative_feedback/design.json .../repeat_009/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 area from 122.83 m\u00b2 to 125 m\u00b2 and adjust aspect_ratio from 9.36 to 9.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_graph .../repeat_000/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 area from 124.99 m\u00b2 to 127 m\u00b2 and adjust aspect_ratio from 9.5 to 9.7",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_graph .../repeat_000/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 10.0 to 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_000/mdo_f25_networked_graph_routed/design.json .../repeat_000/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 10.5 to 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_005/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_005/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 12.5 to 13.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_016/mdo_f25_sequential_iterative_feedback/design.json .../repeat_016/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 9.36 to 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_iter .../repeat_000/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 9.99 to 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_001/mdo_f25_sequential_iterative_feedback/design.json .../repeat_001/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase Wing1 aspect_ratio from 9.9999 to 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_iter .../repeat_001/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area from 100.0 to 110.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_014/mdo_f25_sequential_iterative_feedback/design.json .../repeat_014/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area from 115.0 m\u00b2 to 120.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_016/mdo_f25_sequential_staged_pipeline/design.json .../repeat_016/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area from 122.83 m\u00b2 to 125 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val/analysis_check/copies/ws5/runs/val_seq_staged .../repeat_001/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area from 90.0 to 100.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_013/mdo_f25_sequential_iterative_feedback/design.json .../repeat_013/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area from 95.0 m\u00b2 to 105.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_008/mdo_f25_sequential_iterative_feedback/design.json .../repeat_008/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area further to improve aerodynamic efficiency and reduce fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_019/mdo_f25_networked_iterative_feedback/design.json .../repeat_019/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area further to reduce fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_005/mdo_f25_networked_iterative_feedback/design.json .../repeat_005/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area or adjust aspect ratio to reduce fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_staged .../repeat_000/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area to improve lift-to-drag ratio and reduce fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_018/mdo_f25_networked_iterative_feedback/design.json .../repeat_018/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area to reduce drag and improve thrust-to-weight ratio",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_018/mdo_f25_sequential_graph_routed/design.json .../repeat_018/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area to reduce fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val/runs/val_net_iter .../repeat_000/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing area to reduce fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_007/mdo_f25_sequential_graph_routed/design.json .../repeat_007/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 10.0 to 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_graph .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 10.5 to 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_graph .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 11.0 to 11.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_graph .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 11.0 to 12.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_010/mdo_f25_sequential_iterative_feedback/design.json .../repeat_010/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 11.9999 to 12.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_012/mdo_f25_sequential_iterative_feedback/design.json .../repeat_012/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 9.36 to 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_graph .../repeat_000/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 9.36 to 10.0 to improve aerodynamic efficiency and reduce fuel burn.",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_net_graph .../v1b/s_if_link1"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 9.36 to 9.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/ws3_copy/runs/val2_seq_iter .../repeat_000/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 9.37 to 10.0 to improve aerodynamic efficiency",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_000/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_000/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio from 9.5 to 9.7",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/ws3_copy/runs/val2_seq_iter .../repeat_001/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio further from 10.0 to 10.5 to reduce fuel burn below 15,000 kg",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val/ws3_copy/runs/val_seq_iter .../repeat_001/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio further to improve L/D ratio",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_014/mdo_f25_networked_iterative_feedback/design.json .../repeat_014/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio to improve L/D ratio",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_013/mdo_f25_networked_iterative_feedback/design.json .../repeat_013/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Increase wing aspect ratio to improve aerodynamic efficiency",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_006/mdo_f25_networked_iterative_feedback/design.json .../repeat_006/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 area from 110 m\u00b2 to 95 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_001/mdo_f25_sequential_graph_routed/design.json .../repeat_001/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 area from 122.83 m\u00b2 to 110 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_000/mdo_f25_networked_graph_routed/design.json .../repeat_000/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 area from 122.83 m\u00b2 to 115 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_011/mdo_f25_sequential_staged_pipeline/design.json .../repeat_011/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 area further from 85 m\u00b2 to 75 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_002/mdo_f25_sequential_graph_routed/design.json .../repeat_002/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 area further from 95 m\u00b2 to 85 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_002/mdo_f25_sequential_graph_routed/design.json .../repeat_002/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce Wing1 aspect_ratio from 12.0 to 11.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_016/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_016/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area and optimize aspect ratio to decrease fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_019/mdo_f25_networked_graph_routed/design.json .../repeat_019/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area from 105.0 m\u00b2 to 95.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_019/mdo_f25_sequential_iterative_feedback/design.json .../repeat_019/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area from 115.0 m\u00b2 to 105.0 m\u00b2",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_iter/repeat_005/mdo_f25_sequential_iterative_feedback/design.json .../repeat_005/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area further and optimize aspect ratio to decrease fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_019/mdo_f25_networked_graph_routed/design.json .../repeat_019/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area further to decrease GTOW and fuel burn while ensuring aerodynamic efficiency is maintained",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_015/mdo_f25_networked_graph_routed/design.json .../repeat_015/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area further to decrease GTOW and fuel burn while maintaining aerodynamic efficiency",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_017/mdo_f25_networked_graph_routed/design.json .../repeat_017/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area or increase aspect ratio to decrease fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws6/runs/val2_orch_iter .../repeat_000/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area to decrease GTOW while ensuring fuel burn remains within constraints",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_graph/repeat_011/mdo_f25_networked_graph_routed/design.json .../repeat_011/mdo_f25_networked_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area to decrease MTOW and fuel burn",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_graph/repeat_018/mdo_f25_sequential_graph_routed/design.json .../repeat_018/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing area to decrease fuel burn and GTOW",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20c_net_iter/repeat_008/mdo_f25_networked_iterative_feedback/design.json .../repeat_008/mdo_f25_networked_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Reduce wing aspect ratio from 11.0 to 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_017/mdo_f25_sequential_staged_pipeline/design.json .../repeat_017/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing aspect_ratio 9.9999 -> 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_003/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_003/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.0 -> 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws5/runs/val2_seq_staged .../repeat_001/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.0 -> 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_001/mdo_f25_sequential_staged_pipeline/design.json .../repeat_001/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.5 -> 10.7",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_007/mdo_f25_orchestrated_graph_routed/design.json .../repeat_007/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.5 -> 11.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws6/runs/val2_orch_iter .../repeat_001/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.5 -> 9.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_003/mdo_f25_sequential_staged_pipeline/design.json .../repeat_003/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 10.7 -> 10.8",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_007/mdo_f25_orchestrated_graph_routed/design.json .../repeat_007/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 11.0 -> 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_002/mdo_f25_sequential_staged_pipeline/design.json .../repeat_002/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 11.5 -> 12.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_018/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_018/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 8.5 -> 9.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_005/mdo_f25_sequential_staged_pipeline/design.json .../repeat_005/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 9.0 -> 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_006/mdo_f25_sequential_staged_pipeline/design.json .../repeat_006/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 9.36 -> 10.0",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_000/mdo_f25_sequential_staged_pipeline/design.json .../repeat_000/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 9.36 -> 9.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws6/runs/val2_orch_staged .../repeat_000/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 9.5 -> 8.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_seq_staged/repeat_004/mdo_f25_sequential_staged_pipeline/design.json .../repeat_004/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 aspect_ratio 9.9999 -> 10.5",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/analysis_check/copies/ws6/runs/val2_orch_iter .../repeat_001/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "geometry_engineer",
+   "recommended_change": "Wing1 taper_ratio 0.246 -> 0.25",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_019/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_019/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Adjust cruise lift coefficient to reduce fuel burn slightly below constraint threshold",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_016/mdo_f25_orchestrated_graph_routed/design.json .../repeat_016/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Adjust mission parameters to reduce fuel burn and GTOW",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "final_val2/analysis_check/copies/ws6/runs/val2_orch_staged .../repeat_001/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Adjust mission parameters to reduce fuel burn and MTOW by optimizing cruise Mach number or altitude.",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "final_val/analysis_check/copies/ws6/runs/val_orch_iter .../repeat_000/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Increase engine thrust or reduce aircraft weight to meet fuel burn and GTOW constraints",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_019/mdo_f25_sequential_graph_routed/design.json .../repeat_019/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Optimize cruise lift coefficient or adjust mission parameters to reduce fuel_burned_kg",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_003/mdo_f25_orchestrated_graph_routed/design.json .../repeat_003/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce GTOW by adjusting cruise altitude or Mach number to bring gross takeoff weight below 90000 kg",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "final_val/analysis_check/copies/ws6/runs/val_orch_iter .../repeat_001/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTO) by optimizing payload distribution or reducing fuel reserves",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_011/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_011/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTO) by optimizing payload distribution or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_011/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_011/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTO) by optimizing payload or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_016/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_016/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTOW) by optimizing payload distribution or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_006/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_006/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce aircraft weight or increase engine thrust to meet fuel burn and GTOW constraints",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_019/mdo_f25_sequential_graph_routed/design.json .../repeat_019/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce fuel burn by optimizing cruise lift coefficient or mission range",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_014/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_014/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce fuel_burned_kg slightly by optimizing cruise lift coefficient or adjusting mission parameters",
+   "routed_before": "aerodynamics_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_001/mdo_f25_orchestrated_graph_routed/design.json .../repeat_001/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GROSS_MASS_KG) by optimizing payload or fuel distribution",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_008/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_008/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GROSS_MASS_KG) by optimizing payload or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_000/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_000/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GTO) by optimizing payload distribution or reducing fuel reserves",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_009/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_009/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GTO) by optimizing payload distribution or reducing fuel reserves.",
+   "routed_before": "mission_architect",
+   "routed_after": "mission_architect",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_010/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_010/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GTO) by optimizing payload distribution or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_003/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_003/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "mission_architect",
+   "recommended_change": "Reduce gross takeoff weight (GTO) by optimizing payload or reducing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_002/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_002/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Aircraft.Engine.SCALE_FACTOR 1.79 -> 1.5",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_orch_graph/repeat_009/mdo_f25_orchestrated_graph_routed/design.json .../repeat_009/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Further increase engine thrust to reduce fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_003/mdo_f25_sequential_graph_routed/design.json .../repeat_003/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine bypass ratio from 5.105 to 6.0",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_018/mdo_f25_sequential_staged_pipeline/design.json .../repeat_018/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine bypass ratio further from 6.0 to 7.0",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_019/mdo_f25_sequential_staged_pipeline/design.json .../repeat_019/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine scale factor from 1.503 to 1.6",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_iter/repeat_004/mdo_f25_sequential_iterative_feedback/design.json .../repeat_004/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine scale factor from 1.508 to 1.6",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_iter/repeat_003/mdo_f25_sequential_iterative_feedback/design.json .../repeat_003/mdo_f25_sequential_iterative_feedback"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine thrust further to reduce fuel burn and bring gross takeoff weight within constraint",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_004/mdo_f25_sequential_graph_routed/design.json .../repeat_004/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Increase engine thrust to reduce fuel burn and meet gross takeoff weight constraint",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_graph/repeat_003/mdo_f25_sequential_graph_routed/design.json .../repeat_003/mdo_f25_sequential_graph_routed"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Investigate engine cycle parameters (e.g., BPR, fan pressure ratio) to improve cruise SFC and reduce fuel burn.",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_orch_graph/repeat_012/mdo_f25_orchestrated_graph_routed/design.json .../repeat_012/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Reduce SFC_CRUISE from 0.64 to 0.63",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_007/mdo_f25_sequential_staged_pipeline/design.json .../repeat_007/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Reduce SFC_CRUISE further from 0.63 to 0.62",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_008/mdo_f25_sequential_staged_pipeline/design.json .../repeat_008/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Reduce SFC_CRUISE further from 0.64 to 0.62",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_009/mdo_f25_sequential_staged_pipeline/design.json .../repeat_009/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "propulsion_analyst",
+   "recommended_change": "Reduce engine bypass ratio from 5.1 to 4.5",
+   "routed_before": "propulsion_analyst",
+   "routed_after": "propulsion_analyst",
+   "source": "l20_final/runs/l20_seq_staged/repeat_013/mdo_f25_sequential_staged_pipeline/design.json .../repeat_013/mdo_f25_sequential_staged_pipeline"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Explore lightweighting opportunities to reduce GTO",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "final_val2/runs/val2_orch_graph .../repeat_001/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Optimize wing geometry parameters (e.g., aspect ratio, taper ratio) to reduce wing mass while maintaining structural integrity.",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_012/mdo_f25_orchestrated_graph_routed/design.json .../repeat_012/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTO) by optimizing structural design or reducing payload to meet the constraint of GTO <= 100000 kg.",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_013/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_013/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce Gross Takeoff Weight (GTO) by optimizing structural mass",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_017/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_017/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce structural mass by optimizing wing design or material selection",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_011/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_011/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce wing mass by optimizing structural design",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_001/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_001/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce wing mass by optimizing wing geometry or exploring alternative material selections.",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_006/mdo_f25_orchestrated_graph_routed/design.json .../repeat_006/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce wing mass by optimizing wing geometry or material selection",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_008/mdo_f25_orchestrated_iterative_feedback/design.json .../repeat_008/mdo_f25_orchestrated_iterative_feedback"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce wing mass by optimizing wing geometry parameters (e.g., aspect ratio, taper ratio)",
+   "routed_before": "geometry_engineer",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_graph/repeat_012/mdo_f25_orchestrated_graph_routed/design.json .../repeat_012/mdo_f25_orchestrated_graph_routed"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Reduce wing mass or optimize structural design to lower GTOW",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_007/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_007/mdo_f25_orchestrated_staged_pipeline"
+  },
+  {
+   "recommendation_to": "structures_analyst",
+   "recommended_change": "Wing mass reduction",
+   "routed_before": "structures_analyst",
+   "routed_after": "geometry_engineer",
+   "source": "l20_final/runs/l20_orch_staged_iter/repeat_004/mdo_f25_orchestrated_staged_pipeline/design.json .../repeat_004/mdo_f25_orchestrated_staged_pipeline"
+  }
+ ]
+}
