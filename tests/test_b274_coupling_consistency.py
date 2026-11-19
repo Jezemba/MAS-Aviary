@@ -338,6 +338,7 @@ def test_s_gr_5_the_attached_deck_reference_is_used_after_a_resize(fresh, monkey
 
 
 def test_no_deck_attached_flies_the_bench_reference(fresh, monkeypatch):
+    monkeypatch.setenv("AVION_ENGINE_DECK", "0")     # V10 (B368): with the deck on and none attached no scale is set (bench here)
     _engine(fresh, monkeypatch, attached=False)
     resolved = {"session_id": "av", "parameters": {}}
     dp._inject_engine_scale(resolved)
