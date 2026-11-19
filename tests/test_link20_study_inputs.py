@@ -140,13 +140,13 @@ def test_final_is_still_l20_final_and_old_studies_unchanged():
 def test_validation_study_has_the_final_codes_baseline():
     combos = [c for _d, _r, cs in ex.STUDIES["final_val"] for c in cs]
     assert len(combos) == 8 and len(set(combos)) == 8
-    assert ex.BASELINES["final_val"] == {"fuel_kg": 15719.18, "gtow_kg": 90310.01, "wing_mass_kg": 7958.8}
+    assert ex.BASELINES["final_val"] == {"fuel_kg": 15719.18, "gtow_kg": 90310.0, "wing_mass_kg": 7958.8}
     assert ex.BASELINES["final_rerun"] == ex.BASELINES["final_val"]
 
 
 def test_driver_flight_record_is_a_baseline_file(tmp_path):
-    p = tmp_path / "B2_coupled_anchor_1.json"
-    p.write_text(json.dumps({"fuel_burned_kg": 15719.17609579942, "gtow_kg": 90310.0055, "converged": True}))
+    p = tmp_path / "B3_coupled_anchor_1.json"
+    p.write_text(json.dumps({"fuel_burned_kg": 15719.17623923756, "gtow_kg": 90309.99671587195, "converged": True}))
     assert ex.checked_baseline_fuel(p, "final_val") == pytest.approx(15719.176, abs=1e-3)
     with pytest.raises(SystemExit, match="wrong baseline file"):
         ex.checked_baseline_fuel(p, "final")

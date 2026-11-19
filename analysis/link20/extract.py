@@ -134,10 +134,13 @@ STUDIES = _Studies({"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, 
 _BASE_OLD = {"fuel_kg": 18197.0, "gtow_kg": 91660.6, "wing_mass_kg": 8815.2}
 _BASE_NEW = {"fuel_kg": 16390.5, "gtow_kg": 89682.6, "wing_mass_kg": 8664.2}
 # The final pinned code's coupled baseline (B1 decision: the unchanged anchor flown through the coupled chain), flown
-# twice bit-identically on 2026-11-18: ws8 /data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_{1,2}.json
-# (fuel 15,719.1761 kg, GTOW 90,310.0055 kg, wing 7,958.79 kg, converged). The final run uses the same pinned code;
-# if its pins change, re-fly the baseline and give final_rerun its own entry.
-_BASE_FINAL_CODE = {"fuel_kg": 15719.18, "gtow_kg": 90310.01, "wing_mass_kg": 7958.8}
+# twice bit-identically on 2026-11-18 on the final pins (MAS-Aviary 2741cf2 + the closed fixed point ca77050, tigl-mcp
+# b5ae37a, aviary-mcp 36b3a53, mass-mcp a3429f6, su2-mcp 76fdaf8, pycycle-mcp 001456b): ws8
+# /data/Jessica/final_fix/baseline3/results/flights/B3_coupled_anchor_{1,2}.json (fuel 15,719.17623923756 kg, GTOW
+# 90,309.99671587195 kg, wing 7,958.785 kg, converged). Was baseline2 B2_coupled_anchor_{1,2} (15,719.17609579942 /
+# 90,310.00549723483 kg): +0.00014 kg fuel, -0.0088 kg GTOW from closing the mass <-> engine fixed point exactly.
+# The final run uses the same pinned code; if its pins change, re-fly the baseline and give final_rerun its own entry.
+_BASE_FINAL_CODE = {"fuel_kg": 15719.18, "gtow_kg": 90310.0, "wing_mass_kg": 7958.8}
 BASELINES = {"20261028": _BASE_OLD, "20261112": _BASE_NEW, "final": _BASE_NEW,
              "final_val": _BASE_FINAL_CODE, "final_rerun": _BASE_FINAL_CODE}
 # Baseline values above are rounded to 0.1 kg; a baseline mission file must agree to within this.
