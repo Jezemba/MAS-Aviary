@@ -37,6 +37,8 @@ class OrchestratorContext:
     system_agent_names: set = field(default_factory=set)  # pre-existing agent names
     worker_final_answer_checks: list[Callable] = field(default_factory=list)
     on_delegation_change: Callable | None = None  # callback after create/assign
+    # W8: set by the strategy during a one-pass (setup_only) creation phase; see AssignTask.forward.
+    replace_earlier_turn_assignments: bool = False
 
     # Domain-agnostic phase coverage: maps phase name → list of tool names.
     # If non-empty, GatedFinalAnswer verifies that assigned agents collectively
@@ -554,6 +556,25 @@ class AssignTask(Tool):
                 agent_name,
                 f"Agent '{agent_name}' is a system agent, not a worker",
             )
+
+        # W8 (validation 2, O_IF it2): in a one-pass (setup_only) creation phase a LATER orchestrator turn that
+        # assigns an agent already queued by an EARLIER turn replaces that queued task. The orchestrator's first turn
+        # hit max steps after queuing all 7 roles, was invoked again and queued all 7 a second time; the second pass
+        # ran after the integrator's CONTINUE with tasks written before any work, so the new recommendation reached
+        # the geometry engineer only through the handoff. One pass = one task per agent, the latest.
+        if ctx.replace_earlier_turn_assignments:
+            for queued in ctx.assignments:
+                if queued.get("agent_name") == agent_name and queued.get("assigned_at_turn", 0) < ctx.turn_counter:
+                    previous = queued.get("task")
+                    queued.update(task=task, assigned_at_turn=ctx.turn_counter)
+                    if ctx.on_delegation_change:
+                        ctx.on_delegation_change()
+                    return json.dumps({
+                        "success": True, "agent_name": agent_name, "task": task,
+                        "queue_position": ctx.assignments.index(queued) + 1, "replaced": previous,
+                        "note": (f"{agent_name} was already queued from your previous turn; its task is replaced "
+                                 "by this one (each agent runs once, with the task you gave it last)."),
+                    })
 
         # Record assignment.
         assignment = {

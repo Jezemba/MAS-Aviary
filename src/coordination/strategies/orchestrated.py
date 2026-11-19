@@ -709,6 +709,10 @@ class OrchestratedStrategy(CoordinationStrategy):
         self._orchestrator_turns_used += 1
         if self._context:
             self._context.turn_counter = len(history) + 1
+            # W8: a one-pass team (setup_only, not graph-routed): a later creation turn replaces what an earlier turn
+            # queued for the same agent instead of queuing it a second time.
+            self._context.replace_earlier_turn_assignments = (self._lifecycle_mode == "setup_only"
+                                                              and not self._graph_roles)
 
         # Sync tool visibility before invoking the orchestrator — this is the
         # model-level constraint that prevents premature final_answer calls.
@@ -744,6 +748,8 @@ class OrchestratedStrategy(CoordinationStrategy):
         """Switch from creation phase to execution phase."""
         self._phase = "execution"
         self._execution_index = 0
+        if self._context:
+            self._context.replace_earlier_turn_assignments = False      # W8: creation phase only
 
         # Register graph role aliases so the graph-routed handler can
         # resolve orchestrator-created agents by role name.
