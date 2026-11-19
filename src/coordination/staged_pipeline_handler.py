@@ -424,7 +424,8 @@ class StagedPipelineHandler(ExecutionHandler):
             # Run the agent.
             start = time.monotonic()
             try:
-                self._stages_run.add(assignment.agent_name)      # V6: this stage's agent ran
+                # V6: the stage this agent ran (its own stage by name, else the positional one)
+                self._stages_run.add(stage.name if stage is not None else assignment.agent_name)
                 raw_result = agent.run(context)
                 content = str(raw_result) if raw_result is not None else ""
             except Exception as e:

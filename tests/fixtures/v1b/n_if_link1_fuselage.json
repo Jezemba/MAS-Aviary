@@ -1,0 +1,44 @@
+{
+ "get_fuselage_summary": {
+  "args": {
+   "session_id": "717783a1-9164-428b-bfbe-3c0facb6f94f",
+   "fuselage_uid": "Fuselage1"
+  },
+  "result": {
+   "length": 37.644560994515366,
+   "max_width": 3.951781358688922,
+   "max_height": 4.143709313380411,
+   "max_diameter": 4.143709313380411,
+   "wetted_area": 417.06664290366444,
+   "max_cross_section_area": null,
+   "approx_volume": null,
+   "measured": true,
+   "area_conventions": "wetted_area is the whole fuselage loft surface, measured from its BREP; gross: the wing and tail root junctions are not subtracted. The fuselage is not mirrored, so this is the whole fuselage.",
+   "not_measured": [
+    "max_cross_section_area",
+    "approx_volume"
+   ]
+  }
+ },
+ "get_results_aircraft_params": {
+  "Aircraft.Wing.AREA": 122.8287,
+  "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+  "Aircraft.Wing.SWEEP": 21.6502,
+  "Aircraft.Wing.TAPER_RATIO": 0.2462,
+  "Aircraft.Fuselage.LENGTH": 37.68,
+  "Aircraft.Fuselage.MAX_HEIGHT": 4.15,
+  "Aircraft.Fuselage.MAX_WIDTH": 3.96,
+  "Aircraft.Engine.SCALE_FACTOR": 1.1962643432046365,
+  "Aircraft.Wing.SPAN": 33.91267733223079,
+  "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+  "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+  "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+  "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+  "Aircraft.VerticalTail.AREA": 21.50000389206982,
+  "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197349,
+  "Aircraft.VerticalTail.TAPER_RATIO": 0.34900050048576503,
+  "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+  "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387,
+  "Aircraft.Wing.MASS": 7958.785892400294
+ }
+}

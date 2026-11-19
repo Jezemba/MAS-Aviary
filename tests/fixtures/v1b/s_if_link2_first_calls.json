@@ -1,0 +1,67 @@
+{
+ "open_cpacs": {
+  "args": {
+   "source_type": "path",
+   "source": "/data/Jessica/final_val/runs/val_seq_iter/MAS-Aviary/logs/stat_results/val_seq_iter/repeat_000/mdo_f25_sequential_iterative_feedback/geometry_end.xml"
+  }
+ },
+ "estimate_mass": {
+  "args": {
+   "cpacs_file_path": "/data/Jessica/final_val/tmp/avion_mass_tc5qsboa/geometry_end_modified.xml",
+   "wing_mass_method": "flops",
+   "aviary_mass_method": "FLOPS",
+   "oas_wing_weight_ratio": 2.31,
+   "material": "aluminum",
+   "design_load_factor": 2.5,
+   "write_back_to_cpacs": true,
+   "num_passengers": 239,
+   "cruise_mach": 0.78,
+   "range_nmi": 2500,
+   "cruise_altitude_ft": 33000,
+   "num_engines": 2,
+   "engine_deck_file": "/data/Jessica/final_val/slot20/decks/deck_7815057d6edc9732.deck",
+   "engine_scale_factor": 1.1957967702892713
+  }
+ },
+ "get_cruise_point": {
+  "args": {
+   "session_id": "3c5a8e33-9497-4548-9acc-022b924ddba1",
+   "mass_kg": 90298.64252810457,
+   "mach": 0.78,
+   "altitude_ft": 33000,
+   "engine_scale": 1.1957967702892713
+  }
+ },
+ "set_inputs": {
+  "args": {
+   "session_id": "9f3e07ee-4e69-4e5a-9630-c37a76aabca2",
+   "values": {
+    "fc.alt": 33000.0,
+    "fc.MN": 0.78,
+    "Fn_DES": 6775.257616488044,
+    "T4_MAX": 2857.0,
+    "T4_TAKEOFF": 3540.0,
+    "T4_CLIMB": 3090.0,
+    "splitter.BPR": 5.105,
+    "fan.PR": 1.685,
+    "lpc.PR": 1.935,
+    "hpc.PR": 9.369,
+    "fan.eff": 0.8948,
+    "lpc.eff": 0.9243,
+    "hpc.eff": 0.8707,
+    "hpt.eff": 0.8888,
+    "lpt.eff": 0.8996
+   }
+  }
+ },
+ "configure_mission": {
+  "args": {
+   "session_id": "3c5a8e33-9497-4548-9acc-022b924ddba1",
+   "range_nmi": 2500,
+   "num_passengers": 239,
+   "cruise_mach": 0.78,
+   "cruise_altitude_ft": 33000,
+   "takeoff_mass_kg": 90298.6
+  }
+ }
+}

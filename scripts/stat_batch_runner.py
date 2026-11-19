@@ -133,6 +133,14 @@ BASELINE_PARAMS: dict[str, float] = {**_anchor_geometry_params(rounded=True), "A
 ANCHOR_MODES = ("baseline", "random")
 
 
+def starts_from_anchor(chain_design_dir: str, chain_cpacs, anchor: str, params: dict, anchor_params: dict) -> bool:
+    """V4: whether a link starts from the measured anchor (the D150 with nothing carried) -- the ONLY links whose
+    geometry record is seeded with canonical geometry.anchor_measured. A link after a completed link, or one opening a
+    carried CPACS, or with any carried aviary value, starts from the carried design and is never seeded."""
+    return (not chain_design_dir and chain_cpacs is None and anchor == "baseline"
+            and dict(params) == dict(anchor_params))
+
+
 def anchor_params_for(mode: str, base_seed: int) -> dict[str, float]:
     """Link 0's design: the measured baseline (default) or the legacy seeded random draw."""
     if mode == "baseline":
@@ -1528,8 +1536,7 @@ def run_stat_batch(
             params = dict(chain_params)
             # V4: the measured-anchor geometry seed is for a chain with nothing carried yet ONLY (no completed link, no
             # carried CPACS, the anchor start). A link 2+ keeps its carried design.
-            first_link = (not chain_design_dir and chain_cpacs is None and anchor == "baseline"
-                          and params == anchor_params)
+            first_link = starts_from_anchor(chain_design_dir, chain_cpacs, anchor, params, anchor_params)
 
             run_count += 1
             # GPU cleanup between runs

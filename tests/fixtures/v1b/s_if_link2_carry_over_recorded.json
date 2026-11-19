@@ -1,0 +1,576 @@
+{
+  "last_flown_design": {
+    "updated_utc": "2026-11-18T21:00:15Z",
+    "mission": {
+      "range_nmi": 2500,
+      "num_passengers": 239,
+      "cruise_mach": 0.78,
+      "cruise_altitude_ft": 33000
+    },
+    "design_space": {
+      "geometry": {
+        "Wing1": {
+          "area_m2": 122.82871858371792,
+          "aspect_ratio": 9.363224080853465,
+          "span_m": 33.91272350701785,
+          "sweep_quarter_chord_deg": 21.65015342508847,
+          "taper_ratio": 0.24619376823302655
+        },
+        "Wing2H": {
+          "area_m2": 31.118412165407747,
+          "aspect_ratio": 4.980972880884807,
+          "span_m": 12.449898276375267,
+          "sweep_quarter_chord_deg": 27.999928617646056,
+          "taper_ratio": 0.33000029377752527
+        },
+        "Wing3V": {
+          "area_m2": 21.500003892069813,
+          "aspect_ratio": 1.6069355731255068,
+          "span_m": 5.877850038619889,
+          "sweep_quarter_chord_deg": 37.19996203995765,
+          "taper_ratio": 0.349000500485765
+        },
+        "Fuselage1": {
+          "length_m": 37.644560994515366,
+          "diameter_m": 4.143709313380411
+        }
+      },
+      "engine": {
+        "T4_MAX": 2857.0,
+        "T4_TAKEOFF": 3540.0,
+        "T4_CLIMB": 3090.0,
+        "splitter.BPR": 5.105,
+        "fan.PR": 1.685,
+        "lpc.PR": 1.935,
+        "hpc.PR": 9.369
+      },
+      "mission": {
+        "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+      }
+    },
+    "geometry": {
+      "cpacs_file": "/data/Jessica/final_val/tmp/avion_flown_xpwhd4qc/flown_geometry.xml",
+      "wing": {
+        "Aircraft.Wing.AREA": 122.82871858371792,
+        "Aircraft.Wing.ASPECT_RATIO": 9.363224080853465,
+        "Aircraft.Wing.SWEEP": 21.65015342508847,
+        "Aircraft.Wing.TAPER_RATIO": 0.24619376823302655
+      },
+      "fuselage": {
+        "Aircraft.Fuselage.LENGTH": 37.644560994515366,
+        "Aircraft.Fuselage.MAX_HEIGHT": 4.143709313380411,
+        "Aircraft.Fuselage.MAX_WIDTH": 3.9517813586889226
+      },
+      "mesh_ref": "generate_volume_mesh__mesh_base64"
+    },
+    "aero": {
+      "cl_cruise": 0.6508018519,
+      "cd_cruise": 0.0451908926,
+      "drag_assessment": {
+        "cd_su2": 0.0451908926,
+        "cl": 0.6508018519,
+        "aspect_ratio": 9.363224080853465,
+        "oswald_efficiency": 0.7733921165610352,
+        "oswald_source": "Raymer eq. 12.48",
+        "cd_induced_floor": 0.018617550029372626,
+        "cd_reported": 0.0451908926,
+        "source": "su2",
+        "note": "SU2's CD is at or above the induced drag of its lift, so it is reported unchanged."
+      },
+      "solve_target_cl": 0.6461026633295786,
+      "solve_trimmed": true,
+      "solve_converged": true,
+      "solve_residual": {
+        "basis": "su2-mcp converged flag"
+      },
+      "solve_trim_basis": {
+        "mass_kg": 90298.7,
+        "mass_source": "baseline sized mass (canonical baseline.sized_mtom_kg)",
+        "wing_area_m2": 122.82871858371792
+      },
+      "provenance": {
+        "source": "solved on this link",
+        "solved_on_this_link": true
+      },
+      "drag_coupling": "solved, not coupled to drag (the mission flies aviary's FLOPS drag)",
+      "injected_into_aviary": {
+        "LIFT_COEFFICIENT": null,
+        "SUBSONIC_DRAG_COEFF_FACTOR": null
+      }
+    },
+    "aviary_cruise_point": {
+      "mach": 0.78,
+      "altitude_ft": 33000.0,
+      "mass_kg": 90298.7,
+      "cl": 0.6445302592070462,
+      "cd": 0.036533136111354475,
+      "lift_to_drag": 17.64234686128483,
+      "engine_scale_used": 1.1957967702892787,
+      "cd_depends_on_engine_scale": false,
+      "design_fingerprint": "7d1ce93bb83c3754",
+      "_design_basis": [
+        "design:63c70cd891ca9693",
+        [
+          31.118412,
+          4.980973,
+          0.33,
+          0.1,
+          21.500004,
+          1.494888,
+          0.349001,
+          0.11
+        ],
+        0.116442
+      ],
+      "_session": "abf4d4bb-c686-4d41-9ec9-28025d9eb662"
+    },
+    "engine_sizing": {
+      "fn_des_basis": "aviary cruise L/D 17.642 (CL 0.6445302592070462, CD 0.036533136111354475, engine scale used 1.1957967702892787) at 90298.7 kg (baseline sized mass (canonical baseline.sized_mtom_kg))",
+      "error": null
+    },
+    "engine_deck": {
+      "file": "/data/Jessica/final_val/slot20/decks/deck_7815057d6edc9732.deck",
+      "key": "7815057d6edc9732",
+      "reference_fn_des_lbf": 5900.0,
+      "design_tsfc": 0.6432353505104839,
+      "sls_net_thrust_lbf": 29088.172499999997,
+      "envelope_holes": [
+        {
+          "mach": 0.2,
+          "alt_ft": 25000.0
+        }
+      ],
+      "cached": true,
+      "pycycle_session": "bb814aad-8414-4f9e-9426-e3e3a7f4035e",
+      "cycle_key": [
+        90298.7,
+        17.642347,
+        "7d1ce93bb83c3754",
+        [
+          "design:63c70cd891ca9693",
+          [
+            31.118412,
+            4.980973,
+            0.33,
+            0.1,
+            21.500004,
+            1.494888,
+            0.349001,
+            0.11
+          ],
+          0.116442
+        ]
+      ]
+    },
+    "mass_engine_basis": {
+      "source": "baseline engine (canonical baseline.engine_deck_file / engine_scale_factor; AVION_DECKS_DIR=/data/Jessica/final_val/slot20/decks)",
+      "engine_deck_file": "/data/Jessica/final_val/slot20/decks/deck_7815057d6edc9732.deck",
+      "engine_scale_factor": 1.1957967702892787
+    },
+    "structures": {
+      "wing_mass_kg": 7958.785892400293,
+      "mtom_kg": 90298.64252810457,
+      "sizing_converged": true,
+      "estimate_error": null,
+      "tails": {
+        "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+        "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+        "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+        "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+        "Aircraft.VerticalTail.AREA": 21.500003892069813,
+        "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197347,
+        "Aircraft.VerticalTail.TAPER_RATIO": 0.349000500485765,
+        "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264
+      },
+      "tails_source": "mass-mcp estimate_mass sizing_report.tails (Wing2H; Wing3V)",
+      "tail_error": null,
+      "wing_thickness_to_chord": 0.11644185460446387,
+      "wing_thickness_to_chord_source": "mass-mcp estimate_mass sizing_report.wing_stations.tc_avg",
+      "wing_thickness_to_chord_error": null,
+      "wing_mass_source": "flops"
+    },
+    "propulsion": {
+      "sfc_cruise": 0.6432353505073697,
+      "fn_lbf": 7055.2009447067,
+      "cycle_converged": true
+    },
+    "mission_applied": {
+      "Aircraft.Wing.AREA": 122.8287,
+      "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+      "Aircraft.Wing.SWEEP": 21.6502,
+      "Aircraft.Wing.TAPER_RATIO": 0.2462,
+      "Aircraft.Fuselage.LENGTH": 37.6446,
+      "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+      "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+      "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+      "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+      "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+      "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+      "Aircraft.VerticalTail.AREA": 21.500003892069813,
+      "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197347,
+      "Aircraft.VerticalTail.TAPER_RATIO": 0.349000500485765,
+      "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+      "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387,
+      "Aircraft.Wing.MASS": 7958.785892400293,
+      "Aircraft.Wing.SPAN": 33.9127,
+      "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+    },
+    "sessions": {
+      "aviary": "abf4d4bb-c686-4d41-9ec9-28025d9eb662",
+      "tigl": "6f7d31ff-215e-4472-a267-91102dcc527d",
+      "su2": "209dfb0a-358a-4197-8af7-21ad0814a3b6",
+      "pycycle": "bb814aad-8414-4f9e-9426-e3e3a7f4035e"
+    },
+    "coordination_signals": [
+      {
+        "kind": "response",
+        "seq": 1,
+        "agent": "aerodynamics_analyst",
+        "time": 1795034676.8,
+        "how_addressed": "Aerodynamic analysis completed successfully with CL=0.6508, CD=0.04519, and convergence achieved. Passed results to structures_analyst for further evaluation."
+      },
+      {
+        "kind": "response",
+        "seq": 2,
+        "agent": "structures_analyst",
+        "time": 1795034777.3,
+        "how_addressed": "Completed mass estimation successfully with OEM=48831.1 kg, wing mass=7958.8 kg, and component breakdown. Passed results to mission architect for further optimization."
+      },
+      {
+        "kind": "response",
+        "seq": 3,
+        "agent": "mission_architect",
+        "time": 1795035185.7,
+        "how_addressed": "The mission parameters have been configured and validated successfully. The design state is now ready to be passed to the simulation_executor for further processing."
+      }
+    ]
+  },
+  "last_flown_dir": "logs/stat_results/val_seq_iter/repeat_000/mdo_f25_sequential_iterative_feedback",
+  "last_flown_geometry": "/data/Jessica/final_val/runs/val_seq_iter/MAS-Aviary/logs/stat_results/val_seq_iter/repeat_000/mdo_f25_sequential_iterative_feedback/geometry_end.xml",
+  "recommendation": {
+    "kind": "recommendation",
+    "seq": 5,
+    "agent": "mdo_integrator",
+    "time": 1795035699.6,
+    "verdict": "CONTINUE",
+    "recommendation_to": "geometry_engineer",
+    "recommended_change": "Increase wing aspect ratio from 9.36 to 10.0 to improve aerodynamic efficiency and reduce fuel burn."
+  },
+  "previous_design": {
+    "updated_utc": "2026-11-18T21:00:15Z",
+    "mission": {
+      "range_nmi": 2500,
+      "num_passengers": 239,
+      "cruise_mach": 0.78,
+      "cruise_altitude_ft": 33000
+    },
+    "design_space": {
+      "geometry": {
+        "Wing1": {
+          "area_m2": 122.82871858371792,
+          "aspect_ratio": 9.363224080853465,
+          "span_m": 33.91272350701785,
+          "sweep_quarter_chord_deg": 21.65015342508847,
+          "taper_ratio": 0.24619376823302655
+        },
+        "Wing2H": {
+          "area_m2": 31.118412165407747,
+          "aspect_ratio": 4.980972880884807,
+          "span_m": 12.449898276375267,
+          "sweep_quarter_chord_deg": 27.999928617646056,
+          "taper_ratio": 0.33000029377752527
+        },
+        "Wing3V": {
+          "area_m2": 21.500003892069813,
+          "aspect_ratio": 1.6069355731255068,
+          "span_m": 5.877850038619889,
+          "sweep_quarter_chord_deg": 37.19996203995765,
+          "taper_ratio": 0.349000500485765
+        },
+        "Fuselage1": {
+          "length_m": 37.644560994515366,
+          "diameter_m": 4.143709313380411
+        }
+      },
+      "engine": {
+        "T4_MAX": 2857.0,
+        "T4_TAKEOFF": 3540.0,
+        "T4_CLIMB": 3090.0,
+        "splitter.BPR": 5.105,
+        "fan.PR": 1.685,
+        "lpc.PR": 1.935,
+        "hpc.PR": 9.369
+      },
+      "mission": {
+        "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+      }
+    },
+    "geometry": {
+      "cpacs_file": "/data/Jessica/final_val/tmp/avion_flown_xpwhd4qc/flown_geometry.xml",
+      "wing": {
+        "Aircraft.Wing.AREA": 122.82871858371792,
+        "Aircraft.Wing.ASPECT_RATIO": 9.363224080853465,
+        "Aircraft.Wing.SWEEP": 21.65015342508847,
+        "Aircraft.Wing.TAPER_RATIO": 0.24619376823302655
+      },
+      "fuselage": {
+        "Aircraft.Fuselage.LENGTH": 37.644560994515366,
+        "Aircraft.Fuselage.MAX_HEIGHT": 4.143709313380411,
+        "Aircraft.Fuselage.MAX_WIDTH": 3.9517813586889226
+      },
+      "mesh_ref": "generate_volume_mesh__mesh_base64"
+    },
+    "aero": {
+      "cl_cruise": 0.6508018519,
+      "cd_cruise": 0.0451908926,
+      "drag_assessment": {
+        "cd_su2": 0.0451908926,
+        "cl": 0.6508018519,
+        "aspect_ratio": 9.363224080853465,
+        "oswald_efficiency": 0.7733921165610352,
+        "oswald_source": "Raymer eq. 12.48",
+        "cd_induced_floor": 0.018617550029372626,
+        "cd_reported": 0.0451908926,
+        "source": "su2",
+        "note": "SU2's CD is at or above the induced drag of its lift, so it is reported unchanged."
+      },
+      "solve_target_cl": 0.6461026633295786,
+      "solve_trimmed": true,
+      "solve_converged": true,
+      "solve_residual": {
+        "basis": "su2-mcp converged flag"
+      },
+      "solve_trim_basis": {
+        "mass_kg": 90298.7,
+        "mass_source": "baseline sized mass (canonical baseline.sized_mtom_kg)",
+        "wing_area_m2": 122.82871858371792
+      },
+      "provenance": {
+        "source": "solved on this link",
+        "solved_on_this_link": true
+      },
+      "drag_coupling": "solved, not coupled to drag (the mission flies aviary's FLOPS drag)",
+      "injected_into_aviary": {
+        "LIFT_COEFFICIENT": null,
+        "SUBSONIC_DRAG_COEFF_FACTOR": null
+      }
+    },
+    "aviary_cruise_point": {
+      "mach": 0.78,
+      "altitude_ft": 33000.0,
+      "mass_kg": 90298.7,
+      "cl": 0.6445302592070462,
+      "cd": 0.036533136111354475,
+      "lift_to_drag": 17.64234686128483,
+      "engine_scale_used": 1.1957967702892787,
+      "cd_depends_on_engine_scale": false,
+      "design_fingerprint": "7d1ce93bb83c3754",
+      "_design_basis": [
+        "design:63c70cd891ca9693",
+        [
+          31.118412,
+          4.980973,
+          0.33,
+          0.1,
+          21.500004,
+          1.494888,
+          0.349001,
+          0.11
+        ],
+        0.116442
+      ],
+      "_session": "abf4d4bb-c686-4d41-9ec9-28025d9eb662"
+    },
+    "engine_sizing": {
+      "fn_des_basis": "aviary cruise L/D 17.642 (CL 0.6445302592070462, CD 0.036533136111354475, engine scale used 1.1957967702892787) at 90298.7 kg (baseline sized mass (canonical baseline.sized_mtom_kg))",
+      "error": null
+    },
+    "engine_deck": {
+      "file": "/data/Jessica/final_val/slot20/decks/deck_7815057d6edc9732.deck",
+      "key": "7815057d6edc9732",
+      "reference_fn_des_lbf": 5900.0,
+      "design_tsfc": 0.6432353505104839,
+      "sls_net_thrust_lbf": 29088.172499999997,
+      "envelope_holes": [
+        {
+          "mach": 0.2,
+          "alt_ft": 25000.0
+        }
+      ],
+      "cached": true,
+      "pycycle_session": "bb814aad-8414-4f9e-9426-e3e3a7f4035e",
+      "cycle_key": [
+        90298.7,
+        17.642347,
+        "7d1ce93bb83c3754",
+        [
+          "design:63c70cd891ca9693",
+          [
+            31.118412,
+            4.980973,
+            0.33,
+            0.1,
+            21.500004,
+            1.494888,
+            0.349001,
+            0.11
+          ],
+          0.116442
+        ]
+      ]
+    },
+    "mass_engine_basis": {
+      "source": "baseline engine (canonical baseline.engine_deck_file / engine_scale_factor; AVION_DECKS_DIR=/data/Jessica/final_val/slot20/decks)",
+      "engine_deck_file": "/data/Jessica/final_val/slot20/decks/deck_7815057d6edc9732.deck",
+      "engine_scale_factor": 1.1957967702892787
+    },
+    "structures": {
+      "wing_mass_kg": 7958.785892400293,
+      "mtom_kg": 90298.64252810457,
+      "sizing_converged": true,
+      "estimate_error": null,
+      "tails": {
+        "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+        "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+        "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+        "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+        "Aircraft.VerticalTail.AREA": 21.500003892069813,
+        "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197347,
+        "Aircraft.VerticalTail.TAPER_RATIO": 0.349000500485765,
+        "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264
+      },
+      "tails_source": "mass-mcp estimate_mass sizing_report.tails (Wing2H; Wing3V)",
+      "tail_error": null,
+      "wing_thickness_to_chord": 0.11644185460446387,
+      "wing_thickness_to_chord_source": "mass-mcp estimate_mass sizing_report.wing_stations.tc_avg",
+      "wing_thickness_to_chord_error": null,
+      "wing_mass_source": "flops"
+    },
+    "propulsion": {
+      "sfc_cruise": 0.6432353505073697,
+      "fn_lbf": 7055.2009447067,
+      "cycle_converged": true
+    },
+    "mission_applied": {
+      "Aircraft.Wing.AREA": 122.8287,
+      "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+      "Aircraft.Wing.SWEEP": 21.6502,
+      "Aircraft.Wing.TAPER_RATIO": 0.2462,
+      "Aircraft.Fuselage.LENGTH": 37.6446,
+      "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+      "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+      "Aircraft.HorizontalTail.AREA": 31.118412165407747,
+      "Aircraft.HorizontalTail.ASPECT_RATIO": 4.980972720852241,
+      "Aircraft.HorizontalTail.TAPER_RATIO": 0.33000029377752527,
+      "Aircraft.HorizontalTail.THICKNESS_TO_CHORD": 0.10000009183780126,
+      "Aircraft.VerticalTail.AREA": 21.500003892069813,
+      "Aircraft.VerticalTail.ASPECT_RATIO": 1.4948875277197347,
+      "Aircraft.VerticalTail.TAPER_RATIO": 0.349000500485765,
+      "Aircraft.VerticalTail.THICKNESS_TO_CHORD": 0.110000031254264,
+      "Aircraft.Wing.THICKNESS_TO_CHORD": 0.11644185460446387,
+      "Aircraft.Wing.MASS": 7958.785892400293,
+      "Aircraft.Wing.SPAN": 33.9127,
+      "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+    },
+    "sessions": {
+      "aviary": "abf4d4bb-c686-4d41-9ec9-28025d9eb662",
+      "tigl": "6f7d31ff-215e-4472-a267-91102dcc527d",
+      "su2": "209dfb0a-358a-4197-8af7-21ad0814a3b6",
+      "pycycle": "bb814aad-8414-4f9e-9426-e3e3a7f4035e"
+    },
+    "coordination_signals": [
+      {
+        "kind": "response",
+        "seq": 1,
+        "agent": "aerodynamics_analyst",
+        "time": 1795034676.8,
+        "how_addressed": "Aerodynamic analysis completed successfully with CL=0.6508, CD=0.04519, and convergence achieved. Passed results to structures_analyst for further evaluation."
+      },
+      {
+        "kind": "response",
+        "seq": 2,
+        "agent": "structures_analyst",
+        "time": 1795034777.3,
+        "how_addressed": "Completed mass estimation successfully with OEM=48831.1 kg, wing mass=7958.8 kg, and component breakdown. Passed results to mission architect for further optimization."
+      },
+      {
+        "kind": "response",
+        "seq": 3,
+        "agent": "mission_architect",
+        "time": 1795035185.7,
+        "how_addressed": "The mission parameters have been configured and validated successfully. The design state is now ready to be passed to the simulation_executor for further processing."
+      },
+      {
+        "kind": "response",
+        "seq": 4,
+        "agent": "simulation_executor",
+        "time": 1795035648.2,
+        "how_addressed": "The Aviary mission simulation was executed successfully. The results indicate convergence with a fuel burn of 15,719.18 kg and a gross takeoff weight of 90,310.01 kg. The cruise lift-to-drag ratio is favorable at 17.64, and the mission constraints were satisfied. The simulation results have been passed to the MDO integrator for further evaluation."
+      },
+      {
+        "kind": "recommendation",
+        "seq": 5,
+        "agent": "mdo_integrator",
+        "time": 1795035699.6,
+        "verdict": "CONTINUE",
+        "recommendation_to": "geometry_engineer",
+        "recommended_change": "Increase wing aspect ratio from 9.36 to 10.0 to improve aerodynamic efficiency and reduce fuel burn."
+      }
+    ]
+  },
+  "link": 1,
+  "previous_integrator_design_state": "The MDO integrator has identified violations in both fuel burn and MTOM constraints. The optimality gap is currently at 5.38%, indicating room for improvement. A recommendation has been issued to increase the wing aspect ratio to improve aerodynamic efficiency and reduce fuel burn. The design will continue to the next iteration for refinement.",
+  "starting_design": {
+    "CPACS_FILE": "/data/Jessica/final_val/runs/val_seq_iter/MAS-Aviary/logs/stat_results/val_seq_iter/repeat_000/mdo_f25_sequential_iterative_feedback/geometry_end.xml",
+    "geometry": {
+      "Wing1": {
+        "area_m2": 122.82871858371792,
+        "aspect_ratio": 9.363224080853465,
+        "span_m": 33.91272350701785,
+        "sweep_quarter_chord_deg": 21.65015342508847,
+        "taper_ratio": 0.24619376823302655
+      },
+      "Wing2H": {
+        "area_m2": 31.118412165407747,
+        "aspect_ratio": 4.980972880884807,
+        "span_m": 12.449898276375267,
+        "sweep_quarter_chord_deg": 27.999928617646056,
+        "taper_ratio": 0.33000029377752527
+      },
+      "Wing3V": {
+        "area_m2": 21.500003892069813,
+        "aspect_ratio": 1.6069355731255068,
+        "span_m": 5.877850038619889,
+        "sweep_quarter_chord_deg": 37.19996203995765,
+        "taper_ratio": 0.349000500485765
+      },
+      "Fuselage1": {
+        "length_m": 37.644560994515366,
+        "diameter_m": 4.143709313380411
+      }
+    },
+    "engine": {
+      "T4_MAX": 2857.0,
+      "T4_TAKEOFF": 3540.0,
+      "T4_CLIMB": 3090.0,
+      "splitter.BPR": 5.105,
+      "fan.PR": 1.685,
+      "lpc.PR": 1.935,
+      "hpc.PR": 9.369
+    },
+    "mission": {
+      "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+    }
+  },
+  "aviary_session_start": {
+    "Aircraft.Wing.AREA": 122.8287,
+    "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+    "Aircraft.Wing.SWEEP": 21.6502,
+    "Aircraft.Wing.TAPER_RATIO": 0.2462,
+    "Aircraft.Fuselage.LENGTH": 37.6446,
+    "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+    "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+    "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+  },
+  "baseline_cpacs": "/data/Jessica/final_val/runs/val_seq_iter/mass-mcp/tests/fixtures/D150_simple.xml"
+}

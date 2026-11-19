@@ -189,8 +189,8 @@ def test_the_default_anchor_is_the_measured_baseline():
 
     anchor = anchor_params_for("baseline", 42)
     assert anchor == BASELINE_PARAMS
-    assert anchor["Aircraft.Fuselage.LENGTH"] == 37.68 and anchor["Aircraft.Wing.TAPER_RATIO"] == 0.246
-    assert anchor["Aircraft.Wing.SWEEP"] == 21.65         # measured quarter-chord sweep (B133)
+    assert anchor["Aircraft.Fuselage.LENGTH"] == 37.6446 and anchor["Aircraft.Wing.TAPER_RATIO"] == 0.2462   # V4: measured
+    assert anchor["Aircraft.Wing.SWEEP"] == 21.6502       # measured quarter-chord sweep (B133), tigl 043ba39
 
 
 def test_the_random_anchor_is_the_legacy_draw():
@@ -212,7 +212,7 @@ def test_the_task_points_at_the_geometry_and_cycle_inputs():
 
     task = build_task_with_session("BASE", "sid-1", dict(BASELINE_PARAMS))
     assert "set_high_level_parameters" in task and "set_inputs" in task
-    assert "Aircraft.Fuselage.LENGTH: 37.68" in task
+    assert "Aircraft.Fuselage.LENGTH: 37.6446" in task
     assert "—" not in task.split("BASE")[0].split("IMPORTANT")[1][:2000] or True
 
 
