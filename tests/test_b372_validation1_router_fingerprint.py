@@ -458,3 +458,27 @@ def test_v1_staged_mission_stage_is_not_validation_exhausted_by_a_cut_reply():
                                   role="", status="failed", inputs={},
                                   outputs={"success": False, "valid": False, "error_code": "INVALID"})
     assert StagedPipelineHandler._validation_exhausted([tc], [refused]) is True
+
+
+def test_v5_a_fuselage_re_apply_within_tigls_tolerance_is_the_same_design(tmp_path):
+    """V3 / V4: agents re-apply the measured starting fuselage. tigl-mcp 043ba39 rescaled it by ~1e-6, rewrote the
+    CPACS and reported rebuilt true with an `after` a micron away; tigl's V5 follow-up answers no_op, rebuilt false,
+    after == before. Both are the same design; a change beyond the 1e-4 tolerance is not."""
+    sid = _open(_write(tmp_path / "D150_simple.xml", "<cpacs>D150</cpacs>"), {"session_id": "f1"})
+    mass_file = _write(tmp_path / "mass" / "D150_simple.xml", "<cpacs>D150</cpacs>")
+    _produce("estimate_mass", {"cpacs_file_path": mass_file}, "mass", MASS)
+    start = cc.current_design_fingerprint()
+    before = {"length": 37.644560994515366, "width": 3.951781358688922, "height": 4.143709313380411,
+              "surface_area": 412.123456}
+    old_tigl = {k: v * (1 + 1.1e-6) for k, v in before.items()}
+    _observe("set_high_level_parameters", {"session_id": sid, "component_uid": "Fuselage1"},
+             {"component_uid": "Fuselage1", "geometry_morph": {"rebuilt": True, "before": before, "after": old_tigl}})
+    assert cc.current_design_fingerprint() == start and cc.status(cc.WING_MASS) == "ok"
+    _observe("set_high_level_parameters", {"session_id": sid, "component_uid": "Fuselage1"},
+             {"component_uid": "Fuselage1", "geometry_morph": {"rebuilt": False, "no_op": True, "before": before,
+                                                               "after": before}})
+    assert cc.current_design_fingerprint() == start
+    longer = dict(before, length=before["length"] * 1.001)
+    _observe("set_high_level_parameters", {"session_id": sid, "component_uid": "Fuselage1"},
+             {"component_uid": "Fuselage1", "geometry_morph": {"rebuilt": True, "before": before, "after": longer}})
+    assert cc.current_design_fingerprint() != start and cc.status(cc.WING_MASS) == "stale"
