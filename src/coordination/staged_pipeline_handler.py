@@ -414,7 +414,11 @@ class StagedPipelineHandler(ExecutionHandler):
                     prompt_assembly.read_carry_over(), stage.name if stage else None,
                     prompt_assembly.read_design_json_text())
 
-            # Run the agent.
+            # Run the agent. B372: the knowledge base's records of this stage are what its checks read (uncapped).
+            from src.tools.knowledge_base import get_kb
+
+            _kb = get_kb()
+            kb_start = len(_kb.entries) if _kb is not None else None
             start = time.monotonic()
             try:
                 raw_result = agent.run(context)
@@ -496,7 +500,8 @@ class StagedPipelineHandler(ExecutionHandler):
             # got valid=true on its inline validation (all attempts
             # exhausted). Avoids wasting time running simulation with
             # known-bad parameters.
-            if self._abort_on_validation_exhaustion and self._validation_exhausted(tool_calls):
+            stage_records = list(_kb.entries[kb_start:]) if _kb is not None and kb_start is not None else None
+            if self._abort_on_validation_exhaustion and self._validation_exhausted(tool_calls, stage_records):
                 msg.metadata["early_abort"] = "validation_exhausted"
                 break
 
@@ -684,8 +689,13 @@ class StagedPipelineHandler(ExecutionHandler):
         return False
 
     @staticmethod
-    def _validation_exhausted(tool_calls: list[ToolCallRecord]) -> bool:
+    def _validation_exhausted(tool_calls: list[ToolCallRecord], records: list[dict] | None = None) -> bool:
         """Return True if set_aircraft_parameters was called but never returned valid=true.
+
+        B372: read from this stage's knowledge-base records (their uncapped decision digest) when there are any. The
+        message copies of tool outputs are cut at 2,000 characters; set_aircraft_parameters' reply (19 applied
+        parameters) is longer, so it never parsed and every mission stage of validation 1's staged links was marked
+        early_abort "validation_exhausted" although aviary had answered valid: true.
 
         set_aircraft_parameters runs the inline static-check + Aviary
         model-evaluation validation that the deprecated validate_parameters
@@ -693,6 +703,12 @@ class StagedPipelineHandler(ExecutionHandler):
         """
         import json
 
+        if records is not None:
+            from src.tools.knowledge_base import kb_result
+
+            sets = [r for r in records if r.get("tool") == "set_aircraft_parameters"]
+            if sets:
+                return not any(kb_result(r).get("valid") is True for r in sets)
         sp_calls = [tc for tc in tool_calls if tc.tool_name == "set_aircraft_parameters"]
         if not sp_calls:
             return False

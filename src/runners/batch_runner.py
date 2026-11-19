@@ -952,34 +952,27 @@ def _mission_metrics_from_kb() -> dict | None:
     entries = [e for e in entries
                if (link is None or e.get("chain_link") == link) and (attempt is None or e.get("attempt") == attempt)]
 
-    def _metrics(outputs: dict) -> dict:
-        found = {}
-        for holder in (outputs.get("summary"), outputs):
-            if isinstance(holder, dict):
-                for k in _METRIC_KEYS:
-                    if k not in found and holder.get(k) is not None:
-                        try:
-                            found[k] = float(holder[k])
-                        except (TypeError, ValueError):
-                            pass
-        return found
+    def _metrics(result: dict) -> dict:
+        # B372 (V1): from the entry's uncapped decision digest (kbm.kb_result), which takes run_simulation's metrics
+        # from its summary. The capped outputs lost that summary once the reply grew.
+        return {k: float(result[k]) for k in _METRIC_KEYS if isinstance(result.get(k), (int, float))}
 
     # B306 (audit F3): only a CONVERGED mission is flown (aviary-mcp B288 answers success false for the others; an
     # older reply with "converged": false is excluded here too, and so is a zero-fuel "success", A11).
     sim_idx = max((i for i, e in enumerate(entries)
                    if e.get("tool") == "run_simulation" and e.get("status") == "success"
-                   and isinstance(e.get("outputs"), dict) and e["outputs"].get("success") is not False
-                   and e["outputs"].get("converged") is not False and e["outputs"].get("valid") is not False),
+                   and kbm.kb_result(e).get("success") is not False
+                   and kbm.kb_result(e).get("converged") is not False and kbm.kb_result(e).get("valid") is not False),
                   default=None)
     if sim_idx is None:
         return {"flown": False}
-    sim = entries[sim_idx]["outputs"]
+    sim = kbm.kb_result(entries[sim_idx])
     out = {k: None for k in _METRIC_KEYS}
     out.update(_metrics(sim))
     converged = sim.get("converged")
     session = sim.get("session_id")
     for e in entries[sim_idx + 1:]:
-        o = e.get("outputs")
+        o = kbm.kb_result(e)
         if e.get("tool") == "run_simulation":
             break                  # B306: a later (failed) mission; its get_results are not this one's
         if e.get("tool") == "get_results" and e.get("status") == "success" and isinstance(o, dict) \
