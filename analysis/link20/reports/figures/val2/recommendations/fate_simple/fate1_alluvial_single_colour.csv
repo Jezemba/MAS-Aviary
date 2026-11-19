@@ -1,0 +1,61 @@
+rec_id,combo,it,structure,recorded,reach,followed,fuel_effect,reached,is_followed,lower_fuel,depth,loss_reason
+S_SP-1-01,S_SP,1,sequential,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+S_SP-1-02,S_SP,1,sequential,refused (role guard),paraphrased,not followed (no lever),,False,False,False,1,"Refused, reached only as a paraphrase"
+S_SP-1-03,S_SP,1,sequential,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+S_SP-1-04,S_SP,1,sequential,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+S_SP-1-05,S_SP,1,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_SP-2-01,S_SP,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_SP-2-02,S_SP,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_SP-2-03,S_SP,2,sequential,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+S_SP-2-04,S_SP,2,sequential,recorded,run ended first,not acted (run ended),,False,False,False,1,"Recorded, run ended before anyone acted"
+S_IF-1-01,S_IF,1,sequential,refused (role guard),paraphrased,not followed (no lever),,False,False,False,1,"Refused, reached only as a paraphrase"
+S_IF-1-02,S_IF,1,sequential,refused (role guard),paraphrased,not followed (no lever),,False,False,False,1,"Refused, reached only as a paraphrase"
+S_IF-1-03,S_IF,1,sequential,refused (role guard),paraphrased,no change asked,,False,False,False,1,"Refused, reached only as a paraphrase"
+S_IF-1-04,S_IF,1,sequential,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+S_IF-1-05,S_IF,1,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_IF-2-01,S_IF,2,sequential,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+S_IF-2-02,S_IF,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_IF-2-03,S_IF,2,sequential,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+S_IF-2-04,S_IF,2,sequential,recorded,run ended first,not acted (run ended),,False,False,False,1,"Recorded, run ended before anyone acted"
+S_GR-1-01,S_GR,1,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-1-02,S_GR,1,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-1-03,S_GR,1,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_GR-1-04,S_GR,1,sequential,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-1-05,S_GR,1,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_GR-1-06,S_GR,1,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-1-07,S_GR,1,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_GR-1-08,S_GR,1,sequential,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-1-09,S_GR,1,sequential,recorded,verbatim,followed (not flown),,True,True,False,3,"Followed, no mission flown after it"
+S_GR-2-01,S_GR,2,sequential,refused (role guard),via re-issue,duplicate,,False,False,False,1,"Refused, then re-issued by the integrator"
+S_GR-2-02,S_GR,2,sequential,recorded,verbatim,followed,improved,True,True,True,4,
+S_GR-2-03,S_GR,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-2-04,S_GR,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+S_GR-2-05,S_GR,2,sequential,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+O_SP-1-01,O_SP,1,orchestrated,recorded,verbatim,followed,improved,True,True,True,4,
+O_SP-2-01,O_SP,2,orchestrated,recorded,run ended first,not acted (run ended),,False,False,False,1,"Recorded, run ended before anyone acted"
+O_IF-1-01,O_IF,1,orchestrated,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+O_IF-1-02,O_IF,1,orchestrated,recorded,verbatim,followed,improved,True,True,True,4,
+O_IF-2-01,O_IF,2,orchestrated,recorded,verbatim,followed,improved,True,True,True,4,
+O_IF-2-02,O_IF,2,orchestrated,recorded,run ended first,not acted (run ended),,False,False,False,1,"Recorded, run ended before anyone acted"
+O_GR-1-01,O_GR,1,orchestrated,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+O_GR-2-01,O_GR,2,orchestrated,refused (role guard),not reached,no change asked,,False,False,False,1,"Refused by role guard, never reached"
+O_GR-2-02,O_GR,2,orchestrated,recorded,verbatim,not followed (no lever),unchanged,True,False,False,2,"Reached, not followed"
+O_GR-2-03,O_GR,2,orchestrated,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+O_GR-2-04,O_GR,2,orchestrated,recorded,verbatim,not followed (re-ran analysis),,True,False,False,2,"Reached, not followed"
+N_IF-1-01,N_IF,1,networked,recorded,verbatim,followed,improved,True,True,True,4,
+N_IF-1-02,N_IF,1,networked,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+N_IF-1-03,N_IF,1,networked,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+N_IF-1-04,N_IF,1,networked,board / todo post,not reached,duplicate,,False,False,False,1,"Board or todo post, never reached"
+N_IF-2-01,N_IF,2,networked,refused (role guard),not reached,duplicate,,False,False,False,1,"Refused by role guard, never reached"
+N_IF-2-02,N_IF,2,networked,recorded,verbatim,not acted (coordination stall),,True,False,False,2,"Reached, run stalled before acting"
+N_IF-2-03,N_IF,2,networked,recorded,verbatim,not acted (coordination stall),,True,False,False,2,"Reached, run stalled before acting"
+N_IF-2-04,N_IF,2,networked,board / todo post,not reached,not acted (not reached),,False,False,False,1,"Board or todo post, never reached"
+N_IF-2-05,N_IF,2,networked,board / todo post,not reached,duplicate,,False,False,False,1,"Board or todo post, never reached"
+N_GR-1-01,N_GR,1,networked,recorded,verbatim,followed,improved,True,True,True,4,
+N_GR-1-02,N_GR,1,networked,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+N_GR-1-03,N_GR,1,networked,recorded,verbatim,followed,improved,True,True,True,4,
+N_GR-1-04,N_GR,1,networked,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+N_GR-1-05,N_GR,1,networked,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+N_GR-1-06,N_GR,1,networked,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+N_GR-1-07,N_GR,1,networked,refused (role guard),not reached,not acted (not reached),,False,False,False,1,"Refused by role guard, never reached"
+N_GR-2-01,N_GR,2,networked,refused (role guard),not reached,not followed (false claim),,False,False,False,1,"Refused by role guard, never reached"

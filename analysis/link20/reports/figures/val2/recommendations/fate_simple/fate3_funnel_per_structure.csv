@@ -1,0 +1,13 @@
+structure,stage,count
+sequential,Made,32
+sequential,Reached,7
+sequential,Followed,7
+sequential,Lower fuel,6
+orchestrated,Made,11
+orchestrated,Reached,5
+orchestrated,Followed,3
+orchestrated,Lower fuel,3
+networked,Made,17
+networked,Reached,5
+networked,Followed,3
+networked,Lower fuel,3

@@ -90,6 +90,39 @@ Every figure has PNG (300 dpi), PDF and the CSV it plots.
   - AR 9.36 -> 9.5: −131.58 kg.
 - Every followed recommendation raised aspect ratio, and S_SP and N_GR also raised the area. No recommendation that lowered AR or area was followed, so the plot says nothing about such advice.
 
+## Slide set: recommendation fate (`fate_simple/`)
+
+A redesign of `fig_b2_fate_alluvial`, split so that each figure answers one question. Same population: 60 recommendations (sequential 32, orchestrated 11, networked 17). Drawn from `val2_recommendations.csv` with `val2_recommendations.py --fate-simple-from <table> --out <dir>` (the full run draws them too). Each figure has PNG (300 dpi), PDF and CSV. The CSV of figures 1 and 5 has one row per recommendation, with `depth` (1 = made ... 4 = lower fuel) and `loss_reason`.
+
+**Clean funnel, nested: Made -> Reached -> Followed -> Lower fuel.**
+- **Reached** = the framework recorded it, and its text reached the agent who can act on it verbatim (`reach == verbatim`). In sequential and networked runs that is the framework block in the target's prompt. In orchestrated runs it is the framework block or the orchestrator's task. This gives 17.
+- **Definition change.** The long table and `fig_b1`/`fig_b2` count 22 as reached. That count also includes 4 refused recommendations that reached their target only as a paraphrase (the author's own `respond_to_recommendation` text in the coordination log), and 1 refused recommendation that the integrator re-issued word for word. Here those 5 count as losses at the Reached stage. The re-issued one is counted once, under its re-issued copy (S_GR-2-02). With this definition, Reached is a subset of Recorded, and every followed recommendation is inside Reached.
+- None of the 4 paraphrase-only recommendations was followed: 3 had no lever and 1 asked for no change. So the definition change moves no recommendation out of Followed.
+- **Followed** = outcome `followed` (12) or `followed (not flown)` (1) = 13.
+- **Lower fuel** = followed, and the next converged mission burned less fuel = 12. All 12 followed-and-flown recommendations lowered fuel.
+- **Loss reason** = the first stage a recommendation fails, so each lost recommendation has exactly one reason. 48 are lost: 43 at Reached, 4 at Followed and 1 at Lower fuel.
+- The reason "Refused by role guard, never reached" (31) contains 11 that asked for no change ("proceed", a result report), 8 duplicates of another recommendation, 11 not acted because they never reached anyone, and 1 false claim.
+- The reason "Board or todo post, never reached" (3) contains 2 duplicates.
+
+**fate1_alluvial_by_structure**: Where do the recommendations go? Four stages, flows only forward. Kept flows are coloured by structure. What is lost leaves downward as a grey stub at each stage: 43, 4 and 1.
+- Within each node the recommendations are sorted by how far they get, then by structure, so ribbons never cross.
+
+**fate1_alluvial_single_colour**: The same figure in one colour, for when the structure split is not the point.
+
+**fate2_loss_reasons_stacked**: Why are recommendations lost? The 48 lost recommendations by reason, ranked, stacked by structure, with totals at the bar ends.
+
+**fate2b_loss_reasons_per_structure**: The same reasons, with one panel per structure. All panels share the x axis. The panel label gives the number lost out of the number made.
+
+**fate3_funnel_per_structure**: Per-structure funnel: Made / Reached / Followed / Lower fuel. Three panels share the y scale, with counts at the bar ends.
+- Sequential: 32 / 7 / 7 / 6.
+- Orchestrated: 11 / 5 / 3 / 3.
+- Networked: 17 / 5 / 3 / 3.
+
+**fate4_orchestrator_relay**: What did the orchestrator do with a recorded recommendation? Population: the 7 recommendations recorded in orchestrated runs (O_SP, O_IF, O_GR, both iterations). Categories are as in **Orchestrator relay** above.
+- Unchanged 1, reworded 1, reworded + expanded 2, bypassed 1, not relayed (run ended first) 2.
+
+**fate5_alluvial_with_reasons**: Figures 1 and 2 in one picture. It is the same alluvial, but each grey stub is labelled with its reason and count. Labels sit outside the ribbons.
+
 ## Tables
 
 - `val2_recommendations.csv` / `.md`: one row per recommendation. Columns:

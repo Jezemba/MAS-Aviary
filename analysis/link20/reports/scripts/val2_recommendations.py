@@ -42,6 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from analysis.link20 import rec_params as rp
 from analysis.link20.plots import (REF_STYLE, STRUCT_COLORS, STRUCT_LABELS, STRUCTURES, Line2D, Patch, plt,
@@ -646,15 +647,255 @@ def fig_e(t: pd.DataFrame, out: Path) -> None:
             "fuel_delta_kg", "fp_prev", "fp_next"]])
 
 
+# ----------------------------------------------------------------------------------------------------------------
+# Fate, slide set (fate_simple/): one question per figure
+# ----------------------------------------------------------------------------------------------------------------
+# Clean funnel (nested): Made -> Reached -> Followed -> Lower fuel.
+#   Reached  = the framework recorded it AND it appears verbatim in a later input of the agent who can act on it
+#              (reach == "verbatim": the framework block, or the orchestrator's task). The paraphrase-only (4) and
+#              re-issue (1) routes of the long table count as losses here, so Reached <= Recorded.
+#   Followed = outcome "followed" or "followed (not flown)".   Lower fuel = followed and flown with lower fuel.
+# Every lost recommendation gets exactly one reason: the first stage it fails.
+FATE_STAGES = ["Made", "Reached", "Followed", "Lower fuel"]
+LOSS_ORDER = [  # (reason, stage it is lost at)
+    ("Refused by role guard, never reached", 1),
+    ("Recorded, run ended before anyone acted", 1),
+    ("Refused, reached only as a paraphrase", 1),
+    ("Board or todo post, never reached", 1),
+    ("Refused, then re-issued by the integrator", 1),
+    ("Reached, run stalled before acting", 2),
+    ("Reached, not followed", 2),
+    ("Followed, no mission flown after it", 3)]
+LOSS_STAGE = dict(LOSS_ORDER)
+LOST_GREY = "#BDBDBD"
+
+
+def fate_simple_table(t: pd.DataFrame) -> pd.DataFrame:
+    """One row per recommendation: depth reached in the clean funnel (1..4) and the reason it stopped."""
+    f = t[["rec_id", "combo", "it", "structure", "recorded", "reach", "orch_relay", "followed", "fuel_effect"]].copy()
+    reached = (f.recorded == "recorded") & (f.reach == "verbatim")
+    followed = reached & f.followed.isin(FOLLOWED)
+    lower = followed & (f.fuel_effect == "improved")
+    f["reached"], f["is_followed"], f["lower_fuel"] = reached, followed, lower
+    f["depth"] = 1 + reached.astype(int) + followed.astype(int) + lower.astype(int)
+    reason = []
+    for _, r in f.iterrows():
+        if r.lower_fuel:
+            reason.append("")
+        elif r.is_followed:
+            reason.append("Followed, no mission flown after it")
+        elif r.reached:
+            reason.append("Reached, run stalled before acting" if r.followed.startswith("not acted")
+                          else "Reached, not followed")
+        elif r.recorded == "recorded":
+            reason.append("Recorded, run ended before anyone acted")
+        elif r.recorded == "board / todo post":
+            reason.append("Board or todo post, never reached")
+        elif r.reach == "paraphrased":
+            reason.append("Refused, reached only as a paraphrase")
+        elif r.reach == "via re-issue":
+            reason.append("Refused, then re-issued by the integrator")
+        else:
+            reason.append("Refused by role guard, never reached")
+    f["loss_reason"] = reason
+    # consistency with the long table: 60 made, 21 recorded, 13 followed, 12 lower fuel
+    assert len(f) == len(t) and int(f.is_followed.sum()) == int(t.followed.isin(FOLLOWED).sum())
+    assert int(f.lower_fuel.sum()) == int((t.fuel_effect == "improved").sum())
+    assert not (t.followed.isin(FOLLOWED) & ~f.reached).any(), "a followed recommendation outside 'reached'"
+    assert all(r == "" or r in LOSS_STAGE for r in f.loss_reason)
+    assert all((r == "" and d == 4) or LOSS_STAGE[r] == d for r, d in zip(f.loss_reason, f.depth))
+    return f
+
+
+def _ribbon(ax, x0, x1, y0a, y0b, y1a, y1b, color, alpha):
+    xs = np.linspace(x0, x1, 60)
+    s = (1 - np.cos(np.pi * (xs - x0) / (x1 - x0))) / 2
+    ax.fill_between(xs, y0a + (y1a - y0a) * s, y0b + (y1b - y0b) * s, color=color, alpha=alpha, lw=0)
+
+
+def _fate_alluvial(ax, f: pd.DataFrame, by_structure: bool, reasons: bool, fs: float = 14):
+    """Forward-only alluvial. Inside every node the recommendations are sorted by (depth reached, descending;
+    structure), so the part that goes on is always the top block of the node and ribbons never cross. What is lost
+    leaves downwards into a grey stub between the columns (one per stage, or one per reason)."""
+    w, gap, kept_alpha = 0.035, 4.0, 0.75
+    sorder = {s: i for i, s in enumerate(STRUCTURES)}
+    f = f.assign(_s=f.structure.map(sorder)).sort_values(["depth", "_s"], ascending=[False, True])
+    n = [int((f.depth > k).sum()) for k in range(4)]                 # node sizes
+    label_floor = 0.0                                                # reason labels never overlap across stages
+    one = "#404040"
+    for k in range(4):
+        sub = f[f.depth > k]
+        # node: thin black bar
+        ax.add_patch(plt.Rectangle((k - w / 2, 0), w, n[k], color="black", lw=0, zorder=3))
+        ax.text(k, -1.2, f"{FATE_STAGES[k]}\n{n[k]}", ha="center", va="bottom", fontsize=fs + 1, linespacing=1.15)
+        if k == 3:
+            break
+        # kept ribbons, one block per structure (flat: node k+1 starts at 0 as well)
+        y = 0
+        for s in STRUCTURES:
+            m = int(((sub.depth > k + 1) & (sub.structure == s)).sum())
+            if m:
+                _ribbon(ax, k + w / 2, k + 1 - w / 2, y, y + m, y, y + m,
+                        STRUCT_COLORS[s] if by_structure else one, kept_alpha if by_structure else 1.0)
+            y += m
+        # lost: grey stubs
+        lost = sub[sub.depth == k + 1]
+        if not len(lost):
+            continue
+        y0 = n[k + 1]
+        xs0, xs1 = k + w / 2, k + 0.42
+        if not reasons:
+            m = len(lost)
+            _ribbon(ax, xs0, xs1, y0, y0 + m, y0 + gap, y0 + gap + m, LOST_GREY, 0.8)
+            ax.add_patch(plt.Rectangle((xs1, y0 + gap), w, m, color="0.45", lw=0, zorder=3))
+            ax.text(xs1 + w + 0.03, y0 + gap + m / 2, f"{m} lost", va="center", fontsize=fs)
+        else:
+            ytgt = max(y0 + gap, label_floor)
+            for lab, st in LOSS_ORDER:
+                m = int((lost.loss_reason == lab).sum())
+                if st != k + 1 or not m:
+                    continue
+                _ribbon(ax, xs0, xs1, y0, y0 + m, ytgt, ytgt + m, LOST_GREY, 0.8)
+                ax.add_patch(plt.Rectangle((xs1, ytgt), w, m, color="0.45", lw=0, zorder=3))
+                ax.text(xs1 + w + 0.03, ytgt + m / 2, f"{m}  {lab}", va="center", fontsize=fs - 1)
+                y0 += m
+                ytgt += m + 3.2
+                if k >= 1:          # stage-1 stubs sit far below; only the later stages can collide
+                    label_floor = ytgt
+    ax.set_xlim(-0.15, 3.25)
+    ax.set_ylim(max(n[0] + gap + 2, ax.get_ylim()[1] if reasons else 0) + 1, -9)
+    ax.axis("off")
+
+
+def fig_fate_simple(t: pd.DataFrame, out: Path) -> None:
+    out = out / "fate_simple"
+    out.mkdir(parents=True, exist_ok=True)
+    f = fate_simple_table(t)
+    fs = 15
+    plt.rcParams.update({"font.size": fs, "axes.labelsize": fs, "xtick.labelsize": fs, "ytick.labelsize": fs,
+                         "legend.fontsize": fs})
+    struct_handles = [Patch(color=STRUCT_COLORS[s], alpha=0.75, label=STRUCT_LABELS[s]) for s in STRUCTURES]
+    cols = ["rec_id", "combo", "it", "structure", "recorded", "reach", "followed", "fuel_effect", "reached",
+            "is_followed", "lower_fuel", "depth", "loss_reason"]
+
+    # (1) where do recommendations go: simplified alluvial, by structure and single colour
+    for stem, by_s in (("fate1_alluvial_by_structure", True), ("fate1_alluvial_single_colour", False)):
+        fig, ax = plt.subplots(figsize=(11, 6.2))
+        _fate_alluvial(ax, f, by_s, reasons=False, fs=fs)
+        if by_s:
+            ax.legend(handles=struct_handles, loc="lower right", ncol=1, frameon=False, fontsize=fs)
+        save(fig, out, stem, f[cols])
+
+    # (2) why are recommendations lost: ranked reasons, stacked by structure
+    lost = f[f.loss_reason != ""]
+    ct = pd.crosstab(lost.loss_reason, lost.structure).reindex(columns=STRUCTURES, fill_value=0)
+    ct["total"] = ct.sum(axis=1)
+    order = [lab for lab, _ in LOSS_ORDER if lab in ct.index]
+    ct = ct.loc[order].sort_values("total", ascending=False, kind="stable")
+    data2 = ct.reset_index().rename(columns={"loss_reason": "reason"})
+    data2.insert(1, "lost_at", [FATE_STAGES[LOSS_STAGE[r]] for r in data2.reason])
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    y = np.arange(len(ct))[::-1]
+    left = np.zeros(len(ct))
+    for s in STRUCTURES:
+        ax.barh(y, ct[s].values, left=left, color=STRUCT_COLORS[s], edgecolor="white", linewidth=0.6,
+                label=STRUCT_LABELS[s], height=0.7)
+        left += ct[s].values
+    for yi, v in zip(y, ct.total):
+        ax.text(v + 0.4, yi, str(v), va="center", fontsize=fs)
+    ax.set_yticks(y, ct.index)
+    ax.set_xlabel(f"Lost recommendations (n = {len(lost)} of {len(f)})")
+    ax.set_xlim(0, ct.total.max() * 1.12)
+    ax.legend(loc="lower right", frameon=False)
+    sns.despine(ax=ax)
+    save(fig, out, "fate2_loss_reasons_stacked", data2)
+
+    # (2b) the same per structure, small multiples, shared x
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5.2), sharey=True, sharex=True)
+    for ax, s in zip(axes, STRUCTURES):
+        ax.barh(y, ct[s].values, color=STRUCT_COLORS[s], edgecolor="none", height=0.7)
+        for yi, v in zip(y, ct[s].values):
+            if v:
+                ax.text(v + 0.4, yi, str(v), va="center", fontsize=fs)
+        ax.set_xlabel(f"{STRUCT_LABELS[s]}: {int(ct[s].sum())} of {int((f.structure == s).sum())} lost")
+        ax.set_xlim(0, ct[STRUCTURES].values.max() * 1.15)
+        sns.despine(ax=ax)
+    axes[0].set_yticks(y, ct.index)
+    fig.tight_layout()
+    save(fig, out, "fate2b_loss_reasons_per_structure", data2)
+
+    # (3) per-structure funnel: 3 panels, same y scale, counts at bar ends
+    rows = [{"structure": s, "stage": FATE_STAGES[k], "count": int(((f.structure == s) & (f.depth > k)).sum())}
+            for s in STRUCTURES for k in range(4)]
+    d3 = pd.DataFrame(rows)
+    ymax = d3["count"].max()
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.6), sharey=True)
+    for ax, s in zip(axes, STRUCTURES):
+        v = d3[d3.structure == s]["count"].values
+        ax.bar(range(4), v, color=STRUCT_COLORS[s], width=0.68, edgecolor="none")
+        for i, c in enumerate(v):
+            ax.text(i, c + ymax * 0.015, str(c), ha="center", va="bottom", fontsize=fs)
+        ax.set_xticks(range(4), ["Made", "Reached", "Followed", "Lower\nfuel"])
+        ax.set_xlabel(STRUCT_LABELS[s], labelpad=8)
+        ax.set_ylim(0, ymax * 1.12)
+        sns.despine(ax=ax)
+    axes[0].set_ylabel("Recommendations")
+    fig.tight_layout()
+    save(fig, out, "fate3_funnel_per_structure", d3)
+
+    # (4) what the orchestrator did with the recorded recommendations (orchestrated only)
+    o = t[(t.structure == "orchestrated") & (t.recorded == "recorded")]
+    kinds = o.orch_relay.replace("", "not relayed (run ended)")
+    c = kinds.value_counts().reindex(RELAY_ORDER).fillna(0).astype(int)
+    labels = {"unchanged": "Unchanged", "reworded": "Reworded", "reworded and expanded": "Reworded + expanded",
+              "bypassed": "Bypassed", "not relayed (run ended)": "Not relayed"}
+    fig, ax = plt.subplots(figsize=(8, 3.8))
+    y = np.arange(len(c))[::-1]
+    ax.barh(y, c.values, color=STRUCT_COLORS["orchestrated"], edgecolor="none", height=0.65)
+    for yi, v in zip(y, c.values):
+        ax.text(v + 0.05, yi, str(v), va="center", fontsize=fs)
+    ax.set_yticks(y, [labels[k] for k in c.index])
+    ax.set_xticks(range(int(c.max()) + 1))
+    ax.set_xlim(0, c.max() + 0.5)
+    ax.set_xlabel("Recorded recommendations")
+    sns.despine(ax=ax)
+    save(fig, out, "fate4_orchestrator_relay", c.rename("count").rename_axis("relay").reset_index())
+
+    # (5) one alluvial with the loss reasons as labelled grey stubs
+    fig, ax = plt.subplots(figsize=(14, 8.2))
+    _fate_alluvial(ax, f, True, reasons=True, fs=fs)
+    ax.set_ylim(80, -9)
+    ax.legend(handles=struct_handles, loc="lower right", frameon=False, fontsize=fs)
+    save(fig, out, "fate5_alluvial_with_reasons", f[cols])
+
+    print(d3.pivot(index="stage", columns="structure", values="count").reindex(FATE_STAGES).to_string())
+    print(data2.to_string(index=False))
+    print(c.to_string())
+
+
+def fate_simple_from_table(table: Path, out: Path) -> None:
+    """Redraw only the fate_simple/ set from an existing val2_recommendations.csv (no extract needed)."""
+    t = pd.read_csv(table, keep_default_na=False, na_values={"fuel_delta_kg": [""]})
+    t["structure"] = [STRUCT[c[0]] for c in t.combo]
+    setup_style()
+    fig_fate_simple(t, out)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--extract", required=True)
-    ap.add_argument("--curated", required=True)
+    ap.add_argument("--extract")
+    ap.add_argument("--curated")
     ap.add_argument("--out", required=True)
     ap.add_argument("--draft", action="store_true", help="write the automatic table only (before curation)")
+    ap.add_argument("--fate-simple-from", help="val2_recommendations.csv: redraw only the fate_simple/ slide set")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    if a.fate_simple_from:
+        fate_simple_from_table(Path(a.fate_simple_from), out)
+        return
+    if not (a.extract and a.curated):
+        ap.error("--extract and --curated are required unless --fate-simple-from is given")
     runs, ev, pr = load(Path(a.extract))
     calls = calls_table(runs, ev)
     calls.to_csv(out / "val2_recommendations_calls.csv", index=False)
@@ -681,6 +922,7 @@ def main() -> None:
     fig_c(t, runs, ev, out)
     fig_d(t, out)
     fig_e(t, out)
+    fig_fate_simple(t, out)
     summary(t, out)
 
 

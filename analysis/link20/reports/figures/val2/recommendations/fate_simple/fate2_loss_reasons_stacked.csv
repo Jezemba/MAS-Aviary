@@ -1,0 +1,9 @@
+reason,lost_at,sequential,orchestrated,networked,total
+"Refused by role guard, never reached",Reached,18,4,9,31
+"Recorded, run ended before anyone acted",Reached,2,2,0,4
+"Refused, reached only as a paraphrase",Reached,4,0,0,4
+"Board or todo post, never reached",Reached,0,0,3,3
+"Reached, run stalled before acting",Followed,0,0,2,2
+"Reached, not followed",Followed,0,2,0,2
+"Refused, then re-issued by the integrator",Reached,1,0,0,1
+"Followed, no mission flown after it",Lower fuel,1,0,0,1
