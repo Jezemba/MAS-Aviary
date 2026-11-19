@@ -186,15 +186,17 @@ baseline:
 # against the task's own requirements, as every prompt states them ("Objective: Minimize fuel burn <= 15,000 kg";
 # "Constraint: Gross Takeoff Weight (GTOW) <= 90,000 kg"): success = the mission flew and both hold. The final
 # study's coupled baseline is the reference the result is reported against (signed %, no verdict): the D150 flown
-# through the final coupled chain, ws8 /data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_1.json
-# (get_results; _2 identical). Note: the baseline itself meets neither requirement (15,719.18 kg, 90,310.01 kg).
+# through the final coupled chain on the final pins with the closed fixed point (baseline3, 2026-11-18), ws8
+# /data/Jessica/final_fix/baseline3/results/flights/B3_coupled_anchor_1.json (get_results; _2 bit-identical; was
+# baseline2 B2_coupled_anchor_1: 15,719.17609579942 / 90,310.00549723483). Note: the baseline itself meets neither
+# requirement (15,719.18 kg, 90,310.00 kg).
 evaluation:
   requirements:
     fuel_burned_kg: 15000.0
     gtow_kg: 90000.0
   baseline_reference:
-    fuel_burned_kg: 15719.17609579942
-    gtow_kg: 90310.00549723483
-    wing_mass_kg: 7958.785892400294
+    fuel_burned_kg: 15719.17623923756
+    gtow_kg: 90309.99671587195
+    wing_mass_kg: 7958.785412116814
     reserve_fuel_kg: 1360.77711
-    zero_fuel_weight_kg: 73230.05229143542
+    zero_fuel_weight_kg: 73230.0433666344

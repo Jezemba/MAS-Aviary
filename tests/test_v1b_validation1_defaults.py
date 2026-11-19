@@ -456,7 +456,7 @@ def test_v12_requirements_and_baseline_reference():
     from src.logging.eval_classifier import classify_aviary_eval
 
     assert t.limits == {"fuel_burned_kg": 15000.0, "gtow_kg": 90000.0}
-    assert t.reference["fuel_burned_kg"] == 15719.17609579942 and t.reference["gtow_kg"] == 90310.00549723483
+    assert t.reference["fuel_burned_kg"] == 15719.17623923756 and t.reference["gtow_kg"] == 90309.99671587195
     base = classify_aviary_eval(dict(t.reference), converged=True)
     assert base.result == "omission" and not base.fuel_pass and not base.gtow_pass
     assert "fuel_burned_kg 15719.2 > requirement 15000; +0.00% vs the coupled baseline" in base.reason
