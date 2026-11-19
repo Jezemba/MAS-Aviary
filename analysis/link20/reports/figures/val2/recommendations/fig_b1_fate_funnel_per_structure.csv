@@ -1,0 +1,16 @@
+stage,structure,count
+Made,sequential,32
+Made,orchestrated,11
+Made,networked,17
+Recorded by the framework,sequential,9
+Recorded by the framework,orchestrated,7
+Recorded by the framework,networked,5
+Reached the target agent,sequential,12
+Reached the target agent,orchestrated,5
+Reached the target agent,networked,5
+Followed,sequential,7
+Followed,orchestrated,3
+Followed,networked,3
+Followed and flown with lower fuel,sequential,6
+Followed and flown with lower fuel,orchestrated,3
+Followed and flown with lower fuel,networked,3

@@ -1,0 +1,19 @@
+structure,fine_type,count,pct
+sequential,AR target value,16,50.0
+sequential,Proceed / run next step,6,18.75
+sequential,Review / check request,3,9.375
+sequential,Result report,3,9.375
+sequential,Mass reduction goal,1,3.125
+sequential,Wing parameter without direction,1,3.125
+sequential,Area or AR (direction only),1,3.125
+sequential,Mission adjustment goal,1,3.125
+orchestrated,AR target value,4,36.36363636363637
+orchestrated,Proceed / run next step,2,18.181818181818183
+orchestrated,Drag reduction goal,2,18.181818181818183
+orchestrated,Mission adjustment goal,1,9.090909090909092
+orchestrated,Area or AR (direction only),1,9.090909090909092
+orchestrated,Mass reduction goal,1,9.090909090909092
+networked,AR target value,6,35.294117647058826
+networked,Area + AR target values,6,35.294117647058826
+networked,Drag reduction goal,3,17.647058823529413
+networked,Wing parameter without direction,2,11.764705882352942

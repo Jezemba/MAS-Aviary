@@ -1,0 +1,21 @@
+column,node,count
+Made,Made,60
+Recorded?,Recorded,21
+Recorded?,Refused (role guard),36
+Recorded?,Board / todo post,3
+Reached?,Reached target,22
+Reached?,Not reached,34
+Reached?,Run ended first,4
+Orchestrator,Not orchestrated,17
+Orchestrator,Passed unchanged,1
+Orchestrator,Reworded,1
+Orchestrator,Reworded and expanded,2
+Orchestrator,Bypassed (loop re-ran),1
+Outcome,Followed,12
+Outcome,"Followed, not flown",1
+Outcome,Not followed,5
+Outcome,Not acted (run ended or stalled),2
+Outcome,Not reached or duplicate,1
+Outcome,No change asked,1
+Fuel,Lower fuel,12
+Fuel,Same fuel,1

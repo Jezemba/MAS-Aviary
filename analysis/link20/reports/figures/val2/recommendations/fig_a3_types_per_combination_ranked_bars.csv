@@ -1,0 +1,27 @@
+combo,fine_type,count
+S_SP,AR target value,3
+S_SP,Review / check request,2
+S_SP,Mass reduction goal,1
+S_SP,Wing parameter without direction,1
+S_SP,Area or AR (direction only),1
+S_SP,Proceed / run next step,1
+S_IF,AR target value,5
+S_IF,Result report,1
+S_IF,Mission adjustment goal,1
+S_IF,Proceed / run next step,1
+S_IF,Review / check request,1
+S_GR,AR target value,8
+S_GR,Proceed / run next step,4
+S_GR,Result report,2
+O_SP,AR target value,1
+O_SP,Mission adjustment goal,1
+O_IF,AR target value,3
+O_IF,Area or AR (direction only),1
+O_GR,Proceed / run next step,2
+O_GR,Drag reduction goal,2
+O_GR,Mass reduction goal,1
+N_IF,AR target value,6
+N_IF,Wing parameter without direction,2
+N_IF,Drag reduction goal,1
+N_GR,Area + AR target values,6
+N_GR,Drag reduction goal,2

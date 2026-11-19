@@ -1,0 +1,102 @@
+combo,it,kind,min,fuel_kg,rec_id,type,outcome
+S_SP,1,mission,14.247886530558269,15719.1762392376,,,
+S_SP,1,recommendation,7.565867431958517,,S_SP-1-01,specific,not acted (not reached)
+S_SP,1,recommendation,8.576746312777201,,S_SP-1-02,general,not followed (no lever)
+S_SP,1,recommendation,12.034304642677307,,S_SP-1-03,general,not acted (not reached)
+S_SP,1,recommendation,14.74874826669693,,S_SP-1-04,general,not acted (not reached)
+S_SP,1,recommendation,16.50497737725576,,S_SP-1-05,directional,followed
+S_IF,1,mission,17.033207138379414,15719.1762392376,,,
+S_IF,1,recommendation,7.7356152375539144,,S_IF-1-01,specific,not followed (no lever)
+S_IF,1,recommendation,9.15991571744283,,S_IF-1-02,specific,not followed (no lever)
+S_IF,1,recommendation,10.918806958198548,,S_IF-1-03,general,no change asked
+S_IF,1,recommendation,17.463568246364595,,S_IF-1-04,specific,duplicate
+S_IF,1,recommendation,18.79345374107361,,S_IF-1-05,specific,followed
+S_GR,1,mission,7.734526360034943,15719.1762392376,,,
+S_GR,1,mission,22.485656905174256,15148.059086893585,,,
+S_GR,1,mission,37.52215195496877,14796.955369084773,,,
+S_GR,1,mission,54.85285376707713,14506.871306247287,,,
+S_GR,1,recommendation,6.216725313663483,,S_GR-1-01,general,no change asked
+S_GR,1,recommendation,8.185803095499674,,S_GR-1-02,general,no change asked
+S_GR,1,recommendation,9.414804188410441,,S_GR-1-03,specific,followed
+S_GR,1,recommendation,19.14361087481181,,S_GR-1-04,specific,duplicate
+S_GR,1,recommendation,23.59793317715327,,S_GR-1-05,specific,followed
+S_GR,1,recommendation,35.81368719736735,,S_GR-1-06,general,no change asked
+S_GR,1,recommendation,39.39693455696106,,S_GR-1-07,specific,followed
+S_GR,1,recommendation,49.47013785441717,,S_GR-1-08,specific,duplicate
+S_GR,1,recommendation,56.76537931362788,,S_GR-1-09,specific,followed (not flown)
+O_SP,1,mission,16.733809570471447,15719.1762392376,,,
+O_SP,1,recommendation,18.41342220703761,,O_SP-1-01,specific,followed
+O_IF,1,mission,20.784717806180318,15719.1762392376,,,
+O_IF,1,recommendation,11.642195200920105,,O_IF-1-01,specific,not acted (not reached)
+O_IF,1,recommendation,21.992977039019266,,O_IF-1-02,directional,followed
+O_GR,1,mission,29.410770992438,15719.17623923756,,,
+O_GR,1,recommendation,26.12479281425476,,O_GR-1-01,general,no change asked
+N_IF,1,mission,80.06970947980881,15719.17623923756,,,
+N_IF,1,recommendation,114.20239387750625,,N_IF-1-01,specific,followed
+N_IF,1,recommendation,130.34910149971645,,N_IF-1-02,specific,duplicate
+N_IF,1,recommendation,136.76285574436187,,N_IF-1-03,specific,duplicate
+N_IF,1,recommendation,137.267069486777,,N_IF-1-04,specific,duplicate
+N_GR,1,mission,13.083645951747894,15719.17623923756,,,
+N_GR,1,mission,96.91586340268454,15491.223477682204,,,
+N_GR,1,mission,104.56134495735168,15491.223477682204,,,
+N_GR,1,mission,107.30070437192917,15491.223477682204,,,
+N_GR,1,mission,259.86899311939874,15243.222793143554,,,
+N_GR,1,mission,262.2380286733309,15243.222793143554,,,
+N_GR,1,mission,264.19164158900577,15243.222793143554,,,
+N_GR,1,mission,265.5179980476697,15243.222793143554,,,
+N_GR,1,mission,267.63645635445914,15243.222793143554,,,
+N_GR,1,mission,268.51006673177085,15243.222793143554,,,
+N_GR,1,mission,269.5762114723523,15243.222793143554,,,
+N_GR,1,mission,272.2731711268425,15243.222793143554,,,
+N_GR,1,mission,274.0806065519651,15243.222793143554,,,
+N_GR,1,mission,274.9554419517517,15243.222793143554,,,
+N_GR,1,recommendation,20.180828460057576,,N_GR-1-01,specific,followed
+N_GR,1,recommendation,98.09270230531692,,N_GR-1-02,specific,not acted (not reached)
+N_GR,1,recommendation,109.83189113934834,,N_GR-1-03,specific,followed
+N_GR,1,recommendation,135.62025032838184,,N_GR-1-04,specific,not acted (not reached)
+N_GR,1,recommendation,227.79228333234786,,N_GR-1-05,specific,not acted (not reached)
+N_GR,1,recommendation,260.7351727962494,,N_GR-1-06,general,not acted (not reached)
+N_GR,1,recommendation,269.121459710598,,N_GR-1-07,general,not acted (not reached)
+S_SP,2,mission,18.978112721443175,14942.373287504552,,,
+S_SP,2,recommendation,10.307820888360341,,S_SP-2-01,general,no change asked
+S_SP,2,recommendation,17.238292912642162,,S_SP-2-02,general,no change asked
+S_SP,2,recommendation,19.454937597115833,,S_SP-2-03,specific,duplicate
+S_SP,2,recommendation,20.63416452407837,,S_SP-2-04,specific,not acted (run ended)
+S_IF,2,mission,12.848577384154002,15587.594725774818,,,
+S_IF,2,recommendation,9.07669205268224,,S_IF-2-01,general,not acted (not reached)
+S_IF,2,recommendation,11.576222538948059,,S_IF-2-02,general,no change asked
+S_IF,2,recommendation,13.339674623807271,,S_IF-2-03,general,not acted (not reached)
+S_IF,2,recommendation,14.526879131793976,,S_IF-2-04,specific,not acted (run ended)
+S_GR,2,mission,2.1544315298398335,14510.266341280805,,,
+S_GR,2,mission,19.673004257678986,14245.64168312743,,,
+S_GR,2,recommendation,2.6120033502578734,,S_GR-2-01,specific,duplicate
+S_GR,2,recommendation,3.7617140690485638,,S_GR-2-02,specific,followed
+S_GR,2,recommendation,13.981060922145844,,S_GR-2-03,general,no change asked
+S_GR,2,recommendation,18.67188707192739,,S_GR-2-04,general,no change asked
+S_GR,2,recommendation,20.52426679531733,,S_GR-2-05,general,no change asked
+O_SP,2,mission,14.88547617594401,15587.594725774818,,,
+O_SP,2,recommendation,16.362259991963704,,O_SP-2-01,general,not acted (run ended)
+O_IF,2,mission,18.625366028149923,15148.059086912384,,,
+O_IF,2,mission,33.69972982803981,14796.955369108602,,,
+O_IF,2,recommendation,20.1126695394516,,O_IF-2-01,specific,followed
+O_IF,2,recommendation,35.51832154194514,,O_IF-2-02,specific,not acted (run ended)
+O_GR,2,mission,51.70321876605352,15719.176239247632,,,
+O_GR,2,mission,65.5966489513715,15719.176239247632,,,
+O_GR,2,recommendation,46.98052894671758,,O_GR-2-01,general,no change asked
+O_GR,2,recommendation,55.83442429701487,,O_GR-2-02,general,not followed (no lever)
+O_GR,2,recommendation,62.784244271119434,,O_GR-2-03,general,duplicate
+O_GR,2,recommendation,68.39264960686366,,O_GR-2-04,general,not followed (re-ran analysis)
+N_IF,2,mission,76.65627570947011,15148.05909311066,,,
+N_IF,2,mission,107.87717689673106,15148.05909311066,,,
+N_IF,2,recommendation,113.440010201931,,N_IF-2-01,specific,duplicate
+N_IF,2,recommendation,115.274771463871,,N_IF-2-02,specific,not acted (coordination stall)
+N_IF,2,recommendation,161.3757805188497,,N_IF-2-03,general,not acted (coordination stall)
+N_IF,2,recommendation,167.51536155144373,,N_IF-2-04,general,not acted (not reached)
+N_IF,2,recommendation,167.51537283658982,,N_IF-2-05,general,duplicate
+N_GR,2,mission,1.8532227754592896,15244.384684569812,,,
+N_GR,2,mission,5.030571536223094,15244.384684569812,,,
+N_GR,2,mission,5.6706569711367285,15244.384684569812,,,
+N_GR,2,mission,7.833039935429891,15244.384684569812,,,
+N_GR,2,mission,10.67660705645879,15244.384684569812,,,
+N_GR,2,mission,13.342826251188914,15244.384684569812,,,
+N_GR,2,recommendation,3.5750918865203856,,N_GR-2-01,specific,not followed (false claim)

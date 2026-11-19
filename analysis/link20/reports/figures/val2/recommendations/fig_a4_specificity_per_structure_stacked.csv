@@ -1,0 +1,19 @@
+panel,structure,type,count,pct,n
+All recommendations,networked,specific,12,70.58823529411765,17
+All recommendations,networked,directional,0,0.0,17
+All recommendations,networked,general,5,29.41176470588235,17
+All recommendations,orchestrated,specific,4,36.36363636363637,11
+All recommendations,orchestrated,directional,1,9.090909090909092,11
+All recommendations,orchestrated,general,6,54.54545454545455,11
+All recommendations,sequential,specific,16,50.0,32
+All recommendations,sequential,directional,1,3.125,32
+All recommendations,sequential,general,15,46.875,32
+Recorded by the framework,networked,specific,4,80.0,5
+Recorded by the framework,networked,directional,0,0.0,5
+Recorded by the framework,networked,general,1,20.0,5
+Recorded by the framework,orchestrated,specific,3,42.857142857142854,7
+Recorded by the framework,orchestrated,directional,1,14.285714285714286,7
+Recorded by the framework,orchestrated,general,3,42.857142857142854,7
+Recorded by the framework,sequential,specific,8,88.88888888888889,9
+Recorded by the framework,sequential,directional,1,11.11111111111111,9
+Recorded by the framework,sequential,general,0,0.0,9

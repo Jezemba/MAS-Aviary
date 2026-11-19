@@ -1,0 +1,13 @@
+rec_id,combo,it,structure,type,fine_type,text,fuel_prev_kg,fuel_next_kg,fuel_delta_kg,fp_prev,fp_next
+S_SP-1-05,S_SP,1,sequential,directional,Area or AR (direction only),Increase wing area or adjust aspect ratio to reduce fuel burn and GTOW,15719.1762392376,14942.373287504552,-776.8029517330488,7d1ce93bb83c3754,0e826422abbf7c6d
+S_GR-1-03,S_GR,1,sequential,specific,AR target value,Increase wing aspect ratio from 9.36 to 10.0,15719.1762392376,15148.059086893585,-571.1171523440153,7d1ce93bb83c3754,ae3749c95f93e4bc
+O_IF-1-02,O_IF,1,orchestrated,directional,Area or AR (direction only),Reduce wing area or increase aspect ratio to decrease fuel burn and GTOW,15719.1762392376,15148.059086912384,-571.117152325216,7d1ce93bb83c3754,ae3749c95f93e4bc
+N_IF-1-01,N_IF,1,networked,specific,AR target value,Increase Wing1 aspect_ratio from 9.36 to 10.0,15719.17623923756,15148.05909311066,-571.1171461269005,7d1ce93bb83c3754,ae3749c95f93e4bc
+S_GR-1-05,S_GR,1,sequential,specific,AR target value,Increase wing aspect ratio from 10.0 to 10.5,15148.059086893585,14796.955369084773,-351.1037178088118,ae3749c95f93e4bc,de9a87808ff51d8e
+O_IF-2-01,O_IF,2,orchestrated,specific,AR target value,Wing1 aspect_ratio 9.9999 -> 10.5,15148.059086912384,14796.955369108602,-351.1037178037823,ae3749c95f93e4bc,de9a87808ff51d8e
+S_GR-1-07,S_GR,1,sequential,specific,AR target value,Increase wing aspect ratio from 10.5 to 11.0,14796.955369084773,14506.871306247287,-290.0840628374863,de9a87808ff51d8e,8b7c6dc6ef7594ac
+S_GR-2-02,S_GR,2,sequential,specific,AR target value,Increase wing aspect ratio from 11.0 to 11.5,14510.266341280805,14245.64168312743,-264.624658153376,8b7c6dc6ef7594ac,670e5e22c280c5eb
+N_GR-1-03,N_GR,1,networked,specific,Area + AR target values,Increase Wing1 area from 124.99 m² to 127 m² and adjust aspect_ratio from 9.5 to 9.7,15491.223477682204,15243.222793143554,-248.0006845386506,7668b373e05687fb,b19aaf3b9bee13f7
+N_GR-1-01,N_GR,1,networked,specific,Area + AR target values,Increase Wing1 area from 122.83 m² to 125 m² and adjust aspect_ratio from 9.36 to 9.5,15719.17623923756,15491.223477682204,-227.95276155535612,7d1ce93bb83c3754,7668b373e05687fb
+S_IF-1-05,S_IF,1,sequential,specific,AR target value,Increase wing aspect ratio from 9.36 to 9.5,15719.1762392376,15587.594725774818,-131.58151346278282,7d1ce93bb83c3754,673c35a8b37f6c74
+O_SP-1-01,O_SP,1,orchestrated,specific,AR target value,Wing1 aspect_ratio 9.36 -> 9.5,15719.1762392376,15587.594725774818,-131.58151346278282,7d1ce93bb83c3754,673c35a8b37f6c74

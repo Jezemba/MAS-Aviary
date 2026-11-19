@@ -1,0 +1,79 @@
+distinct recommendations: 60 (record_recommendation calls with a change: 75; board/todo posts: 3)
+
+              made  recorded  specific  directional  general  reached  followed  fuel_lower  fuel_delta_sum_kg
+structure                                                                                                     
+sequential      32         9        16            1       15       12         7           6       -2385.314056
+orchestrated    11         7         4            1        6        5         3           3       -1053.802384
+networked       17         5        12            0        5        5         3           3       -1047.070592
+
+       made  recorded  specific  directional  general  reached  followed  fuel_lower  fuel_delta_sum_kg
+combo                                                                                                  
+S_SP      9         2         3            1        5        2         1           1        -776.802952
+S_IF      9         2         5            0        4        4         1           1        -131.581513
+S_GR     14         5         8            0        6        6         5           4       -1476.929591
+O_SP      2         2         1            0        1        1         1           1        -131.581513
+O_IF      4         3         3            1        0        2         2           2        -922.220870
+O_GR      5         2         0            0        5        2         0           0           0.000000
+N_IF      9         3         6            0        3        3         1           1        -571.117146
+N_GR      8         2         6            0        2        2         2           2        -475.953446
+
+type
+specific       32
+general        26
+directional     2
+
+fine_type
+AR target value                     26
+Proceed / run next step              8
+Area + AR target values              6
+Drag reduction goal                  5
+Wing parameter without direction     3
+Review / check request               3
+Result report                        3
+Mass reduction goal                  2
+Area or AR (direction only)          2
+Mission adjustment goal              2
+
+reach
+not reached        34
+verbatim           17
+paraphrased         4
+run ended first     4
+via re-issue        1
+
+followed
+not acted (not reached)           12
+followed                          12
+no change asked                   12
+duplicate                         11
+not followed (no lever)            4
+not acted (run ended)              4
+not acted (coordination stall)     2
+followed (not flown)               1
+not followed (re-ran analysis)     1
+not followed (false claim)         1
+
+orch_relay
+                           53
+not relayed (run ended)     2
+reworded and expanded       2
+reworded                    1
+unchanged                   1
+bypassed                    1
+
+recorded
+refused (role guard)    36
+recorded                21
+board / todo post        3
+
+followed     duplicate  followed  followed (not flown)  no change asked  not acted (coordination stall)  not acted (not reached)  not acted (run ended)  not followed (false claim)  not followed (no lever)  not followed (re-ran analysis)
+type                                                                                                                                                                                                                                        
+directional          0         2                     0                0                               0                        0                      0                           0                        0                               0
+general              2         0                     0               12                               1                        7                      1                           0                        2                               1
+specific             9        10                     1                0                               1                        5                      3                           1                        2                               0
+
+reach                 not reached  paraphrased  run ended first  verbatim  via re-issue
+recorded                                                                               
+board / todo post               3            0                0         0             0
+recorded                        0            0                4        17             0
+refused (role guard)           31            4                0         0             1
