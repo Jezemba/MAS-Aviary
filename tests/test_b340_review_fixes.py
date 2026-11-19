@@ -42,7 +42,10 @@ class World:
 
     # -- servers --------------------------------------------------------------------------------------------
     def _fp(self, sid):
-        held = self.held.get(sid, {})
+        # aviary-mcp 36b3a53 design_fingerprint: every input of its cruise aerodynamics, not the wing mass or the engine
+        # scale (W1: the engine is current only while the held fingerprint is its cruise point's).
+        held = {k: v for k, v in self.held.get(sid, {}).items()
+                if k not in ("Aircraft.Wing.MASS", "Aircraft.Engine.SCALE_FACTOR")}
         return "fp-" + hashlib.md5(json.dumps(sorted(held.items()), default=str).encode()).hexdigest()[:8]
 
     def server(self, tool, kw):

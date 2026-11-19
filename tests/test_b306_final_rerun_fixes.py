@@ -721,9 +721,10 @@ def test_fn_des_is_not_clamped_and_only_the_impossible_fails():
 
 def test_the_engine_key_is_the_mass_basis_and_the_cruise_point(fresh, monkeypatch):
     _cruise(fresh, monkeypatch)
-    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1", dp.design_basis()]        # B340: + the design
+    # B340: + the design; W1: unrounded, + the point's mass and engine scale
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, 90000.0, 1.33, "fp-1", dp.design_basis()]
     fresh.data_store["mass_mtom_kg"] = 95000.0                    # this iteration's estimate does not enter
-    assert dp._cycle_sizing_key() == [90000.0, 17.5, "fp-1", dp.design_basis()]
+    assert dp._cycle_sizing_key() == [90000.0, 17.5, 90000.0, 1.33, "fp-1", dp.design_basis()]
 
 
 def test_take_off_mass_is_the_one_mass_basis(fresh, monkeypatch):

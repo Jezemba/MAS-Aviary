@@ -368,7 +368,8 @@ def _refusal(tool_name: str, problems: list[tuple[CoupledInput, str]]) -> dict:
         name = required.parameter or "(a completed run)"
         if state == "engine_stale":
             head = (f"{name} -- {required.label}: the engine result on record was not sized on this design's "
-                    "current mass and drag. Run run_cycle again")
+                    "current mass and drag (or its cycle inputs were set again after it ran). Run run_cycle "
+                    "again")
         elif state == "deck_missing":
             from src.tools.data_plane import get_design_state
 

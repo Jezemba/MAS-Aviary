@@ -528,6 +528,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _capture_component_uids(tool_name, data)
                 _capture_su2_workdir(tool_name, data)
                 _capture_cycle_outputs(tool_name, data)
+                _capture_cycle_inputs(tool_name, data)
                 _capture_mission_engine(tool_name, data)
                 _capture_cruise_point(tool_name, data)
                 _capture_param_bounds(tool_name, data)
@@ -566,6 +567,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _capture_component_uids(tool_name, response)
         _capture_su2_workdir(tool_name, response)
         _capture_cycle_outputs(tool_name, response)
+        _capture_cycle_inputs(tool_name, response)
         _capture_mission_engine(tool_name, response)
         _capture_cruise_point(tool_name, response)
         _capture_param_bounds(tool_name, response)
@@ -1937,12 +1939,13 @@ def _inject_wing_tc(resolved: dict) -> None:
 
 
 def _wing_tc_signature() -> float | None:
-    """The measured wing t/c the design carries (J2), as part of what aviary's cruise L/D depends on."""
+    """The measured wing t/c the design carries (J2), as part of what aviary's cruise L/D depends on (W1: exact, it was
+    rounded to 6 decimals; N_IF it2 flew t/c 0.1164418741764862 on an engine sized for 0.11644185460446387)."""
     record = _design_state.data_store.get("geometry_wing_tc") if _design_state is not None else None
     if not cpacs_wing_tc_enabled() or not isinstance(record, dict):
         return None
     try:
-        return round(float(record[WING_TC_KEY]), 6)
+        return float(record[WING_TC_KEY])
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -2490,6 +2493,10 @@ def _capture_cycle_outputs(tool_name: str, data: dict) -> None:
     _design_state.data_store["prop_cycle_key"] = _cycle_sizing_key()
     # B3: the session whose cycle becomes the mission engine (generate_engine_deck reads it).
     _design_state.data_store["prop_cycle_session"] = getattr(_call_ctx, "cycle_session", None)
+    # W1: the inputs that session held when this run ran; a later set_inputs on it makes the engine not current.
+    held_inputs = (_design_state.data_store.get("cycle_inputs_by_session") or {}).get(
+        str(_design_state.data_store["prop_cycle_session"]))
+    _design_state.data_store["prop_cycle_inputs"] = dict(held_inputs) if held_inputs is not None else None
     from src.tools.coupling_contract import note_capture
     note_capture("pycycle", captured)
     logger.info("Captured engine cycle from %s: %s", tool_name, captured)
@@ -3916,6 +3923,7 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         _inject_cycle_flight_condition(resolved)
         # design.json design_space: the values actually sent, recorded once pycycle confirms them.
         _call_ctx.cycle_values = dict(resolved.get("values") or {})
+        _call_ctx.cycle_inputs_session = str(resolved.get("session_id") or (_design_state.sessions or {}).get("pycycle") or "") or None   # W1
 
     return resolved
 
@@ -4070,12 +4078,16 @@ def _inject_cycle_flight_condition(resolved: dict) -> None:
 
 
 def _tails_signature() -> list | None:
-    """The measured tails the design carries (G1), as part of what aviary's cruise L/D depends on."""
+    """The measured tails the design carries (G1), as part of what aviary's cruise L/D depends on.
+
+    W1 (validation 2): exact values. They used to be rounded to 6 decimals, so a re-measured tail that differed below
+    that (and flew) left the engine sized on the old one counted as current.
+    """
     tails = _design_state.data_store.get("geometry_tails") if _design_state is not None else None
     if not cpacs_tails_enabled() or not isinstance(tails, dict):
         return None
     try:
-        return [round(float(tails[k]), 6) for k in TAIL_KEYS]
+        return [float(tails[k]) for k in TAIL_KEYS]
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -4083,7 +4095,18 @@ def _tails_signature() -> list | None:
 def design_basis() -> list:
     """B340 (review #1): the design an aviary cruise point must belong to -- the CURRENT geometry (coupling_contract's
     design fingerprint: the CPACS the design session was opened from and its morph epoch), the measured tails and (J2)
-    the measured wing t/c."""
+    the measured wing t/c.
+
+    W1 (validation 2, N_IF it2): the tails and the t/c are compared EXACTLY; they were rounded to 6 decimals. In N_IF
+    it2 a first estimate_mass on the pre-morph file gave t/c 0.11644185460446387, the engine was sized on aviary's
+    cruise point of that design (b8b0ec61), the re-estimate on the morphed file gave 0.1164418741764862 -- the same to
+    6 decimals -- so the engine stayed "current" and the mission flew another aviary design (ae3749c9). The geometry
+    is the design identity (B372; the wing and fuselage keys the framework applies are measured from it). The wing
+    mass is deliberately NOT part of the basis: aviary's cruise aerodynamics does not depend on it (aviary-mcp 36b3a53
+    aviary_runner.design_fingerprint / _aero_dependencies: the fingerprint is every input of the FLOPS cruise aero
+    model, and aircraft:wing:mass is not one; the recorded fingerprint_covers lists 54 inputs without it). Anything
+    else aviary's cruise aero depends on is covered by the held-fingerprint check in _cycle_sizing_key.
+    """
     from src.tools.coupling_contract import current_design_fingerprint
 
     return [current_design_fingerprint(), _tails_signature(), _wing_tc_signature()]
@@ -4099,6 +4122,12 @@ def _cycle_sizing_key() -> list | None:
     morph -> estimate_mass -> set_inputs sized Fn_DES on the old wing's L/D, and engine_is_current() stayed True after
     run_simulation re-applied the new wing. The basis is part of the key, so any morph makes the engine not current
     until it is re-sized on a point of the new geometry.
+    W1 (validation 2): exactly what Fn_DES = f(trim mass, cruise L/D) depends on -- the trim mass and the L/D
+    unrounded (they were rounded to 0.1 kg and 6 decimals), the point's own mass and engine scale, its design basis
+    (geometry, exact tails and t/c) AND the design aviary holds now: the point's aviary design fingerprint (aviary's
+    hash of every input of its cruise aerodynamics) must still be the one its session holds. So any change of an
+    input of the cruise L/D -- by the framework or by an agent's set_aircraft_parameters -- makes the engine not
+    current; run_cycle then re-sizes it on the cruise point of the design aviary holds (_auto_size_cycle).
     """
     if _design_state is None:
         return None
@@ -4109,19 +4138,65 @@ def _cycle_sizing_key() -> list | None:
     basis = design_basis()
     if point.get("_design_basis") != basis:
         return None
+    # H5: the point is evaluated with the CARRIED engine scale. When aviary says its cruise drag depends on the scale,
+    # its fingerprint covers the scale too, and the session flies the sized scale -- the held design is then never the
+    # point's by construction, and comparing them would refuse every mission. That case is recorded
+    # (_capture_cruise_point: cruise_point_scale_dependent) and only the basis is compared. Not this study: aviary-mcp
+    # 36b3a53 answers cd_depends_on_engine_scale false (nacelle wetted area does not scale with thrust).
+    if point.get("design_fingerprint") is None:
+        return None
+    if point.get("cd_depends_on_engine_scale") is False \
+            and point.get("design_fingerprint") != aviary_held_fingerprint(point.get("_session")):
+        return None
     try:
-        ld = round(float(point.get("lift_to_drag")), 6)
+        ld = float(point.get("lift_to_drag"))
     except (TypeError, ValueError):
         return None
-    return [round(float(mass), 1), ld, point.get("design_fingerprint"), basis]
+    return [float(mass), ld, point.get("mass_kg"), point.get("engine_scale_used"), point.get("design_fingerprint"),
+            basis]
 
 
 def engine_is_current() -> bool:
-    """True when the recorded engine result was sized on the design's current mass and drag (B187)."""
+    """True when the recorded engine result was sized on the design's current mass and drag (B187), and (W1) the
+    pycycle session it came from still holds the inputs it was run with (a set_inputs after the run changes the
+    engine generate_engine_deck builds from the session, while the captured thrust and SFC are the old run's)."""
     if _design_state is None:
         return False
+    store = _design_state.data_store
     key = _cycle_sizing_key()
-    return key is not None and _design_state.data_store.get("prop_cycle_key") == key
+    if key is None or store.get("prop_cycle_key") != key:
+        return False
+    session = store.get("prop_cycle_session")
+    return (store.get("cycle_inputs_by_session") or {}).get(str(session)) == store.get("prop_cycle_inputs")
+
+
+def _capture_cycle_inputs(tool_name: str, data: dict) -> None:
+    """W1: the inputs each pycycle session holds, from the set_inputs that reached pycycle (sent values of the names it
+    reports ``updated``). pycycle sets the values one by one and can fail after some were applied, so a failed reply
+    makes the session's inputs unknown (a unique marker): no engine of that session counts as current until a
+    run_cycle has run on what it holds now. A framework refusal never reaches this capture (nothing was sent)."""
+    if _design_state is None or tool_name != "set_inputs":
+        return
+    session = getattr(_call_ctx, "cycle_inputs_session", None)
+    if not session:
+        return
+    store = _design_state.data_store
+    by_session = store.setdefault("cycle_inputs_by_session", {})
+    held = dict(by_session.get(str(session)) or {})
+    if data.get("error") or data.get("error_code") or data.get("success") is False \
+            or not isinstance(data.get("updated"), list):
+        store["cycle_inputs_unknown_count"] = int(store.get("cycle_inputs_unknown_count") or 0) + 1
+        held["_unknown_after_failed_set_inputs"] = store["cycle_inputs_unknown_count"]
+    else:
+        sent = getattr(_call_ctx, "cycle_values", None) or {}
+        for name in data["updated"]:
+            if name in sent:
+                value = sent[name]
+                try:
+                    held[str(name)] = float(value[0] if isinstance(value, list) and len(value) == 1 else value)
+                except (TypeError, ValueError):
+                    held[str(name)] = json.dumps(value, sort_keys=True, default=str)
+    by_session[str(session)] = held
 
 
 def cycle_is_sized(session_id: str | None) -> bool:
@@ -4622,6 +4697,12 @@ def _capture_cruise_point(tool_name: str, data: dict) -> None:
     # for has no basis and is never valid. The aviary session it was evaluated on is kept with it (#6).
     store["aviary_cruise_point"] = dict(point, _design_basis=basis, _session=sid)
     store.pop("cruise_point_error", None)
+    if point.get("cd_depends_on_engine_scale") is not False:
+        # W1: recorded, not hidden -- the engine currency then compares the design basis only (_cycle_sizing_key).
+        store["cruise_point_scale_dependent"] = (
+            f"aviary reported cd_depends_on_engine_scale {point.get('cd_depends_on_engine_scale')!r} for design {fp}: "
+            "the engine currency check compares the design basis only, not aviary's held fingerprint")
+        logger.warning("[W1] %s", store["cruise_point_scale_dependent"])
     if isinstance(fp, str) and not isinstance(data.get("design_fingerprint"), str) and sid:
         store.setdefault("aviary_held_fingerprint_by_session", {})[str(sid)] = fp
         store["aviary_design_fingerprint"] = fp
