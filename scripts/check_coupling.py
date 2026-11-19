@@ -92,6 +92,17 @@ class Link:
         log = directory / f"tool_calls_attempt{int(self.result.get('attempt') or 1)}.jsonl"
         self.calls = [json.loads(line) for line in log.read_text().splitlines()] if log.is_file() else None
 
+    def design_after(self, index: int) -> str:
+        """W5: the framework's design identity (B372 duplicate_guard.design_identity) after call ``index``; before
+        the first call "design:none". Replayed from this link's own calls with the framework's code, so a no-op
+        morph or a re-open of the same geometry is the same design and a measured change is not."""
+        if getattr(self, "_designs", None) is None:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+            from src.tools.duplicate_guard import design_identity_trace
+
+            self._designs = design_identity_trace(self.calls or [], ok)
+        return self._designs[index] if 0 <= index < len(self._designs) else "design:none"
+
     def rows(self, *tools: str, before: int | None = None) -> list[tuple[int, dict]]:
         limit = len(self.calls) if before is None else before
         return [(i, r) for i, r in enumerate(self.calls[:limit]) if r["tool"] in tools and ok(r)]
@@ -178,9 +189,15 @@ def check_geometry_to_su2(link: Link, mission: int) -> list[tuple]:
         meshed, _ = link.last("generate_volume_mesh", before=index)
         loaded = [i for i, r in link.rows("set_mesh", "create_su2_session", before=index)
                   if meshed is not None and i > meshed and (find(r["result"], "session_id") or r["args"].get("session_id")) == session]
-        good = meshed is not None and meshed > morphed and bool(loaded)
+        # W5: the mesh must be of the design the solve ran on (the framework's design identity), not merely made after
+        # the last reshape call: a re-applied identical wing or a no-op morph after the mesh is the same design.
+        meshed_design = link.design_after(meshed) if meshed is not None else None
+        solved_design = link.design_after(index - 1)
+        good = meshed is not None and bool(loaded) and meshed_design == solved_design
+        same = "same design as the solve" if meshed_design == solved_design else \
+            f"design {meshed_design}, the solve ran on {solved_design}"
         out.append(("geometry -> SU2 mesh", PASS if good else FAIL,
-                    f"reshape #{morphed}, mesh #{meshed}, loaded into the session {loaded}"))
+                    f"reshape #{morphed}, mesh #{meshed} ({same}), loaded into the session {loaded}"))
     return out
 
 
@@ -377,8 +394,12 @@ def check_mass(link: Link, mission: int) -> list[tuple]:
     _, morphed = link.wing_at(mission)
     if morphed is None:
         out.append(("geometry -> mass", NOT_EXERCISED, "the wing was not reshaped"))
-    elif index < morphed:
-        out.append(("geometry -> mass", FAIL, f"mass #{index} ran before the last reshape #{morphed}"))
+    elif link.design_after(index) != link.design_after(mission - 1):
+        # W5: compared as the framework's design identity, not call order (N_GR it1: a re-open + identical re-morph
+        # and a no-op reshape after the mass read as "mass before the last reshape").
+        out.append(("geometry -> mass", FAIL, f"mass #{index} is of design {link.design_after(index)}, the mission "
+                                              f"#{mission} flew design {link.design_after(mission - 1)} (last reshape "
+                                              f"#{morphed})"))
     else:
         _, exported = link.last("export_cpacs", before=index)
         path = find(exported["result"], "cpacs_file_path") if exported else None

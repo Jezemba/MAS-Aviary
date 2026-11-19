@@ -19,7 +19,9 @@ def _flight():
     return [
         _row("open_cpacs", {"source": "/start.xml"}, {"session_id": "t"}),
         _row("set_high_level_parameters", {"session_id": "t", "component_uid": "Wing1", "updates": {"area": 130.0}},
-             {"geometry_morph": {"after": {"reference_area": 130.0, "aspect_ratio": 10.0, "sweep_deg": 21.65, "taper_ratio": 0.246}}}),
+             {"geometry_morph": {"rebuilt": True,       # W5: tigl-mcp's real reply shape (before + after)
+                               "before": {"reference_area": 122.83, "aspect_ratio": 9.36, "sweep_deg": 21.65, "taper_ratio": 0.246},
+                               "after": {"reference_area": 130.0, "aspect_ratio": 10.0, "sweep_deg": 21.65, "taper_ratio": 0.246}}}),
         _row("generate_volume_mesh", {"session_id": "t"}, {"statistics": {}}),
         _row("export_cpacs", {"session_id": "t"}, {"cpacs_file_path": "/x/morph.xml"}),
         _row("create_su2_session", {}, {"session_id": "s", "references": {"REF_AREA": 130.0}, "drag_floor": {"aspect_ratio": 10.0}}),

@@ -516,65 +516,7 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
         gs = _state()
         if gs is None:
             return
-        sid = args.get("session_id") or parsed.get("session_id")
-        if tool in GEOMETRY_CHANGE_TOOLS:
-            # B105: count the geometry changing, not the attempt. horizon10 links 3 and 8 called
-            # set_high_level_parameters with keys the morph does not recognise (sweep_deg,
-            # taper_ratio): success, no geometry_morph, wing untouched -- yet the epoch advanced, so
-            # B95's STALE_GEOMETRY treated the baseline as morphed and let it be meshed. Those two
-            # links are exactly the two worst in the horizon run. When the result says whether it
-            # rebuilt, believe it; a result that does not report a morph is not a morph.
-            morph = parsed.get("geometry_morph") if tool == "set_high_level_parameters" else None
-            rebuilt = bool(morph.get("rebuilt")) if isinstance(morph, dict) else tool != "set_high_level_parameters"
-            if rebuilt:
-                gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
-                if gs["active_design"].get("session") != sid:
-                    gs["active_design"] = {"session": sid, "fp": (gs["open_cpacs"].get(sid) or {}).get("fp")}
-            # B372: what the geometry now IS (measured before / after), whatever the epoch says.
-            _observe_geometry_change(tool, args, parsed, sid, gs)
-        elif tool == "open_cpacs" and parsed.get("session_id"):
-            gs["geometry_epoch"][parsed["session_id"]] = 0
-            fp = entry.get("design_fingerprint") if entry else None
-            if fp:
-                gs["open_cpacs"][parsed["session_id"]] = {"fp": fp, "seq": seq}
-            gs["active_design"] = {"session": parsed["session_id"], "fp": fp}
-            # B372: the session's identity is the CONTENT it was opened from (an export of this run: that design).
-            content, how = _content_sha(args)
-            gs["geometry_identity"][parsed["session_id"]] = {
-                "base": _base_identity(content, gs), "content": content, "identity_basis": how,
-                "base_shape": {}, "shape": {}, "unmeasured": 0}
-        elif tool == "export_cpacs":
-            # B372: a file exported from a session holds that session's design; re-opening it is the same design.
-            _note_export(parsed.get("cpacs_file_path") or args.get("output_path"), sid, gs)
-        elif tool == "close_cpacs":
-            gs["open_cpacs"].pop(args.get("session_id"), None)
-            if parsed.get("auto_exported"):
-                _note_export(parsed.get("cpacs_file_path"), args.get("session_id"), gs)
-        elif tool == "generate_volume_mesh":
-            # B271: which geometry each mesh was made for, so a solve on an older mesh is caught.
-            mesh_hash = _latest_mesh_hash()
-            if mesh_hash:
-                from src.tools.coupling_contract import current_design_fingerprint
-
-                gs.setdefault("mesh_design", {})[mesh_hash] = current_design_fingerprint()
-        elif tool == "create_su2_session" and parsed.get("session_id"):
-            mesh = _payload_hash(args.get("initial_mesh"))
-            gs["su2"][parsed["session_id"]] = {
-                "mesh": mesh, "mesh_seq": seq if mesh else None, "live": True,
-                "config": {"created": _h({k: v for k, v in args.items() if k != "initial_mesh"})},
-            }
-        elif tool == "set_mesh" and sid in gs["su2"]:
-            gs["su2"][sid].update(mesh=_payload_hash(args.get("mesh_base64")) or _h(args), mesh_seq=seq)
-        elif tool == "generate_deformed_mesh" and sid in gs["su2"]:
-            gs["su2"][sid].update(mesh="deformed:" + _h([args, seq]), mesh_seq=seq)
-        elif tool in SU2_CONFIG_TOOLS and sid in gs["su2"]:
-            cfg = gs["su2"][sid].setdefault("config", {})
-            if tool == "update_config_entries":
-                cfg.update({str(k): v for k, v in (args.get("updates") or {}).items()})
-            else:
-                cfg["from_cpacs"] = _h({k: v for k, v in args.items() if k != "session_id"})
-        elif tool == "close_su2_session" and sid in gs["su2"]:
-            gs["su2"][sid]["live"] = False
+        _apply_observation(gs, tool, args, parsed, seq, entry)
     if tool in ONCE_ONLY_TOOLS and entry and _blackboard is not None:
         try:
             _blackboard.write(
@@ -585,6 +527,98 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
             )
         except Exception:  # pragma: no cover - a mirror failure must never break the call
             pass
+
+
+def _apply_observation(gs: dict, tool: str, args: dict, parsed: dict, seq: Any, entry: dict | None) -> None:
+    """The design state one successful call changes (observe's body; W5: also replayed by design_identity_trace)."""
+    sid = args.get("session_id") or parsed.get("session_id")
+    if tool in GEOMETRY_CHANGE_TOOLS:
+        # B105: count the geometry changing, not the attempt. horizon10 links 3 and 8 called
+        # set_high_level_parameters with keys the morph does not recognise (sweep_deg,
+        # taper_ratio): success, no geometry_morph, wing untouched -- yet the epoch advanced, so
+        # B95's STALE_GEOMETRY treated the baseline as morphed and let it be meshed. Those two
+        # links are exactly the two worst in the horizon run. When the result says whether it
+        # rebuilt, believe it; a result that does not report a morph is not a morph.
+        morph = parsed.get("geometry_morph") if tool == "set_high_level_parameters" else None
+        rebuilt = bool(morph.get("rebuilt")) if isinstance(morph, dict) else tool != "set_high_level_parameters"
+        if rebuilt:
+            gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
+            if gs["active_design"].get("session") != sid:
+                gs["active_design"] = {"session": sid, "fp": (gs["open_cpacs"].get(sid) or {}).get("fp")}
+        # B372: what the geometry now IS (measured before / after), whatever the epoch says.
+        _observe_geometry_change(tool, args, parsed, sid, gs)
+    elif tool == "open_cpacs" and parsed.get("session_id"):
+        gs["geometry_epoch"][parsed["session_id"]] = 0
+        fp = entry.get("design_fingerprint") if entry else None
+        if fp:
+            gs["open_cpacs"][parsed["session_id"]] = {"fp": fp, "seq": seq}
+        gs["active_design"] = {"session": parsed["session_id"], "fp": fp}
+        # B372: the session's identity is the CONTENT it was opened from (an export of this run: that design).
+        content, how = _content_sha(args)
+        gs["geometry_identity"][parsed["session_id"]] = {
+            "base": _base_identity(content, gs), "content": content, "identity_basis": how,
+            "base_shape": {}, "shape": {}, "unmeasured": 0}
+    elif tool == "export_cpacs":
+        # B372: a file exported from a session holds that session's design; re-opening it is the same design.
+        _note_export(parsed.get("cpacs_file_path") or args.get("output_path"), sid, gs)
+    elif tool == "close_cpacs":
+        gs["open_cpacs"].pop(args.get("session_id"), None)
+        if parsed.get("auto_exported"):
+            _note_export(parsed.get("cpacs_file_path"), args.get("session_id"), gs)
+    elif tool == "generate_volume_mesh":
+        # B271: which geometry each mesh was made for, so a solve on an older mesh is caught.
+        mesh_hash = _latest_mesh_hash()
+        if mesh_hash:
+            from src.tools.coupling_contract import current_design_fingerprint
+
+            gs.setdefault("mesh_design", {})[mesh_hash] = current_design_fingerprint()
+    elif tool == "create_su2_session" and parsed.get("session_id"):
+        mesh = _payload_hash(args.get("initial_mesh"))
+        gs["su2"][parsed["session_id"]] = {
+            "mesh": mesh, "mesh_seq": seq if mesh else None, "live": True,
+            "config": {"created": _h({k: v for k, v in args.items() if k != "initial_mesh"})},
+        }
+    elif tool == "set_mesh" and sid in gs["su2"]:
+        gs["su2"][sid].update(mesh=_payload_hash(args.get("mesh_base64")) or _h(args), mesh_seq=seq)
+    elif tool == "generate_deformed_mesh" and sid in gs["su2"]:
+        gs["su2"][sid].update(mesh="deformed:" + _h([args, seq]), mesh_seq=seq)
+    elif tool in SU2_CONFIG_TOOLS and sid in gs["su2"]:
+        cfg = gs["su2"][sid].setdefault("config", {})
+        if tool == "update_config_entries":
+            cfg.update({str(k): v for k, v in (args.get("updates") or {}).items()})
+        else:
+            cfg["from_cpacs"] = _h({k: v for k, v in args.items() if k != "session_id"})
+    elif tool == "close_su2_session" and sid in gs["su2"]:
+        gs["su2"][sid]["live"] = False
+
+
+def design_identity_trace(calls: list[dict], succeeded: Callable[[dict], bool]) -> list[str]:
+    """W5: the framework's design identity (B372, design_identity) after each recorded call of a link.
+
+    ``calls`` are tool_calls_attemptN.jsonl rows ({tool, args, result, ...}); ``succeeded(row)`` says whether the call
+    succeeded (the KB status the live observe() sees). The rows are replayed through the same state updates the live
+    guard makes (_apply_observation) on a fresh state, so a check reading a finished link compares geometry the way
+    the framework did: a no-op morph or a re-open of the same geometry is the same design, a measured change is not.
+    A CPACS file that is not readable here is identified by its path, as the framework does (identity_basis).
+    """
+    gs: dict = {"geometry_epoch": {}, "open_cpacs": {}, "active_design": {}, "su2": {}, "in_flight": {},
+                "refused_keys": set(), "geometry_identity": {}, "export_identity": {}}
+    out: list[str] = []
+    for i, row in enumerate(calls):
+        if succeeded(row):
+            parsed = row.get("result")
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = {}
+            parsed = parsed if isinstance(parsed, dict) else {}
+            tool = row.get("tool")
+            if tool != "generate_volume_mesh":        # its mesh bookkeeping reads the live design state, not a record
+                _apply_observation(gs, tool, dict(row.get("args") or {}), parsed, i, {"seq": i})
+        session = (gs.get("active_design") or {}).get("session")
+        out.append(session_identity(session, gs) if session is not None else "design:none")
+    return out
 
 
 def _now() -> str:
