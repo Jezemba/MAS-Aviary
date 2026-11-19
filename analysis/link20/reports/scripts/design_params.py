@@ -6,7 +6,7 @@ with fuel (descriptive), recommended versus actual change, and the B187 scale fa
 
 Inputs: links.csv (analysis.link20.extract), recommended_changes.csv (analysis.link20.plots), agent_bounds.json
 (analysis/link20/agent_bounds.py), the baseline refs line of plots_run.log, and the raw run folders (read-only) for
-what links.csv does not hold: wing span (design.json mission_applied), configure_mission inputs, tigl morph
+what links.csv does not hold: wing span (design.json mission_derived_read_only, before V9 mission_applied), configure_mission inputs, tigl morph
 targets / measured results, and which aviary keys the agents set.
 
 Usage (aipexws8, Avion venv, from ~/Jessica/avion_analysis/code):
@@ -96,6 +96,24 @@ def baseline_refs(plots_log: Path, study: str) -> dict:
 
 # ---------------------------------------------------------------- raw scan
 
+def wing_span(design: dict) -> tuple[float | None, str | None]:
+    """The wing span aviary flew, and where it was read.
+
+    aviary computes SPAN = sqrt(AR x AREA) (read-only). Since V9 (MAS-Aviary 0109a59) design.json lists it under
+    mission_derived_read_only.values, no longer in mission_applied; older design.json files have it in
+    mission_applied. Without either: tigl's measured span (design_space.geometry.Wing1.span_m)."""
+    derived = ((design.get("mission_derived_read_only") or {}).get("values") or {}).get("Aircraft.Wing.SPAN")
+    if derived is not None:
+        return float(derived), "mission_derived_read_only"
+    applied = (design.get("mission_applied") or {}).get("Aircraft.Wing.SPAN")
+    if applied is not None:
+        return float(applied), "mission_applied"
+    wing = ((design.get("design_space") or {}).get("geometry") or {}).get("Wing1") or {}
+    if wing.get("span_m") is not None:
+        return float(wing["span_m"]), "design_space.Wing1.span_m"
+    return None, None
+
+
 def raw_scan(df: pd.DataFrame, sources) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Per link: span from design.json; per combination: what the agents set (tails, mission, aviary keys)."""
     roots = {c: root for _, root, combos in sources for c in combos}
@@ -103,14 +121,9 @@ def raw_scan(df: pd.DataFrame, sources) -> tuple[pd.DataFrame, pd.DataFrame]:
     for _, r in df.iterrows():
         d = roots[r.combination] / f"repeat_{int(r.link) - 1:03d}" / r.combination
         design = read_json(d / "design.json") or {}
-        ma = design.get("mission_applied") or {}
-        wing = ((design.get("design_space") or {}).get("geometry") or {}).get("Wing1") or {}
-        span = ma.get("Aircraft.Wing.SPAN")
-        span_rows.append({"combination": r.combination, "link": int(r.link),
-                          "Aircraft.Wing.SPAN": float(span) if span is not None else
-                          (float(wing["span_m"]) if wing.get("span_m") is not None else None),
-                          "span_source": "mission_applied" if span is not None else
-                          ("design_space.Wing1.span_m" if wing.get("span_m") is not None else None),
+        span, span_source = wing_span(design)
+        span_rows.append({"combination": r.combination, "link": int(r.link), "Aircraft.Wing.SPAN": span,
+                          "span_source": span_source,
                           "design_mission": json.dumps(design.get("mission"), sort_keys=True)})
         for e in read_jsonl(d / "knowledge_base.jsonl"):
             if e.get("agent") == "framework":

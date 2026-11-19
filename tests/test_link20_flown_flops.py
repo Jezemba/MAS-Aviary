@@ -252,3 +252,48 @@ def test_unconverged_design_fingerprints_are_listed(tmp_path):
                          {"success": False, "error_code": "MISSION_NOT_CONVERGED", "flown_design_fingerprint": OTHER_FP}))
     row = extract(tmp_path, rows)
     assert row["unconverged_or_failed_fingerprints"] == f'["{OTHER_FP}"]' and row["fuel_kg"] == 16638.69
+
+
+# ---------------------------------------------------------------- engine_deck.cycle_key layouts (B340 / W1 B375)
+
+BASIS = ["design:7a4159b3a9c11f96", [31.1, 4.98], 0.1164]
+
+
+def test_cycle_key_layouts():
+    assert fl.cycle_key_fingerprint([MASS, LD, FP]) == (FP, "3-item")
+    assert fl.cycle_key_fingerprint([MASS, LD, FP, BASIS]) == (FP, "4-item")
+    assert fl.cycle_key_fingerprint([MASS, LD, MASS, 1.1958, FP, BASIS]) == (FP, "6-item")
+    assert fl.cycle_key_fingerprint([MASS, LD, MASS, FP, BASIS]) == (None, None)       # unknown length
+    assert fl.cycle_key_fingerprint([MASS, LD, 3.0]) == (None, None)                  # no string where the fp is
+    assert fl.cycle_key_fingerprint(None) == (None, None)
+
+
+def _with_key(key):
+    return {**DESIGN_FLOWN, "engine_deck": {"key": "7815057d6edc9732", "reference_fn_des_lbf": 5900.0, "cycle_key": key}}
+
+
+def test_w1_six_item_key_of_the_flown_design_raises_nothing(tmp_path):
+    """42b2be7 baseline4: [mass, L/D, point mass, scale, fingerprint, basis] read the mass as the fingerprint."""
+    row = extract(tmp_path, flops_rows(), design_flown=_with_key([MASS, LD, MASS, SCALE, FP, BASIS]))
+    assert row["flag.engine_stale_basis"] is False, row["flag.engine_stale_basis.detail"]
+
+
+def test_cycle_key_of_another_design_is_stale_in_every_layout(tmp_path):
+    for i, key in enumerate(([MASS, LD, OTHER_FP], [MASS, LD, OTHER_FP, BASIS], [MASS, LD, MASS, SCALE, OTHER_FP, BASIS])):
+        row = extract(tmp_path / str(i), flops_rows(), design_flown=_with_key(key))
+        assert row["flag.engine_stale_basis"] is True and f"{len(key)}-item" in row["flag.engine_stale_basis.detail"]
+
+
+def test_unknown_cycle_key_layout_is_reported_not_flagged(tmp_path):
+    row = extract(tmp_path, flops_rows(), design_flown=_with_key([MASS, LD, MASS, FP, BASIS]))
+    assert row["flag.engine_stale_basis"] is False and "unknown layout" in row["flag.engine_stale_basis.detail"]
+
+
+def test_wing_span_read_from_the_derived_block():
+    from analysis.link20.reports.scripts.design_params import wing_span
+    assert wing_span({"mission_derived_read_only": {"values": {"Aircraft.Wing.SPAN": 33.9127}},
+                      "mission_applied": {"Aircraft.Wing.AREA": 122.8}}) == (33.9127, "mission_derived_read_only")
+    assert wing_span({"mission_applied": {"Aircraft.Wing.SPAN": 37.58}}) == (37.58, "mission_applied")   # before V9
+    assert wing_span({"design_space": {"geometry": {"Wing1": {"span_m": 33.91}}}}) == (33.91,
+                                                                                     "design_space.Wing1.span_m")
+    assert wing_span({}) == (None, None)

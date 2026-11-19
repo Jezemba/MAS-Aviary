@@ -654,6 +654,21 @@ def analyse(rows: list[dict], m: int, flown: dict, carry: dict | None, steps: li
     return out
 
 
+def cycle_key_fingerprint(key) -> tuple[str | None, str | None]:
+    """The aviary design fingerprint inside MAS-Aviary's engine sizing key (design.json engine_deck.cycle_key) and the
+    key's layout, or (None, None) for an unknown layout. Layouts (data_plane._cycle_sizing_key):
+      3 items  [trim mass, L/D, fingerprint]                                (9a4e0ac, before B340)
+      4 items  [trim mass, L/D, fingerprint, design basis]                  (B340, cd2e298 .. 774ba96^)
+      6 items  [trim mass, L/D, point mass, engine scale, fingerprint, basis] (W1/B375, 774ba96, e.g. 42b2be7)
+    The element found must be a string (the fingerprint), else the layout is treated as unknown."""
+    if not isinstance(key, (list, tuple)):
+        return None, None
+    index = {3: 2, 4: 2, 6: 4}.get(len(key))
+    if index is None or not isinstance(key[index], str):
+        return None, None
+    return key[index], f"{len(key)}-item"
+
+
 def _fn_des(mass_kg, lift_to_drag):
     """MAS-Aviary coupling.fn_des_from_lift_to_drag (dcd01c6): mass * g / (L/D) / engines / 4.448 * 1.25."""
     m, ld = num(mass_kg), num(lift_to_drag)
@@ -746,6 +761,7 @@ def _flops_contract(rows, m, flown, fv, scale, eng, key, design_flown, kb_attemp
 
     # engine sized on a stale design basis
     why = []
+    notes = []
     tom = num(flown["structures.mtom_kg"][0])
     if scale is None:
         why.append("no engine scale flown")
@@ -761,12 +777,17 @@ def _flops_contract(rows, m, flown, fv, scale, eng, key, design_flown, kb_attemp
         if tom is not None and not close(cp.get("mass_kg"), tom, 1e-6):
             why.append(f"sized at {cp.get('mass_kg')} kg, take-off mass flown {tom}")
         ck = (df.get("engine_deck") or {}).get("cycle_key")
-        if isinstance(ck, list) and len(ck) >= 3 and fp is not None and ck[2] != fp:
-            why.append(f"design_flown engine_deck.cycle_key design {ck[2]} != flown {fp}")
+        ck_fp, ck_layout = cycle_key_fingerprint(ck)
+        if ck is not None and ck_layout is None:
+            notes.append(f"design_flown engine_deck.cycle_key has an unknown layout ({ck!r}): not compared")
+        elif ck_fp is not None and fp is not None and ck_fp != fp:
+            why.append(f"design_flown engine_deck.cycle_key design {ck_fp} != flown {fp} (layout {ck_layout})")
     flags["engine_stale_basis"] = None if scale is None else bool(why)
     detail["engine_stale_basis"] = "; ".join(why) if why else (
         f"scale {scale} = Fn {cyc[2]:.2f} / {ref}; Fn_DES {fn_des[1]:.2f} from L/D {cp.get('lift_to_drag')} at "
         f"{cp.get('mass_kg')} kg on the flown design")
+    if notes:
+        detail["engine_stale_basis"] += "; " + "; ".join(notes)
 
     # mass from a converged sizing
     wing = num(fv["Aircraft.Wing.MASS"])
