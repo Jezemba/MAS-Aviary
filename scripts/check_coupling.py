@@ -290,22 +290,31 @@ def check_cruise_point_engine(link: Link, mission: int, flight: dict) -> list[tu
 
 
 def check_mass_basis(link: Link, mission: int) -> tuple:
-    """V2 / A8: one mass basis -- the SU2 trim, the cruise point (Fn_DES) and the take-off mass are the same mass."""
+    """V2 / A8: one mass basis -- the SU2 trim, the cruise point (Fn_DES) and the take-off mass are the same mass.
+
+    A graph-routed link whose SU2 result was SEEDED from the last flown link (graph pre-init, I5; recorded, no fuel
+    effect under B324) carries that link's trim mass; its basis is then this link's own (provenance.this_link_trim_mass_kg).
+    """
     name = "trim mass basis"
-    basis = ((link.design.get("aero") or {}).get("solve_trim_basis") or {}).get("mass_kg")
+    aero = link.design.get("aero") or {}
+    prov = aero.get("provenance") or {}
+    seeded = prov.get("solved_on_this_link") is False
+    basis = prov.get("this_link_trim_mass_kg") if seeded else (aero.get("solve_trim_basis") or {}).get("mass_kg")
     point = (link.design.get("aviary_cruise_point") or {}).get("mass_kg")
     _, conf = link.last("configure_mission", before=mission)
     takeoff = number(((conf or {}).get("args") or {}).get("takeoff_mass_kg"))
     if basis is None or point is None or takeoff is None:
         return name, FAIL, f"trim {basis}, cruise point {point}, take-off {takeoff}: one is not recorded"
+    note = f" (SU2 seeded, trimmed at {prov.get('trim_mass_kg')} kg on the last flown link)" if seeded else ""
     if not close(point, basis, 1e-9):
-        return name, FAIL, f"cruise point mass {point} != trim mass {basis}"
+        return name, FAIL, f"cruise point mass {point} != trim mass {basis}{note}"
     if close(takeoff, basis, 1e-9):
-        return name, PASS, f"{basis} kg for trim, cruise point and take-off"
+        return name, PASS, f"{basis} kg for trim, cruise point and take-off{note}"
     if abs(takeoff - float(basis)) <= 0.05 + 1e-9:
         # Before V7 (MAS-Aviary fix/validation1-defaults) the take-off mass was sent rounded to 0.1 kg.
-        return name, PASS, f"{basis} kg for trim and cruise point; take-off {takeoff} (rounded to 0.1 kg, pre-V7 code)"
-    return name, FAIL, f"take-off mass {takeoff} != trim mass {basis}"
+        return name, PASS, (f"{basis} kg for trim and cruise point; take-off {takeoff} (rounded to 0.1 kg, pre-V7 "
+                            f"code){note}")
+    return name, FAIL, f"take-off mass {takeoff} != trim mass {basis}{note}"
 
 
 def check_tails_tc(link: Link, mission: int) -> tuple:
@@ -345,6 +354,12 @@ def check_fuselage(link: Link, mission: int) -> tuple:
     if measured is None:
         return name, NOT_EXERCISED, "the fuselage was not measured in this link"
     flown = dict(link.carry_over.get("aviary_session_start") or {})
+    # A session value nobody set this link (pre-session or carried) shows in aviary's get_results (V4: N_IF link 1
+    # flew the runner's 37.68 / 4.15 / 3.96 that no set_aircraft_parameters named).
+    for _, row in link.rows("get_results"):
+        held = find(row["result"], "aircraft_params")
+        if isinstance(held, dict):
+            flown.update({k: v for k, v in held.items() if k.startswith("Aircraft.Fuselage.")})
     flown.update(link.flown_parameters(mission))
     keys = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT", "Aircraft.Fuselage.MAX_WIDTH")
     wrong = {k: (flown.get(k), m) for k, m in zip(keys, measured) if not close(flown.get(k), m, 1e-4)}
