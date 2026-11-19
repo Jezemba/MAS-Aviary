@@ -78,17 +78,85 @@ def _small(value: Any, depth: int = 0) -> Any:
 
 
 def _cap_json(obj: dict, cap: int) -> dict:
+    """The record's outputs within ``cap`` characters, for reading by agents and people.
+
+    B363 (V1): it used to stop at the FIRST key that did not fit and drop every key after it. run_simulation's reply
+    grew (engine, climb_start, residuals, constraints) and its small ``summary`` -- the fuel -- came after them, so it
+    was never recorded. Now a key that does not fit is skipped and the later ones still go in; the dropped ones are
+    named. Decisions never read these capped outputs: they read the entry's ``result_digest`` (result_digest()).
+    """
     text = json.dumps(obj, default=str)
     if len(text) <= cap:
         return obj
     kept: dict = {}
+    dropped: list[str] = []
     for k, v in obj.items():
         kept[k] = v
-        if len(json.dumps(kept, default=str)) > cap:
+        if len(json.dumps(kept, default=str)) > cap - 120:     # room for the two bookkeeping keys
             kept.pop(k)
-            kept["_truncated_keys"] = len(obj) - len(kept)
-            break
+            dropped.append(str(k))
+    if dropped:
+        kept["_truncated_keys"] = len(dropped)
+        kept["_dropped_keys"] = dropped[:12]
     return kept
+
+
+# -- B363 (V1): the decision-critical part of a result, recorded uncapped ---------------------------------------------
+#
+# Every consumer that DECIDES from a knowledge-base record (the graph router, the networked board's suggestion, the
+# runner's mission metrics and measured fuel, the duplicate guard's "result exists") reads this digest, never the
+# capped ``outputs``. It is computed from the FULL parsed tool result before any cap and is small and fixed in shape,
+# so no reply size can push a field out of it.
+_DIGEST_FLAGS = ("success", "status", "valid", "valid_result", "converged", "flown", "model_ran", "error_code",
+                 "exit_code", "result_exists", "done_by", "kb_seq", "session_id", "flown_design_fingerprint",
+                 "design_fingerprint")
+MISSION_METRIC_KEYS = ("fuel_burned_kg", "gtow_kg", "wing_mass_kg", "reserve_fuel_kg", "zero_fuel_weight_kg")
+_DIGEST_ERROR_CHARS = 600
+_DIGEST_MISSING_ITEMS = 8
+_DIGEST_SEED_SUMMARY_CHARS = 2500
+
+
+def result_digest(outputs: Any) -> dict:
+    """The fields decisions are made on, from a tool's full parsed result (B363).
+
+    Flags (success / valid / converged / error_code ...), the mission metrics (from run_simulation's ``summary`` or
+    the top level, e.g. get_results -- never from set_aircraft_parameters' pre-trajectory ``model_eval``), the error
+    text, and a MISSING_REQUIRED_PARAMETERS refusal's ``missing`` list.
+    """
+    if not isinstance(outputs, dict):
+        return {}
+    d: dict = {}
+    for key in _DIGEST_FLAGS:
+        value = outputs.get(key)
+        if isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= _SMALL_STR):
+            d[key] = value
+    for holder in (outputs.get("summary"), outputs):
+        if isinstance(holder, dict):
+            for key in MISSION_METRIC_KEYS:
+                if key not in d and isinstance(holder.get(key), (int, float)) and not isinstance(holder.get(key), bool):
+                    d[key] = float(holder[key])
+    error = outputs.get("error")
+    if isinstance(error, str) and error:
+        d["error"] = error[:_DIGEST_ERROR_CHARS]
+    elif isinstance(error, dict) and error:      # pycycle-mcp: {"error": {"type", "message"}}
+        d["error"] = json.dumps(error, default=str)[:_DIGEST_ERROR_CHARS]
+    missing = outputs.get("missing")
+    if isinstance(missing, list):
+        d["missing"] = [{k: m.get(k) for k in ("parameter", "variable", "producer", "state") if k in m}
+                        for m in missing[:_DIGEST_MISSING_ITEMS] if isinstance(m, dict)]
+    return d
+
+
+def kb_result(entry: dict) -> dict:
+    """The decision digest of a knowledge-base entry (B363).
+
+    Entries written by KnowledgeBase.append carry it. An entry without one (written before B363, or put in by hand)
+    is read from its recorded outputs -- the only data there is; if those were capped, what was capped is not there.
+    """
+    digest_ = entry.get("result_digest") if isinstance(entry, dict) else None
+    if isinstance(digest_, dict):
+        return digest_
+    return result_digest((entry or {}).get("outputs"))
 
 
 # An MCP tool error arrives as a PLAIN STRING, not JSON (B87).
@@ -169,8 +237,9 @@ class KnowledgeBase:
         if seed:
             self.append(
                 tool="link_start", server="", agent="framework", role="runner", status="success",
-                inputs={}, outputs=_small(seed) if not isinstance(seed, dict) else _cap_json(
-                    {k: _small(v) for k, v in seed.items()}, _OUTPUTS_CAP_CHARS),
+                # append() applies _small + the cap to the recorded outputs (as this did); the full seed reaches
+                # result_digest so the previous link's summary is kept (B363).
+                inputs={}, outputs=_small(seed) if not isinstance(seed, dict) else dict(seed),
                 note="previous chain link's knowledge-base summary and end-state design",
                 discipline="integration",
             )
@@ -195,8 +264,13 @@ class KnowledgeBase:
                 "design_fingerprint": design_fingerprint,
                 "inputs": _cap_json({k: _small(v) for k, v in (inputs or {}).items()}, _OUTPUTS_CAP_CHARS),
                 "outputs": _cap_json({k: _small(v) for k, v in (outputs or {}).items()}, _OUTPUTS_CAP_CHARS),
+                # B363: from the FULL result, before any cap -- what every decision reads (kb_result).
+                "result_digest": result_digest(outputs),
                 "note": note,
             }
+            if tool == "link_start" and isinstance(outputs, dict) and isinstance(outputs.get("summary"), str):
+                # B363: the previous link's summary went through _small (200 chars) and was recorded as "<N chars>".
+                entry["result_digest"]["previous_link_summary"] = outputs["summary"][:_DIGEST_SEED_SUMMARY_CHARS]
             self.entries.append(entry)
             path = _run_config.get("path")
             if path:
@@ -351,6 +425,17 @@ _MILESTONES = [
 ]
 
 
+def _shown_outputs(e: dict) -> dict:
+    """What a record shows an agent: its decision digest first (B363: the fuel, the error code -- fields a capped
+    reply may have lost), then the rest of its recorded outputs."""
+    shown = {k: v for k, v in kb_result(e).items()
+             if k not in ("success", "status", "previous_link_summary") and v not in (None, "", {}, [])}
+    for k, v in (e.get("outputs") or {}).items():
+        if k not in shown and k not in ("success", "status") and v not in (None, "", {}, []):
+            shown[k] = v
+    return shown
+
+
 RECENT_RECORDS_LINES = 30
 RECENT_RECORDS_CHARS = 6000
 
@@ -370,9 +455,7 @@ def recent_records(entries: list[dict], limit_lines: int = RECENT_RECORDS_LINES,
     tail = entries[-limit_lines:]
     lines = [f"MOST RECENT {len(tail)} OF {len(entries)} RECORDS (oldest first, newest last):"]
     for e in tail:
-        outs = {k: v for k, v in (e.get("outputs") or {}).items()
-                if k not in ("success", "status") and v not in (None, "", {}, [])}
-        out_s = json.dumps(outs, default=str)[:240]
+        out_s = json.dumps(_shown_outputs(e), default=str)[:240]
         note = f" note: {str(e.get('note'))[:120]}" if e.get("status") != "success" and e.get("note") else ""
         lines.append(f"[{e.get('time_utc')}] #{e.get('seq')} {e.get('agent')} {e.get('tool')} "
                      f"{e.get('status')}: {out_s}{note}")
@@ -393,7 +476,7 @@ def digest(entries: list[dict], limit_chars: int = 2500) -> str:
     lines: list[str] = []
     seed = next((e for e in entries if e["tool"] == "link_start"), None)
     if seed:
-        prev = (seed.get("outputs") or {}).get("summary")
+        prev = kb_result(seed).get("previous_link_summary") or (seed.get("outputs") or {}).get("summary")
         if prev:
             lines.append(f"PREVIOUS LINK: {str(prev)[:400]}")
     if done:
@@ -403,9 +486,7 @@ def digest(entries: list[dict], limit_chars: int = 2500) -> str:
             last_by_tool[e["tool"]] = e
         for tool, e in last_by_tool.items():
             n = sum(1 for d in done if d["tool"] == tool)
-            outs = {k: v for k, v in (e.get("outputs") or {}).items()
-                    if k not in ("success", "status") and v not in (None, "", {}, [])}
-            out_s = json.dumps(outs, default=str)[:220]
+            out_s = json.dumps(_shown_outputs(e), default=str)[:220]
             times = f" x{n}" if n > 1 else ""
             lines.append(f"- {tool}{times}: last by {e['agent']} (seq {e['seq']}, {e['time_utc']}) {out_s}")
     if failed:

@@ -56,6 +56,8 @@ _ROLE_NODE = {"geometry": GEOMETRY, "aero": AERO, "struct": MASS, "mass": MASS, 
               "mission": MISSION, "simul": SIMULATION}
 _COMPLEXITY_FIELD = re.compile(r"""["']?\bCOMPLEXITY\b["']?\s*[:=]\s*["']?\s*\**\s*(simple|moderate|complex)\b""", re.I)
 _ZERO_FUEL_FLOOR_KG = 100.0
+# aviary-mcp's READ_ONLY_PARAMETER text for a derived parameter: "'Aircraft.Wing.SPAN' is derived (...)".
+_DERIVED = re.compile(r"\bis derived\b", re.I)
 
 
 @dataclass
@@ -84,26 +86,46 @@ def _records_for(records: list, tool: str) -> list:
     return [r for r in records if r.get("tool") == tool]
 
 
+def _out(record: dict) -> dict:
+    """B363 (V1): the record's decision digest -- the uncapped flags, metrics, error code and text of the FULL tool
+    result -- never its capped ``outputs`` (run_simulation's grown reply lost its ``summary`` there, so no mission was
+    ever seen as flown)."""
+    from src.tools.knowledge_base import kb_result
+
+    return kb_result(record)
+
+
 def _ok(record: dict) -> bool:
-    out = record.get("outputs") or {}
+    out = _out(record)
     return (record.get("status") == "success" and out.get("success") is not False
             and out.get("valid") is not False and not out.get("error_code"))
 
 
 def _codes(records: list) -> list[tuple[str, dict]]:
-    return [((r.get("outputs") or {}).get("error_code"), r) for r in records if (r.get("outputs") or {}).get("error_code")]
+    return [(_out(r).get("error_code"), r) for r in records if _out(r).get("error_code")]
+
+
+def _result_exists(record: dict) -> bool:
+    """An ALREADY_DONE refusal that points at a finished result (not "another call is still running", B363)."""
+    out = _out(record)
+    if out.get("error_code") != "ALREADY_DONE":
+        return False
+    if "result_exists" in out:
+        return out["result_exists"] is True
+    # A refusal recorded before B363: one that names the prior result's kb seq points at a finished result; the
+    # "already running" refusal has kb_seq None.
+    return isinstance(out.get("kb_seq"), int) and not isinstance(out.get("kb_seq"), bool)
 
 
 def _flown(record: dict) -> float | None:
-    out = record.get("outputs") or {}
+    out = _out(record)
     # B306 (audit F3): a mission that did not converge (aviary-mcp B288: success false, MISSION_NOT_CONVERGED) or
     # was otherwise not a result is not flown, whatever fuel figure it carries.
     if (record.get("status") not in (None, "success") or out.get("success") is False or out.get("converged") is False
             or out.get("valid") is False or out.get("valid_result") is False):
         return None
-    summary = out.get("summary") if isinstance(out.get("summary"), dict) else out
     try:
-        fuel = float(summary.get("fuel_burned_kg"))
+        fuel = float(out.get("fuel_burned_kg"))     # the digest takes it from the reply's summary (B363)
     except (TypeError, ValueError):
         return None
     return fuel if fuel > _ZERO_FUEL_FLOOR_KG else None
@@ -116,7 +138,7 @@ def _upstream_from_errors(records: list) -> Decision | None:
             rule = "8" if code == "GEOMETRY_NOT_APPLIED" else "2"
             return Decision(GEOMETRY, COMPLEX, rule, f"{rec.get('tool')} returned {code}: the geometry has to be redone")
         if code == "MISSING_REQUIRED_PARAMETERS":
-            missing = (rec.get("outputs") or {}).get("missing") or []
+            missing = _out(rec).get("missing") or []
             producers = [PRODUCER_NODE.get(str(m.get("producer"))) for m in missing if isinstance(m, dict)]
             producers = [p for p in producers if p]
             if producers:
@@ -125,7 +147,13 @@ def _upstream_from_errors(records: list) -> Decision | None:
                 return Decision(node, LEVEL_OF_NODE[node], "5",
                                 f"{rec.get('tool')} is missing {names}, produced by {node}")
         if code == "READ_ONLY_PARAMETER":
-            text = f"{(rec.get('outputs') or {}).get('error', '')} {rec.get('note', '')}"
+            text = f"{_out(rec).get('error', '')} {rec.get('note', '')}"
+            if _DERIVED.search(text):
+                # B363 (V9): aviary refuses a DERIVED parameter (SPAN = sqrt(AR x AREA), SCALED_SLS_THRUST from the
+                # scale): no discipline produces it, the caller only has to leave it out. Routing it to geometry
+                # (rule 5) raised N_GR to COMPLEX and re-ran the geometry for a key the agent had copied back from a
+                # reply. Not upstream: rule 1 (the same node again, with the refusal as feedback).
+                continue
             for pattern, node in PARAM_PRODUCER:
                 if pattern.search(text):
                     return Decision(node, LEVEL_OF_NODE[node], "5",
@@ -212,10 +240,16 @@ def route_after_node(node: str, records: list, output: str, level: str, retries:
         upstream = _upstream_from_errors(records)
         if key and _ok(key[-1]):
             decision = Decision(NODES[NODES.index(node) + 1], level, "flow", f"{KEY_TOOL[node]} succeeded")
+        elif key and _result_exists(key[-1]):
+            # B363 (V11): the duplicate guard refused the call because this design's result already exists (it
+            # refuses only when the coupling contract counts that result as current, B363 V5): the node's job is done.
+            decision = Decision(NODES[NODES.index(node) + 1], level, "flow",
+                                f"{KEY_TOOL[node]} was refused ALREADY_DONE: this design's result exists "
+                                f"(kb seq {_out(key[-1]).get('kb_seq')})")
         elif upstream:
             decision = Decision(upstream.next_node, higher(level, upstream.level), upstream.rule, upstream.reason)
         else:
-            what = (key[-1].get("note") or (key[-1].get("outputs") or {}).get("error") or "it failed") if key else \
+            what = (key[-1].get("note") or _out(key[-1]).get("error") or "it failed") if key else \
                 f"{KEY_TOOL[node]} was not called"
             decision = Decision(node, level, "1", f"{KEY_TOOL[node]} did not succeed ({str(what)[:200]})")
     if decision.next_node == node and retries + 1 >= RETRIES_PER_VISIT:

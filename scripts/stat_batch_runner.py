@@ -783,20 +783,19 @@ def measured_fuel_from_kb(kb_path, attempt: int | None = None) -> float | None:
             continue
         if attempt is not None and entry.get("attempt") not in (None, attempt):
             continue
-        outputs = entry.get("outputs") or {}
+        # B363 (V1): the entry's uncapped decision digest, not its capped outputs (the grown run_simulation reply
+        # lost its summary there).
+        from src.tools.knowledge_base import kb_result
+
+        outputs = kb_result(entry)
         ok = (entry.get("status") == "success" and outputs.get("success") is not False
               and outputs.get("converged") is not False and outputs.get("valid") is not False)
         if entry.get("tool") == "run_simulation":
             last_sim_ok = ok
         if not ok or (entry.get("tool") == "get_results" and not last_sim_ok):
             continue
-        for holder in (outputs.get("summary"), outputs.get("outputs"), outputs):
-            if isinstance(holder, dict) and holder.get("fuel_burned_kg") is not None:
-                try:
-                    measured = float(holder["fuel_burned_kg"])
-                except (TypeError, ValueError):
-                    pass
-                break
+        if outputs.get("fuel_burned_kg") is not None:
+            measured = float(outputs["fuel_burned_kg"])
     return measured
 
 

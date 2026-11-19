@@ -60,7 +60,6 @@ when the mission reports it flew it. AVION_ENGINE_DECK=0 restores the bench engi
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -140,8 +139,8 @@ REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
 def current_design_fingerprint() -> str:
     """Identity of the geometry the disciplines are supposed to be consuming.
 
-    Built from the B81 guard state: the CPACS the design's session was opened from and that
-    session's geometry epoch (bumped by every morph). The MESH is deliberately not part of it --
+    Built from the B81 guard state: the session the design lives in (B363 below: what identifies it). The MESH is
+    deliberately not part of it --
     a remesh is a different discretisation of the same design, and treating it as a design
     change would make a perfectly good SU2 solve look stale.
 
@@ -149,24 +148,32 @@ def current_design_fingerprint() -> str:
     used to hash every OPEN session, so close_cpacs changed the "design" with the geometry
     untouched: a networked peer's mass result was then refused as "produced for an EARLIER
     geometry" 12 times in a link that never morphed, and nothing flew.
-    """
-    try:
-        from src.tools.duplicate_guard import _state as guard_state
 
-        gs = guard_state()
-        if gs is None:
-            return "design:none"
-        active = gs.get("active_design") or {}
-        epochs = gs.get("geometry_epoch") or {}
-        session = active.get("session")
-        payload = {
-            "epochs": sorted((str(k), int(v)) for k, v in
-                             ({session: epochs.get(session, 0)} if session else epochs).items()),
-            "cpacs": active.get("fp"),
-        }
-    except Exception:      # pragma: no cover - a fingerprint bug must never block work
-        return "design:none"
-    return "design:" + hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    B363 (V5): it is the CONTENT of that geometry (duplicate_guard.design_identity): the CPACS bytes it was opened
+    from (or the design a file this run exported holds) and tigl's measured geometry where a morph changed it. It
+    used to hash the session id, its morph count and the file's path / mtime, so a morph that changed nothing and a
+    re-open of the same geometry each made a "new design": every result went stale while the duplicate guard (which
+    hashes file content) refused the re-run as ALREADY_DONE -- the O_IF / N_GR livelocks of validation 1. The duplicate
+    guard's once-only fingerprints use this same identity and refuse a producer's re-run only while this contract counts
+    its result as current (duplicate_guard.check), so the two cannot disagree.
+    """
+    from src.tools.duplicate_guard import design_identity
+
+    return design_identity()
+
+
+# B363 (V5): the coupled inputs a once-only producer call makes. The duplicate guard refuses repeating that call only
+# while every one of them is "ok" here (status()): one notion of "this design's result exists".
+PRODUCED_BY_ONCE_ONLY_TOOL: dict = {"estimate_mass": (WING_MASS, MTOM), "run_su2_solver": (AERO_SOLVE,)}
+
+
+def recorded_result_current(tool_name: str) -> tuple[bool, str]:
+    """(True, "") when the coupled results ``tool_name`` produces are on record for the CURRENT design; else (False,
+    why). For a tool that produces no coupled input: (True, "")."""
+    inputs = PRODUCED_BY_ONCE_ONLY_TOOL.get(tool_name) or ()
+    states = [(r, status(r)) for r in inputs]
+    bad = [f"{r.var} {s}" for r, s in states if s != "ok"]
+    return (not bad, "; ".join(bad))
 
 
 # B262: the tool calls whose results are coupled inputs, and the producer each one's result belongs to.

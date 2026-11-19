@@ -539,6 +539,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
                 _annotate_coupled_overrides(tool_name, data)
                 _annotate_su2_kept_back(tool_name, data)
                 _capture_applied_design(tool_name, data)
+                _separate_derived_from_applied(tool_name, data)
                 _flag_zero_fuel(tool_name, data)
                 _warn_flown_not_converged(tool_name, data)
                 _snapshot_flown_geometry(tool_name, data)
@@ -576,6 +577,7 @@ def intercept_response(tool_name: str, response: Any) -> Any:
         _annotate_coupled_overrides(tool_name, response)
         _annotate_su2_kept_back(tool_name, response)
         _capture_applied_design(tool_name, response)
+        _separate_derived_from_applied(tool_name, response)
         _flag_zero_fuel(tool_name, response)
         _warn_flown_not_converged(tool_name, response)
         _snapshot_flown_geometry(tool_name, response)
@@ -1011,6 +1013,28 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
             store["design_params_applied_session"] = sid
         store["design_params_applied"] = current          # the design last accepted (design.json, guards)
     _mark_coupled_applied(sid=sid)
+
+
+def _separate_derived_from_applied(tool_name: str, data: dict) -> None:
+    """B363 (V9): a derived value aviary reports is not listed among the parameters that were set.
+
+    aviary-mcp's set_aircraft_parameters reply lists Aircraft.Wing.SPAN (sqrt(AR x AREA)) under ``applied`` with
+    ``derived: true``. Agents copied that list back into their next call and aviary refused the whole call,
+    READ_ONLY_PARAMETER -- about 35 times in validation 1, on every mission_architect visit. The value stays in the
+    reply, apart and marked read-only; the capture above has already recorded it as derived (design_params_derived).
+    """
+    if tool_name != "set_aircraft_parameters" or not isinstance(data.get("applied"), list):
+        return
+    derived = [item for item in data["applied"] if isinstance(item, dict) and item.get("derived")]
+    if not derived:
+        return
+    data["applied"] = [item for item in data["applied"] if not (isinstance(item, dict) and item.get("derived"))]
+    data["derived_read_only"] = {
+        "values": {str(item.get("name")): {k: item.get(k) for k in ("new_value", "units") if k in item}
+                   for item in derived},
+        "note": ("Computed by aviary from the parameters above (SPAN = sqrt(ASPECT_RATIO x AREA)); read-only. Do not "
+                 "send these in set_aircraft_parameters: aviary refuses the whole call (READ_ONLY_PARAMETER)."),
+    }
 
 
 def aviary_holds(session_id) -> tuple[dict, int | None]:
