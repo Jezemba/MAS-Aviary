@@ -131,6 +131,18 @@ def _state() -> dict | None:
 #   unmeasured  morphs that reported a rebuild without measurements (cannot be compared, so each one counts as a
 #            change -- conservative, as before).
 _MEASURE_DIGITS = 10
+# A component is unchanged while every measured value is within this RELATIVE tolerance of what it measured before its
+# first morph: tigl-mcp's own morph tolerance (_AREA_AR_TOL, and _FUSELAGE_TOL of its V5 follow-up, both 1e-4).
+# Re-applying the measured starting design (V3 / V4) rescaled the fuselage by about 1e-6 and rewrote the CPACS with
+# tigl-mcp 043ba39; that geometry is the same design here, whichever tigl-mcp is deployed.
+SAME_SHAPE_RELATIVE_TOL = 1e-4
+
+
+def _same_shape(shape: dict | None, base: dict | None) -> bool:
+    if not isinstance(shape, dict) or not isinstance(base, dict) or set(shape) != set(base):
+        return shape == base
+    return all(abs(value - base[key]) <= SAME_SHAPE_RELATIVE_TOL * max(abs(base[key]), 1e-12)
+               for key, value in shape.items())
 
 
 def _measured(shape: Any) -> dict | None:
@@ -170,7 +182,7 @@ def session_identity(session: Any, gs: dict) -> str:
         # middleware). Its identity is the session itself plus its morph count, as before B372.
         return "design:" + _h({"unseen_session": str(session), "epoch": gs["geometry_epoch"].get(session, 0)})
     changed = {uid: shape for uid, shape in sorted(ident["shape"].items())
-               if shape != ident["base_shape"].get(uid)}
+               if not _same_shape(shape, ident["base_shape"].get(uid))}
     if not changed and not ident["unmeasured"]:
         return ident["base"]
     return "design:" + _h({"base": ident["base"], "changed": changed, "unmeasured": ident["unmeasured"]})
