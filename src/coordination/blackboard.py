@@ -434,6 +434,24 @@ class Blackboard:
             todo.claimed_at = None
             return True, f"{agent!r} marked {name!r} failed: {reason[:80]}"
 
+    def release_claims_of(self, agent: str) -> list[str]:
+        """W9: put every TODO this agent holds (claimed, not done) back to PENDING; the names released.
+
+        Called when a concurrent peer's run ENDS: a claim means "I am doing this now", and a peer that has stopped
+        running is not. N_IF it2 (validation 2): agent_2 took 'evaluation' (wait_for_board auto-claim, 96 min), its
+        run ended at 161 min without marking it done or failed, and the other two peers -- still running in the same
+        parallel cycle -- were refused claim / done / failed on it about 30 times until max cycles (212 min).
+        """
+        with self._lock:
+            released = []
+            for t in self._todos.values():
+                if t.status == TODO_STATUS_CLAIMED and t.assigned_to == agent:
+                    t.status = TODO_STATUS_PENDING
+                    t.assigned_to = None
+                    t.claimed_at = None
+                    released.append(t.name)
+            return released
+
     def release_claimed_todos(self) -> list[str]:
         """Reset every CLAIMED-but-not-done TODO back to PENDING and clear
         its owner. Used by the DAG-executor BETWEEN synchronous parallel

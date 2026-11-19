@@ -675,6 +675,7 @@ class Coordinator:
                 return _run_one_peer(peer_name)
             finally:
                 _peers.release()
+                self._release_claims_at_run_end(peer_name)
 
         from src.llm.batch_generation import peers_dispatched
 
@@ -683,6 +684,36 @@ class Coordinator:
                 messages = [m for msgs in ex.map(_run_one_peer_batched, peer_names) for m in msgs]
 
         return messages
+
+    def _release_claims_at_run_end(self, peer_name: str) -> None:
+        """W9: a peer whose run has ended holds no work: its unfinished claims go back on the board, recorded.
+
+        The other peers of the cycle may still be running (each in its own thread); they see the TODO pending again
+        (wait_for_board wakes on the board change and can take it). Posted on the board (entry_type status), logged
+        and kept in self.released_at_run_end -- never silent.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
+        bb = getattr(getattr(self, "strategy", None), "blackboard", None)
+        if bb is None or not hasattr(bb, "release_claims_of"):
+            return
+        try:
+            released = bb.release_claims_of(peer_name)
+        except Exception as exc:  # pragma: no cover - a release problem must not lose the peer's messages
+            log.warning("[W9] could not release %s's claims at the end of its run: %s", peer_name, exc)
+            return
+        if not released:
+            return
+        note = (f"{peer_name}'s run ended while it held {', '.join(released)} (neither done nor failed); "
+                "released for any peer to claim.")
+        log.warning("[W9] %s", note)
+        self.released_at_run_end = getattr(self, "released_at_run_end", []) + [
+            {"peer": peer_name, "todos": released, "time": time.time()}]
+        try:
+            bb.write(key=f"released_at_run_end_{peer_name}", value=note, author="system", entry_type="status")
+        except Exception as exc:  # pragma: no cover
+            log.warning("[W9] could not post the release: %s", exc)
 
     def _log_error(self, action: CoordinationAction) -> None:
         """Log a coordination-level error as an AgentMessage."""
