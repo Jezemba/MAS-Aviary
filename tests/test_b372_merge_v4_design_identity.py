@@ -70,3 +70,77 @@ def test_a_real_fuselage_change_is_still_a_new_design(link):
     _fuselage_morph(dp._design_state.sessions["tigl"], dict(FUSELAGE, length=FUSELAGE["length"] * 1.01))
     assert cc.current_design_fingerprint() != design
     assert cc.status(cc.WING_MASS) == "stale"
+
+
+# -- tigl-mcp fix/final-rerun b5ae37a (B373): the within-tolerance morph reply, through the real middleware ------------
+
+_FIX = json.loads((h.Path(__file__).parent / "fixtures" / "v1a_validation1_records.json").read_text())
+_WING_BEFORE = next(c for c in _FIX["links"]["val_net_graph/repeat_000"]["tool_calls"]
+                    if c["tool"] == "set_high_level_parameters")["result"]["geometry_morph"]["before"]
+
+
+def _no_op_reply(uid, before, tolerance, kind):
+    """tigl-mcp b5ae37a set_high_level_parameters for a request within tolerance (parameters.py / morph.py)."""
+    return {"component_uid": uid, "new_parameters": {}, "warnings": [],
+            "geometry_morph": {"rebuilt": False, "before": before, "after": before, "no_op": True,
+                               "note": f"no change: within tolerance ({kind}); the CPACS file and the geometry are "
+                                       "untouched.", "tolerance": tolerance}}
+
+
+def test_tigl_b373_no_op_replies_keep_the_design_and_nothing_goes_stale(link, monkeypatch):
+    from src.tools.type_coercion import apply_coercion_to_tools
+
+    replies = {"Wing1": _no_op_reply("Wing1", dict(_WING_BEFORE),
+                                     {"area_aspect_ratio_relative": 1e-4, "sweep_deg": 0.01}, "wing"),
+               "Wing2H": _no_op_reply("Wing2H", dict(_WING_BEFORE, reference_area=31.118412165407747),
+                                      {"area_aspect_ratio_relative": 1e-4, "sweep_deg": 0.01}, "tail"),
+               "Fuselage1": _no_op_reply("Fuselage1", dict(FUSELAGE),
+                                         {"relative": 1e-4, "held_within_tolerance": ["length", "diameter"]},
+                                         "fuselage")}
+    answer = link._answer
+
+    def answer_with_morph(tool, kw):
+        if tool == "set_high_level_parameters":
+            return json.loads(json.dumps(replies[kw["component_uid"]]))
+        return answer(tool, kw)
+
+    monkeypatch.setattr(link, "_answer", answer_with_morph)
+    monkeypatch.setitem(h.DECLARED, "set_high_level_parameters", ["session_id", "component_uid", "updates"])
+    dp._tool_server_map["set_high_level_parameters"] = "tigl"
+    link.tools.update({t.name: t for t in apply_coercion_to_tools(
+        [h.FakeMCPTool(link, "set_high_level_parameters")])})
+
+    dp.seed_anchor_geometry()
+    for agent, stage in (("geometry", h.geometry), ("aero", h.aero), ("structures", h.structures),
+                         ("propulsion", h.propulsion)):
+        h.run_as(agent, stage, link)
+    design = cc.current_design_fingerprint()
+    store = dp._design_state.data_store
+    wing_before, fus_before = dict(store["geometry_wing"]), dict(store["geometry_fuselage"])
+    sid = dp._design_state.sessions["tigl"]
+    epoch = dg._state()["geometry_epoch"].get(sid, 0)
+    updates = {"Wing1": {"area": 122.8287, "aspect_ratio": 9.3632, "sweep": 21.65},
+               "Wing2H": {"area": 31.1184}, "Fuselage1": {"length": 37.6446, "diameter": 4.1437}}
+    for uid, up in updates.items():
+        out = h.call(link, "set_high_level_parameters", session_id=sid, component_uid=uid, updates=up)
+        assert out["geometry_morph"]["no_op"] is True and "error_code" not in out, out
+    # The design did not change: fingerprint, epoch, records, staleness, export state.
+    assert cc.current_design_fingerprint() == design
+    assert dg._state()["geometry_epoch"].get(sid, 0) == epoch
+    assert store["geometry_wing"] == wing_before and store["geometry_fuselage"] == fus_before
+    assert not store.get("morph_unexported")
+    for required in (cc.AERO_SOLVE, cc.WING_MASS, cc.MTOM):
+        assert cc.status(required) == "ok", required
+    assert dp.engine_is_current()
+    # Nothing is refused: the export, SU2 and mass are not demanded again, and the mission flies.
+    h.run_as("mission", h.mission, link)
+    h.assert_engine_sized_and_mission_flown(link)
+    assert len(link.sent("estimate_mass")) == 1 and len(link.sent("run_su2_solver")) == 1
+    refused = [e for e in kbm_entries() if e["status"] == "refused"]
+    assert not refused, refused
+
+
+def kbm_entries():
+    from src.tools import knowledge_base as kbm
+
+    return list(kbm.get_kb().entries)
