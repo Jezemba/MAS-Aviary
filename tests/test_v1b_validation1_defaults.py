@@ -555,3 +555,14 @@ def test_v2_an_injected_su2_cl_and_the_runner_fuselage_fail(tmp_path):
     assert out["SU2 solved + recorded (not coupled)"][0] == "FAIL"
     assert "SU2 values reached aviary" in out["SU2 solved + recorded (not coupled)"][1]
     assert out["geometry -> aviary fuselage"][0] == "FAIL"       # N_IF link 1 (V4)
+
+
+def test_v4_the_seed_never_stands_in_for_reading_the_solved_file(monkeypatch, fresh):
+    dp.seed_anchor_geometry()
+    plan = {"reference_area": 130.0, "aspect_ratio": 10.0, "span": 36.06, "sweep_quarter_chord_deg": 25.0,
+            "taper_ratio": 0.25}
+    monkeypatch.setattr(dp, "_cpacs_planform", lambda path: plan)
+    rec = dp._wing_from_cpacs_file("/tmp/geometry_end_modified.xml")
+    assert rec["Aircraft.Wing.AREA"] == 130.0 and rec["_source"] == "cpacs file /tmp/geometry_end_modified.xml"
+    # A real measurement is never replaced by the file (B277 as before).
+    assert dp._wing_from_cpacs_file("/tmp/other.xml") is rec
