@@ -66,6 +66,16 @@ TAIL_KEYS = [k for k in REC["geometry_tails"] if not k.startswith("_")]
 TC_KEY = "Aircraft.Wing.THICKNESS_TO_CHORD"
 
 
+def _canonical_baseline() -> dict:
+    from src.config.canonical import load_canonical
+
+    return load_canonical()["baseline"]
+
+
+def _canonical_mass() -> float:
+    return float(_canonical_baseline()["sized_mtom_kg"])
+
+
 def _close(a, b, rel=1e-9):
     return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(b)))
 
@@ -333,17 +343,21 @@ def mission(s):
 
 def assert_engine_sized_and_mission_flown(s):
     point = REC["cruise_point"]
-    mass = REC["canonical_baseline"]["sized_mtom_kg"]
+    # B366 (V7): the carried mass is the canonical EXACT sized mass (90,298.6425281046 kg); the recorded flight was at the
+    # rounded 90,298.7 kg. Fn_DES and the scale are proportional to the mass at one L/D, so the recorded values are
+    # compared at the recorded mass and the framework's at the canonical one.
+    mass = _canonical_mass()
     # The framework asked aviary for the cruise point of the CURRENT design at the carried sized mass and engine.
     asks = s.sent("get_cruise_point")
     assert asks, "the framework never asked aviary for the cruise point"
     assert _close(asks[-1]["mass_kg"], mass) and _close(asks[-1]["engine_scale"],
-                                                          REC["canonical_baseline"]["engine_scale_factor"])
+                                                          _canonical_baseline()["engine_scale_factor"])
     stored = dp._design_state.data_store.get("aviary_cruise_point") or {}
     assert stored.get("_design_basis") == dp.design_basis(), "B360: the point never got its design basis"
     # The engine is sized: pyCycle got Fn_DES from aviary's L/D (the recorded 7,055.20 lbf), the cycle ran.
     fn_des = coupling.fn_des_from_lift_to_drag(mass, point["lift_to_drag"])
-    assert _close(fn_des, REC["fn_des_lbf"])
+    assert _close(coupling.fn_des_from_lift_to_drag(REC["canonical_baseline"]["sized_mtom_kg"], point["lift_to_drag"]),
+                  REC["fn_des_lbf"])
     sized = [kw["values"]["Fn_DES"] for kw in s.sent("set_inputs") if "Fn_DES" in (kw.get("values") or {})]
     assert sized and _close(sized[-1], fn_des), f"no Fn_DES reached pyCycle: {s.sent('set_inputs')}"
     assert s.sent("run_cycle"), "run_cycle never reached pyCycle (refused DESIGN_THRUST_NOT_AVAILABLE?)"
@@ -357,7 +371,7 @@ def assert_engine_sized_and_mission_flown(s):
     assert _close(held[TC_KEY], REC["geometry_wing_tc"][TC_KEY])
     scale = fn_des / float(s.replies["generate_engine_deck"]["reference_fn_des_lbf"])
     assert _close(held["Aircraft.Engine.SCALE_FACTOR"], scale)
-    assert _close(scale, REC["engine_scale"])
+    assert _close(scale, REC["engine_scale"] * mass / REC["canonical_baseline"]["sized_mtom_kg"])
     assert flight["deck"] and Path(flight["deck"]).name == DECK_NAME
     assert flight["fingerprint"] == REC["aviary_design_fingerprint"]     # the recorded flight's design, exactly
     assert _close(s.results["fuel_burned_kg"], REC["fuel_burned_kg"])
@@ -513,7 +527,7 @@ def test_b361_three_peers_size_the_engine_at_once(link):
         t.start()
     for t in threads:
         t.join(600)
-    fn_des = coupling.fn_des_from_lift_to_drag(REC["canonical_baseline"]["sized_mtom_kg"],
+    fn_des = coupling.fn_des_from_lift_to_drag(_canonical_mass(),
                                                REC["cruise_point"]["lift_to_drag"])
     assert len(replies) == 3 and all(r.get("error_code") is None for r in replies.values()), replies
     sent = [kw["values"].get("Fn_DES") for kw in link.sent("set_inputs")]
