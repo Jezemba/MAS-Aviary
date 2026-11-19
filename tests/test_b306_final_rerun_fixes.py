@@ -80,12 +80,13 @@ def test_the_shipped_canonical_baseline_is_the_measured_fixed_point():
     from src.config.canonical import load_canonical
 
     base = load_canonical().get("baseline") or {}
-    assert base.get("sized_mtom_kg") == 90298.6425281046     # V7: exact (was the rounded 90,298.7)
+    # baseline3 (ws8 /data/Jessica/final_fix/baseline3/results/iterate_exact2): the fixed point closed exactly --
+    # mass-mcp's estimate with THIS scale is this mass (last change 1.8e-5 kg), and Fn_DES at this mass from aviary's
+    # FLOPS cruise L/D 17.64234806 gives this scale (last change 2.6e-10).
+    assert base.get("sized_mtom_kg") == 90298.63367700706
     assert str(base.get("engine_deck_file")).endswith("deck_7815057d6edc9732.deck")
-    assert base.get("engine_scale_factor") == pytest.approx(7055.200944706744 / 5900.0, rel=1e-9)
-    # Fn_DES from the mass the scale was sized at (iteration 6 cruise point, 90,298.7) and aviary's FLOPS cruise L/D
-    # 17.64234686 gives the shipped scale (V7: the shipped mass is the exact estimate WITH this scale, 0.06 kg below).
-    assert coupling.fn_des_from_lift_to_drag(90298.7, 17.642346861284835) / 5900.0 == pytest.approx(
+    assert base.get("engine_scale_factor") == 1.1957958109698965
+    assert coupling.fn_des_from_lift_to_drag(90298.63367700706, 17.64234805670212) / 5900.0 == pytest.approx(
         base["engine_scale_factor"], rel=1e-9)
 
 

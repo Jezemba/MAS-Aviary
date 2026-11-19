@@ -158,7 +158,14 @@ baseline:
   # driver then sized the engine at the rounded 90,298.7). Remaining fixed-point residual, recorded not hidden:
   # Fn_DES at this mass gives scale 1.19579594 (validation-1 S_GR/O_GR link 2), 8.3e-7 below the scale above,
   # i.e. ~0.008 kg of sized mass; one more live iteration would remove it.
-  sized_mtom_kg: 90298.6425281046
+  # CLOSED 2026-11-18 (baseline3, ws8 /data/Jessica/final_fix/baseline3/results/iterate_exact2/, MAS-Aviary 2741cf2,
+  # tigl-mcp b5ae37a, others unchanged; A16 slot, prelaunch_check PASSED): exact iteration from 90,298.6425281046 kg /
+  # 1.1957967702892787, each step written to its own canonical file the framework read (asserted: estimate_mass got
+  # the scale, the cruise point the mass). Sized masses 90,298.6425281046 (unchanged at the old scale), 90,298.63485611,
+  # 90,298.63383197, 90,298.63369526, 90,298.63367701 kg; scales 1.19579593900, 1.19579582802, 1.19579581321,
+  # 1.19579581123, 1.19579581097: converged after 5 iterations (last change 1.8e-5 kg, 2.6e-10 in scale; criterion
+  # < 0.001 kg and < 1e-9). Final point: FLOPS L/D 17.64234806, Fn_DES = Fn 7,055.19528 lbf, 13 sizing evaluations.
+  sized_mtom_kg: 90298.63367700706
   # The baseline's engine (H5, coordinator 2026-11-18): the deck and SCALE_FACTOR the first iteration's mass estimate
   # and aviary cruise point use (later iterations carry the previous iteration's flown engine). Unset = refused.
   # Deck = pyCycle generate_engine_deck of the canonical cycle (prompt table: BPR 5.105, T4_MAX 2857, T4_TAKEOFF 3540,
@@ -171,7 +178,7 @@ baseline:
   # scripts/prelaunch_check.sh verifies it on each machine before a launch.
   engine_deck_file: deck_7815057d6edc9732.deck
   engine_deck_md5: b1c1e040e4abe82782e47d1ed7666ca8
-  engine_scale_factor: 1.1957967702892787
+  engine_scale_factor: 1.1957958109698965
 
 # ---- EVALUATION (V12, validation 1, 2026-11-18) -----------------------------
 # result.json eval_classification scored every link against the 2026-07-28 SLSQP optimum (fuel 12,612.8 kg /

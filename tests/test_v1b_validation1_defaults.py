@@ -320,11 +320,13 @@ def test_v7_canonical_sized_mass_is_the_recorded_estimate_for_the_canonical_engi
     from src.config.canonical import load_canonical
 
     base = load_canonical()["baseline"]
-    assert base["sized_mtom_kg"] == 90298.6425281046            # ws8 baseline2 flights B2_coupled_anchor_1/_2
-    assert base["engine_scale_factor"] == 1.1957967702892787
+    # baseline3: the exact closed fixed point (ws8 /data/Jessica/final_fix/baseline3/results/iterate_exact2).
+    assert base["sized_mtom_kg"] == 90298.63367700706
+    assert base["engine_scale_factor"] == 1.1957958109698965
     flown = json.loads((FIX / "s_if_link1" / "design_flown.json").read_text())
-    # The same estimate on ws3 (S_IF link 1, same engine): equal to 2 ulp (machine-level last digits).
-    assert abs(flown["structures"]["mtom_kg"] - base["sized_mtom_kg"]) < 1e-9 * base["sized_mtom_kg"]
+    # S_IF link 1 (validation 1) was sized with the previous scale 1.1957967702892787: 0.0088 kg heavier -- the
+    # 8.3e-7 scale residual the closed fixed point removed.
+    assert abs(flown["structures"]["mtom_kg"] - base["sized_mtom_kg"]) < 0.01
 
 
 # ---- V6: the synthetic TASK_COMPLETE needs every stage ------------------------------------------------------------
