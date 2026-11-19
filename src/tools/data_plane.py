@@ -1271,7 +1271,9 @@ def _inject_target_cl(resolved: dict) -> None:
     # iteration (iteration 1: the baseline's sized mass, canonical baseline.sized_mtom_kg). Never the CPACS-declared
     # 78,126 kg (audit F4), never this iteration's own estimate (that made the target depend on call order, B276).
     mass_kg, mass_source = trim_mass_basis()
-    if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
+    # V4: the link-start anchor seed is not a measurement of THIS session: measure the live wing when it is all we have.
+    _wing_now = store.get("geometry_wing") or {}
+    if not _wing_now.get("Aircraft.Wing.AREA") or _wing_now.get("_source") == ANCHOR_SOURCE:
         _auto_measure_wing()    # B154: nobody measured the wing; the framework does (a LIVE session only)
     if not (store.get("geometry_wing") or {}).get("Aircraft.Wing.AREA"):
         _wing_from_cpacs_file(resolved.get("cpacs_file_path"))    # B277: the file being solved
@@ -1494,7 +1496,7 @@ def _wing_from_cpacs_file(path) -> dict | None:
     if _design_state is None:
         return None
     store = _design_state.data_store
-    if store.get("geometry_wing"):
+    if store.get("geometry_wing") and store["geometry_wing"].get("_source") != ANCHOR_SOURCE:   # V4: a seed is not read
         return store["geometry_wing"]
     if store.get("morph_unexported"):
         return None
