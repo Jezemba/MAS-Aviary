@@ -25,8 +25,8 @@ TOP-LEVEL AIRCRAFT REQUIREMENTS & CONSTRAINTS
 
 
 GLOBAL DESIGN SPACE  
-The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized:
-| Variable | Type | Set in (tool: input) | Used by | Default | Range | Units |
+The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized (the Default column is the iteration-1 baseline; from iteration 2, the DESIGN_STATE values apply):
+| Variable | Type | Set in (tool: input) | Used by | Default (iteration-1 baseline) | Range | Units |
 |---|---|---|---|---|---|---|
 | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.8287 | 100 to 160 | m^2 |
 | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.3632 | 7 to 17 (reliable 9 to 11.5) | none |
@@ -405,8 +405,8 @@ TOP-LEVEL AIRCRAFT REQUIREMENTS & CONSTRAINTS
 
 
 GLOBAL DESIGN SPACE  
-The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized:
-| Variable | Type | Set in (tool: input) | Used by | Default | Range | Units |
+The following STARTING parameters have been applied as an initial baseline they are valid but NOT optimized (the Default column is the iteration-1 baseline; from iteration 2, the DESIGN_STATE values apply):
+| Variable | Type | Set in (tool: input) | Used by | Default (iteration-1 baseline) | Range | Units |
 |---|---|---|---|---|---|---|
 | Wing area | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `area` | su2, mass, aviary | 122.8287 | 100 to 160 | m^2 |
 | Wing aspect ratio | Set | tigl: `set_high_level_parameters`, main wing `Wing1`, key `aspect_ratio` | su2, mass, aviary | 9.3632 | 7 to 17 (reliable 9 to 11.5) | none |
