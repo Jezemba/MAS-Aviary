@@ -1,4 +1,4 @@
-"""B363: the chain carry-forward across the V1 / V5 changes (Jessica's hard requirement, 2026-11-18).
+"""B372: the chain carry-forward across the V1 / V5 changes (Jessica's hard requirement, 2026-11-18).
 
 Every parameter an iteration changes must be exactly what the next iteration starts from -- the geometry (wing, tails,
 fuselage) and its CPACS file, the engine cycle inputs (T4s included), the carried sized mass and engine (deck and
@@ -345,7 +345,7 @@ def test_link2_starts_from_link1s_flown_end_state(chain, structure):
 
 def test_graph_preinit_starts_link2_on_link1s_flown_design(chain):
     """Graph-routed link 2: pre-init opens the carried CPACS, seeds link 1's results on it (same geometry), re-sizes
-    the engine on the carried mass and the CURRENT design. The seeded results must count as current (B363: the design
+    the engine on the carried mass and the CURRENT design. The seeded results must count as current (B372: the design
     identity of the carried file), and equal link 1's."""
     from src.coordination import graph_preinit
 
@@ -381,7 +381,7 @@ def test_graph_preinit_starts_link2_on_link1s_flown_design(chain):
 
 def test_a_link_that_did_not_fly_carries_no_flown_basis(chain):
     """B268 side: link 1 reshaped and sized but never flew. The next link keeps the canonical basis (no flown design),
-    and the starting design is that link's record, as before B363."""
+    and the starting design is that link's record, as before B372."""
     h.run_as("geometry", geometry_reshaped, chain)
     h.run_as("aero", h.aero, chain)
     h.run_as("structures", h.structures, chain)
@@ -444,7 +444,7 @@ def test_real_validation_link2_started_from_link1s_flown_end_state(combo):
 
 @pytest.mark.parametrize("combo", ["val_seq_staged", "val_seq_iter"])
 def test_real_validation_measured_fuel_unchanged_by_the_digest(combo, tmp_path, monkeypatch):
-    """The runner's measured fuel (B102) read with the B363 digest is the fuel each link reported: the run_simulation
+    """The runner's measured fuel (B102) read with the B372 digest is the fuel each link reported: the run_simulation
     replies of the recorded links, recorded by the new KB, give the same fuel as get_results did."""
     monkeypatch.setattr(dp, "_design_state", DesignState())
     for link in ("repeat_000", "repeat_001"):

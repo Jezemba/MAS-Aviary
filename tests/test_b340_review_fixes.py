@@ -94,7 +94,7 @@ class World:
         return json.loads(out) if isinstance(out, str) else out
 
     def morph(self, to):
-        """A TiGL morph + export: the measured wing is the new one (B363: the design is the geometry's content --
+        """A TiGL morph + export: the measured wing is the new one (B372: the design is the geometry's content --
         tigl's measured before / after -- so the morph is observed as the middleware observes it)."""
         from src.tools import duplicate_guard as dg
 

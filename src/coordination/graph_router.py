@@ -87,7 +87,7 @@ def _records_for(records: list, tool: str) -> list:
 
 
 def _out(record: dict) -> dict:
-    """B363 (V1): the record's decision digest -- the uncapped flags, metrics, error code and text of the FULL tool
+    """B372 (V1): the record's decision digest -- the uncapped flags, metrics, error code and text of the FULL tool
     result -- never its capped ``outputs`` (run_simulation's grown reply lost its ``summary`` there, so no mission was
     ever seen as flown)."""
     from src.tools.knowledge_base import kb_result
@@ -106,13 +106,13 @@ def _codes(records: list) -> list[tuple[str, dict]]:
 
 
 def _result_exists(record: dict) -> bool:
-    """An ALREADY_DONE refusal that points at a finished result (not "another call is still running", B363)."""
+    """An ALREADY_DONE refusal that points at a finished result (not "another call is still running", B372)."""
     out = _out(record)
     if out.get("error_code") != "ALREADY_DONE":
         return False
     if "result_exists" in out:
         return out["result_exists"] is True
-    # A refusal recorded before B363: one that names the prior result's kb seq points at a finished result; the
+    # A refusal recorded before B372: one that names the prior result's kb seq points at a finished result; the
     # "already running" refusal has kb_seq None.
     return isinstance(out.get("kb_seq"), int) and not isinstance(out.get("kb_seq"), bool)
 
@@ -125,7 +125,7 @@ def _flown(record: dict) -> float | None:
             or out.get("valid") is False or out.get("valid_result") is False):
         return None
     try:
-        fuel = float(out.get("fuel_burned_kg"))     # the digest takes it from the reply's summary (B363)
+        fuel = float(out.get("fuel_burned_kg"))     # the digest takes it from the reply's summary (B372)
     except (TypeError, ValueError):
         return None
     return fuel if fuel > _ZERO_FUEL_FLOOR_KG else None
@@ -149,7 +149,7 @@ def _upstream_from_errors(records: list) -> Decision | None:
         if code == "READ_ONLY_PARAMETER":
             text = f"{_out(rec).get('error', '')} {rec.get('note', '')}"
             if _DERIVED.search(text):
-                # B363 (V9): aviary refuses a DERIVED parameter (SPAN = sqrt(AR x AREA), SCALED_SLS_THRUST from the
+                # B372 (V9): aviary refuses a DERIVED parameter (SPAN = sqrt(AR x AREA), SCALED_SLS_THRUST from the
                 # scale): no discipline produces it, the caller only has to leave it out. Routing it to geometry
                 # (rule 5) raised N_GR to COMPLEX and re-ran the geometry for a key the agent had copied back from a
                 # reply. Not upstream: rule 1 (the same node again, with the refusal as feedback).
@@ -241,8 +241,8 @@ def route_after_node(node: str, records: list, output: str, level: str, retries:
         if key and _ok(key[-1]):
             decision = Decision(NODES[NODES.index(node) + 1], level, "flow", f"{KEY_TOOL[node]} succeeded")
         elif key and _result_exists(key[-1]):
-            # B363 (V11): the duplicate guard refused the call because this design's result already exists (it
-            # refuses only when the coupling contract counts that result as current, B363 V5): the node's job is done.
+            # B372 (V11): the duplicate guard refused the call because this design's result already exists (it
+            # refuses only when the coupling contract counts that result as current, B372 V5): the node's job is done.
             decision = Decision(NODES[NODES.index(node) + 1], level, "flow",
                                 f"{KEY_TOOL[node]} was refused ALREADY_DONE: this design's result exists "
                                 f"(kb seq {_out(key[-1]).get('kb_seq')})")

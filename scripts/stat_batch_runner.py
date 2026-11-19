@@ -783,7 +783,7 @@ def measured_fuel_from_kb(kb_path, attempt: int | None = None) -> float | None:
             continue
         if attempt is not None and entry.get("attempt") not in (None, attempt):
             continue
-        # B363 (V1): the entry's uncapped decision digest, not its capped outputs (the grown run_simulation reply
+        # B372 (V1): the entry's uncapped decision digest, not its capped outputs (the grown run_simulation reply
         # lost its summary there).
         from src.tools.knowledge_base import kb_result
 

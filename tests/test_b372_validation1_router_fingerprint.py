@@ -1,4 +1,4 @@
-"""B363: validation 1 (2026-11-18) blockers V1 and V5, and V9 / V11, replayed from the REAL recorded records.
+"""B372: validation 1 (2026-11-18) blockers V1 and V5, and V9 / V11, replayed from the REAL recorded records.
 
 tests/fixtures/v1a_validation1_records.json is extracted read-only from the validation runs by
 tests/fixtures/v1a_extract_validation1_records.py (ws8 /data/Jessica/final_val, ws5/ws6/ws3 copies): every
@@ -75,7 +75,7 @@ def test_v1_reproduced_no_recorded_mission_is_flown_from_its_capped_outputs():
     assert all(m["record"]["outputs"].get("converged") is True for m in missions)
     lost = [m for m in missions if "summary" not in m["record"]["outputs"]]
     assert len(lost) == 45 and all(m["record"]["outputs"].get("_truncated_keys") for m in lost)
-    # A recorded entry has no digest; read as before B363 (its outputs) none of them is flown.
+    # A recorded entry has no digest; read as before B372 (its outputs) none of them is flown.
     assert sum(gr._flown(m["record"]) is not None for m in missions) == 0
 
 
@@ -253,7 +253,7 @@ def test_v5_ngr_link1_a_real_morph_is_a_new_design_and_the_guard_lets_the_rerun_
     assert cc.current_design_fingerprint() != before
     assert cc.status(cc.AERO_SOLVE) == "stale" and cc.status(cc.WING_MASS) == "stale"
     assert cc.check("run_simulation", {"session_id": "a"})["missing"][0]["state"] == "stale"
-    # Same SU2 session and mesh, same mass file: before B363 both were refused ALREADY_DONE.
+    # Same SU2 session and mesh, same mass file: before B372 both were refused ALREADY_DONE.
     assert dg.check("run_su2_solver", dg.fingerprint("run_su2_solver", {"session_id": su2}), "agent_1") is None
     assert dg.check("estimate_mass", dg.fingerprint("estimate_mass", {"cpacs_file_path": mass_file}), "agent_1") is None
     assert kbm.get_kb().metrics["duplicate_prior_not_current"]["agent_1"] == {"run_su2_solver": 1, "estimate_mass": 1}

@@ -1,4 +1,4 @@
-"""Extract the validation-1 records the B363 tests replay (V1, V5, V9, V11). Run on ws8, read-only on the run data.
+"""Extract the validation-1 records the B372 tests replay (V1, V5, V9, V11). Run on ws8, read-only on the run data.
 
     python tests/fixtures/v1a_extract_validation1_records.py /data/Jessica/final_val tests/fixtures/v1a_validation1_records.json
 

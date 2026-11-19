@@ -80,7 +80,7 @@ def _everything_ran():
 
 
 def _morph_the_geometry():
-    """A morph that changes the wing, observed the way the middleware does (B363: the design is the geometry's content
+    """A morph that changes the wing, observed the way the middleware does (B372: the design is the geometry's content
     -- tigl's measured before / after -- not the morph count, so the epoch alone no longer moves it)."""
     import json as _json
 

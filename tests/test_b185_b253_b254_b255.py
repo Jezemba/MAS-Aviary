@@ -29,7 +29,7 @@ def _store():
 
 
 def _open(session="t1", fp="geo:file"):
-    # B363: the design is the CONTENT opened; another file (fp) is another content.
+    # B372: the design is the CONTENT opened; another file (fp) is another content.
     dg.observe("open_cpacs", {"source": f"D150 {fp}"}, json.dumps({"session_id": session}), "success",
                {"design_fingerprint": fp, "seq": 1})
 

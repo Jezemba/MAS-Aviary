@@ -522,7 +522,7 @@ def test_b361_three_peers_size_the_engine_at_once(link):
     assert len(link.sent("get_cruise_point")) == 1, link.sent("get_cruise_point")
 
 
-# -- B363 (V1): the graph-routed links must REACH THE INTEGRATOR with the real-size replies ---------------------------
+# -- B372 (V1): the graph-routed links must REACH THE INTEGRATOR with the real-size replies ---------------------------
 #
 # The recorded run_simulation reply above is the real one (~4.5 kB: engine, climb_start, residuals, constraints,
 # overridden outputs, then summary). B361's links flew it, but nothing here routed on what the knowledge base recorded:
@@ -585,7 +585,7 @@ def _graph_env(monkeypatch):
     monkeypatch.setattr(prompt_assembly, "read_design_json_text", lambda: None)
 
 
-def test_b363_sequential_graph_link_reaches_the_integrator(link, monkeypatch):
+def test_b372_sequential_graph_link_reaches_the_integrator(link, monkeypatch):
     from src.coordination import conditional_graph_handler as h_mod
     from src.coordination import graph_router as gr
     from src.coordination.execution_handler import Assignment
@@ -601,7 +601,7 @@ def test_b363_sequential_graph_link_reaches_the_integrator(link, monkeypatch):
     _assert_the_recorded_flight_is_seen(link)
 
 
-def test_b363_orchestrated_graph_link_reaches_the_integrator(link, monkeypatch):
+def test_b372_orchestrated_graph_link_reaches_the_integrator(link, monkeypatch):
     from types import SimpleNamespace
 
     from src.coordination import conditional_graph_handler as h_mod
@@ -621,7 +621,7 @@ def test_b363_orchestrated_graph_link_reaches_the_integrator(link, monkeypatch):
     _assert_the_recorded_flight_is_seen(link)
 
 
-def test_b363_networked_graph_board_completes_on_the_flight(link):
+def test_b372_networked_graph_board_completes_on_the_flight(link):
     """Networked graph: the board graph posts no 'did not fly' suggestion after the flight, and the integrator's
     COMPLETE ends the link."""
     from src.coordination.blackboard import Blackboard

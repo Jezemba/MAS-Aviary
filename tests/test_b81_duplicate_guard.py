@@ -253,7 +253,7 @@ def test_su2_solve_is_once_only_per_mesh_and_config(srv):
     setm = srv.tool("set_mesh", ["session_id", "mesh_base64"])
     upd = srv.tool("update_config_entries", ["session_id", "updates"])
     solve = srv.tool("run_su2_solver", ["session_id", "solver"])
-    # B363: a solve counts as this design's result once its coefficients are captured (the coupling contract's
+    # B372: a solve counts as this design's result once its coefficients are captured (the coupling contract's
     # aero); the guard refuses a repeat only then (one notion of "the result exists").
     srv.responses["run_su2_solver"] = {"success": True, "final_coefficients": {"CL": 0.6461, "CD": 0.0262}}
     call(create, "agent_2", base_name="w")

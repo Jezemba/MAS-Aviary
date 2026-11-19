@@ -414,7 +414,7 @@ class StagedPipelineHandler(ExecutionHandler):
                     prompt_assembly.read_carry_over(), stage.name if stage else None,
                     prompt_assembly.read_design_json_text())
 
-            # Run the agent. B363: the knowledge base's records of this stage are what its checks read (uncapped).
+            # Run the agent. B372: the knowledge base's records of this stage are what its checks read (uncapped).
             from src.tools.knowledge_base import get_kb
 
             _kb = get_kb()
@@ -692,7 +692,7 @@ class StagedPipelineHandler(ExecutionHandler):
     def _validation_exhausted(tool_calls: list[ToolCallRecord], records: list[dict] | None = None) -> bool:
         """Return True if set_aircraft_parameters was called but never returned valid=true.
 
-        B363: read from this stage's knowledge-base records (their uncapped decision digest) when there are any. The
+        B372: read from this stage's knowledge-base records (their uncapped decision digest) when there are any. The
         message copies of tool outputs are cut at 2,000 characters; set_aircraft_parameters' reply (19 applied
         parameters) is longer, so it never parsed and every mission stage of validation 1's staged links was marked
         early_abort "validation_exhausted" although aviary had answered valid: true.

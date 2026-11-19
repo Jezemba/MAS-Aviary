@@ -1016,7 +1016,7 @@ def _capture_applied_design(tool_name: str, data: dict) -> None:
 
 
 def _separate_derived_from_applied(tool_name: str, data: dict) -> None:
-    """B363 (V9): a derived value aviary reports is not listed among the parameters that were set.
+    """B372 (V9): a derived value aviary reports is not listed among the parameters that were set.
 
     aviary-mcp's set_aircraft_parameters reply lists Aircraft.Wing.SPAN (sqrt(AR x AREA)) under ``applied`` with
     ``derived: true``. Agents copied that list back into their next call and aviary refused the whole call,

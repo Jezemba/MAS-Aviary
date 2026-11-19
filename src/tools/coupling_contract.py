@@ -139,7 +139,7 @@ REQUIRED_BY_TOOL: dict[str, tuple[CoupledInput, ...]] = {
 def current_design_fingerprint() -> str:
     """Identity of the geometry the disciplines are supposed to be consuming.
 
-    Built from the B81 guard state: the session the design lives in (B363 below: what identifies it). The MESH is
+    Built from the B81 guard state: the session the design lives in (B372 below: what identifies it). The MESH is
     deliberately not part of it --
     a remesh is a different discretisation of the same design, and treating it as a design
     change would make a perfectly good SU2 solve look stale.
@@ -149,7 +149,7 @@ def current_design_fingerprint() -> str:
     untouched: a networked peer's mass result was then refused as "produced for an EARLIER
     geometry" 12 times in a link that never morphed, and nothing flew.
 
-    B363 (V5): it is the CONTENT of that geometry (duplicate_guard.design_identity): the CPACS bytes it was opened
+    B372 (V5): it is the CONTENT of that geometry (duplicate_guard.design_identity): the CPACS bytes it was opened
     from (or the design a file this run exported holds) and tigl's measured geometry where a morph changed it. It
     used to hash the session id, its morph count and the file's path / mtime, so a morph that changed nothing and a
     re-open of the same geometry each made a "new design": every result went stale while the duplicate guard (which
@@ -162,7 +162,7 @@ def current_design_fingerprint() -> str:
     return design_identity()
 
 
-# B363 (V5): the coupled inputs a once-only producer call makes. The duplicate guard refuses repeating that call only
+# B372 (V5): the coupled inputs a once-only producer call makes. The duplicate guard refuses repeating that call only
 # while every one of them is "ok" here (status()): one notion of "this design's result exists".
 PRODUCED_BY_ONCE_ONLY_TOOL: dict = {"estimate_mass": (WING_MASS, MTOM), "run_su2_solver": (AERO_SOLVE,)}
 

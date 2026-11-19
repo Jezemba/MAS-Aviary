@@ -80,7 +80,7 @@ def _small(value: Any, depth: int = 0) -> Any:
 def _cap_json(obj: dict, cap: int) -> dict:
     """The record's outputs within ``cap`` characters, for reading by agents and people.
 
-    B363 (V1): it used to stop at the FIRST key that did not fit and drop every key after it. run_simulation's reply
+    B372 (V1): it used to stop at the FIRST key that did not fit and drop every key after it. run_simulation's reply
     grew (engine, climb_start, residuals, constraints) and its small ``summary`` -- the fuel -- came after them, so it
     was never recorded. Now a key that does not fit is skipped and the later ones still go in; the dropped ones are
     named. Decisions never read these capped outputs: they read the entry's ``result_digest`` (result_digest()).
@@ -101,7 +101,7 @@ def _cap_json(obj: dict, cap: int) -> dict:
     return kept
 
 
-# -- B363 (V1): the decision-critical part of a result, recorded uncapped ---------------------------------------------
+# -- B372 (V1): the decision-critical part of a result, recorded uncapped ---------------------------------------------
 #
 # Every consumer that DECIDES from a knowledge-base record (the graph router, the networked board's suggestion, the
 # runner's mission metrics and measured fuel, the duplicate guard's "result exists") reads this digest, never the
@@ -117,7 +117,7 @@ _DIGEST_SEED_SUMMARY_CHARS = 2500
 
 
 def result_digest(outputs: Any) -> dict:
-    """The fields decisions are made on, from a tool's full parsed result (B363).
+    """The fields decisions are made on, from a tool's full parsed result (B372).
 
     Flags (success / valid / converged / error_code ...), the mission metrics (from run_simulation's ``summary`` or
     the top level, e.g. get_results -- never from set_aircraft_parameters' pre-trajectory ``model_eval``), the error
@@ -148,9 +148,9 @@ def result_digest(outputs: Any) -> dict:
 
 
 def kb_result(entry: dict) -> dict:
-    """The decision digest of a knowledge-base entry (B363).
+    """The decision digest of a knowledge-base entry (B372).
 
-    Entries written by KnowledgeBase.append carry it. An entry without one (written before B363, or put in by hand)
+    Entries written by KnowledgeBase.append carry it. An entry without one (written before B372, or put in by hand)
     is read from its recorded outputs -- the only data there is; if those were capped, what was capped is not there.
     """
     digest_ = entry.get("result_digest") if isinstance(entry, dict) else None
@@ -238,7 +238,7 @@ class KnowledgeBase:
             self.append(
                 tool="link_start", server="", agent="framework", role="runner", status="success",
                 # append() applies _small + the cap to the recorded outputs (as this did); the full seed reaches
-                # result_digest so the previous link's summary is kept (B363).
+                # result_digest so the previous link's summary is kept (B372).
                 inputs={}, outputs=_small(seed) if not isinstance(seed, dict) else dict(seed),
                 note="previous chain link's knowledge-base summary and end-state design",
                 discipline="integration",
@@ -264,12 +264,12 @@ class KnowledgeBase:
                 "design_fingerprint": design_fingerprint,
                 "inputs": _cap_json({k: _small(v) for k, v in (inputs or {}).items()}, _OUTPUTS_CAP_CHARS),
                 "outputs": _cap_json({k: _small(v) for k, v in (outputs or {}).items()}, _OUTPUTS_CAP_CHARS),
-                # B363: from the FULL result, before any cap -- what every decision reads (kb_result).
+                # B372: from the FULL result, before any cap -- what every decision reads (kb_result).
                 "result_digest": result_digest(outputs),
                 "note": note,
             }
             if tool == "link_start" and isinstance(outputs, dict) and isinstance(outputs.get("summary"), str):
-                # B363: the previous link's summary went through _small (200 chars) and was recorded as "<N chars>".
+                # B372: the previous link's summary went through _small (200 chars) and was recorded as "<N chars>".
                 entry["result_digest"]["previous_link_summary"] = outputs["summary"][:_DIGEST_SEED_SUMMARY_CHARS]
             self.entries.append(entry)
             path = _run_config.get("path")
@@ -426,7 +426,7 @@ _MILESTONES = [
 
 
 def _shown_outputs(e: dict) -> dict:
-    """What a record shows an agent: its decision digest first (B363: the fuel, the error code -- fields a capped
+    """What a record shows an agent: its decision digest first (B372: the fuel, the error code -- fields a capped
     reply may have lost), then the rest of its recorded outputs."""
     shown = {k: v for k, v in kb_result(e).items()
              if k not in ("success", "status", "previous_link_summary") and v not in (None, "", {}, [])}

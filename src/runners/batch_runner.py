@@ -953,7 +953,7 @@ def _mission_metrics_from_kb() -> dict | None:
                if (link is None or e.get("chain_link") == link) and (attempt is None or e.get("attempt") == attempt)]
 
     def _metrics(result: dict) -> dict:
-        # B363 (V1): from the entry's uncapped decision digest (kbm.kb_result), which takes run_simulation's metrics
+        # B372 (V1): from the entry's uncapped decision digest (kbm.kb_result), which takes run_simulation's metrics
         # from its summary. The capped outputs lost that summary once the reply grew.
         return {k: float(result[k]) for k in _METRIC_KEYS if isinstance(result.get(k), (int, float))}
 

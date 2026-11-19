@@ -108,12 +108,12 @@ def _state() -> dict | None:
     gs.setdefault("su2", {})                  # su2 session -> {"mesh", "config", "live", "mesh_seq"}
     gs.setdefault("in_flight", {})            # (tool, fp) -> {"agent", "time_utc"}
     gs.setdefault("refused_keys", set())      # (agent, tool) whose one refusal is spent
-    gs.setdefault("geometry_identity", {})    # B363: tigl session -> what its geometry IS (see design_identity)
-    gs.setdefault("export_identity", {})      # B363: sha1 of an exported CPACS file -> the design it was exported from
+    gs.setdefault("geometry_identity", {})    # B372: tigl session -> what its geometry IS (see design_identity)
+    gs.setdefault("export_identity", {})      # B372: sha1 of an exported CPACS file -> the design it was exported from
     return gs
 
 
-# -- B363 (V5): the design's identity is its geometry content ------------------------------------------------------
+# -- B372 (V5): the design's identity is its geometry content ------------------------------------------------------
 #
 # The design fingerprint (coupling_contract.current_design_fingerprint) used to hash the active tigl SESSION, its morph
 # EPOCH and the CPACS file's path / size / mtime. So a morph that changed nothing (set_high_level_parameters with the
@@ -163,11 +163,11 @@ def _base_identity(content_sha: str, gs: dict) -> str:
 
 
 def session_identity(session: Any, gs: dict) -> str:
-    """The design a tigl session holds (B363)."""
+    """The design a tigl session holds (B372)."""
     ident = gs["geometry_identity"].get(session)
     if ident is None:
         # A session the framework never saw opened (cannot happen in a study run: every open_cpacs goes through the
-        # middleware). Its identity is the session itself plus its morph count, as before B363.
+        # middleware). Its identity is the session itself plus its morph count, as before B372.
         return "design:" + _h({"unseen_session": str(session), "epoch": gs["geometry_epoch"].get(session, 0)})
     changed = {uid: shape for uid, shape in sorted(ident["shape"].items())
                if shape != ident["base_shape"].get(uid)}
@@ -177,7 +177,7 @@ def session_identity(session: Any, gs: dict) -> str:
 
 
 def design_identity() -> str:
-    """The identity of the design the disciplines must consume: the active session's geometry (B255, B363)."""
+    """The identity of the design the disciplines must consume: the active session's geometry (B255, B372)."""
     with _LOCK:
         gs = _state()
         if gs is None:
@@ -223,7 +223,7 @@ def _note_export(path: Any, sid: Any, gs: dict) -> None:
 # -- fingerprints (section 3.3) --------------------------------------------------------
 
 def _fp_mesh(tool: str, args: dict, gs: dict) -> str | None:
-    # B363 (V5): the same design is the same geometry (session_identity), not the same session and morph count -- the
+    # B372 (V5): the same design is the same geometry (session_identity), not the same session and morph count -- the
     # one notion of "same design" the coupling contract and the mesh guard use too.
     sid = args.get("session_id")
     return "geo:" + _h({"tool": tool, "design": session_identity(sid, gs),
@@ -344,7 +344,7 @@ def _prior(tool: str, fp: str, gs: dict) -> dict | None:
 
 
 def _prior_not_current(tool: str, gs: dict) -> str | None:
-    """Why an earlier successful call of ``tool`` does NOT count as this design's result, else None (B363, V5).
+    """Why an earlier successful call of ``tool`` does NOT count as this design's result, else None (B372, V5).
 
     One notion of "same design" for the guard and the coupling contract: a producer's re-run (estimate_mass,
     run_su2_solver) is refused only while coupling_contract.status() counts what it produces as current; a mesh only
@@ -429,7 +429,7 @@ def check(tool: str, fp: str | None, agent: str) -> dict | None:
         if prior is not None:
             stale = _prior_not_current(tool, gs)
             if stale:
-                # B363 (V5): the earlier result is not this design's any more (the coupling contract says so, and
+                # B372 (V5): the earlier result is not this design's any more (the coupling contract says so, and
                 # would refuse the mission for it): repeating the call is the fix, not a duplicate. Counted.
                 kb.bump_nested("duplicate_prior_not_current", agent, tool)
                 prior = None
@@ -474,7 +474,7 @@ def check(tool: str, fp: str | None, agent: str) -> dict | None:
         from src.tools.procedures import budget_warning
 
         message += budget_warning(refusals_so_far(agent) + 1)
-        # B363 (V11): result_exists says which refusal this is -- a finished result to use, or a call still running.
+        # B372 (V11): result_exists says which refusal this is -- a finished result to use, or a call still running.
         return {"success": False, "error_code": "ALREADY_DONE", "error": message, "result_exists": prior is not None,
                 "done_by": done_by, "kb_seq": seq, "design_fingerprint": fp}
 
@@ -518,7 +518,7 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
                 gs["geometry_epoch"][sid] = gs["geometry_epoch"].get(sid, 0) + 1
                 if gs["active_design"].get("session") != sid:
                     gs["active_design"] = {"session": sid, "fp": (gs["open_cpacs"].get(sid) or {}).get("fp")}
-            # B363: what the geometry now IS (measured before / after), whatever the epoch says.
+            # B372: what the geometry now IS (measured before / after), whatever the epoch says.
             _observe_geometry_change(tool, args, parsed, sid, gs)
         elif tool == "open_cpacs" and parsed.get("session_id"):
             gs["geometry_epoch"][parsed["session_id"]] = 0
@@ -526,13 +526,13 @@ def observe(tool: str, args: dict, result: Any, status: str, entry: dict | None)
             if fp:
                 gs["open_cpacs"][parsed["session_id"]] = {"fp": fp, "seq": seq}
             gs["active_design"] = {"session": parsed["session_id"], "fp": fp}
-            # B363: the session's identity is the CONTENT it was opened from (an export of this run: that design).
+            # B372: the session's identity is the CONTENT it was opened from (an export of this run: that design).
             content, how = _content_sha(args)
             gs["geometry_identity"][parsed["session_id"]] = {
                 "base": _base_identity(content, gs), "content": content, "identity_basis": how,
                 "base_shape": {}, "shape": {}, "unmeasured": 0}
         elif tool == "export_cpacs":
-            # B363: a file exported from a session holds that session's design; re-opening it is the same design.
+            # B372: a file exported from a session holds that session's design; re-opening it is the same design.
             _note_export(parsed.get("cpacs_file_path") or args.get("output_path"), sid, gs)
         elif tool == "close_cpacs":
             gs["open_cpacs"].pop(args.get("session_id"), None)
