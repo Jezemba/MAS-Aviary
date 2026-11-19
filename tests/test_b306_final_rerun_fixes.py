@@ -185,6 +185,7 @@ def test_an_unusable_baseline_is_not_cached(fresh, monkeypatch, tmp_path):
 
 def _engine_current(fresh, monkeypatch):
     monkeypatch.setattr(dp, "engine_is_current", lambda: True)
+    monkeypatch.setenv("AVION_ENGINE_DECK", "0")     # V10: with the deck on and none attached no scale is set (bench here)
     coupling.put_var(fresh, "prop.fn_lbf", 17113.2, source_tool="run_cycle")
     fresh.sessions["aviary"] = "av"
 

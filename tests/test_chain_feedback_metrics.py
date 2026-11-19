@@ -91,7 +91,7 @@ def test_live_classifier_output_round_trips():
     # sentinels it writes for metrics it could not find (B72).
     ec = classify_aviary_eval({"fuel_burned_kg": 10763.2, "gtow_kg": 74763.7, "wing_mass_kg": 8539.5})
     out = build_quick_metrics(ec.__dict__)
-    assert ec.fuel_pass is False  # band still fails -- classifier untouched
+    assert ec.fuel_pass is True   # V12: the classifier now scores the task requirement (<= 15,000 kg), not the band
     assert "constraint <= 15000: PASS" in out
 
 
