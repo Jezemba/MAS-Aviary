@@ -23,6 +23,25 @@ geometry:
                                        # TEMP deadline settings of 2026-07-30 (B6/B45), which the mesh guard now
                                        # refuses outright (~6.9M estimated cells against a 3M cap).
   mesh_size_max: 12.0
+  # V3/V4 (validation 1, 2026-11-18): the D150 (mass-mcp tests/fixtures/D150_simple.xml) as tigl-mcp 043ba39 MEASURES
+  # it (get_high_level_parameters Wing1 / Fuselage1 and get_fuselage_summary on unmorphed sessions; identical in every
+  # validation-1 link on ws5/ws6/ws8, e.g. ws8 /data/Jessica/final_val/runs/val_net_graph and val_net_iter
+  # tool_calls_attempt1.jsonl). Fuselage = brepbndlib.AddOptimal tight box (B348); wing = full wing, quarter-chord
+  # sweep. The aviary session of a chain's FIRST link (nothing carried yet) starts from these values
+  # (stat_batch_runner BASELINE_PARAMS, rounded to 4 decimals as data_plane's geometry authority applies them) and
+  # the framework's geometry record is seeded with them, so no wing or fuselage value is a hard-coded constant.
+  # Links 2+ start from the carried design, never from these. The prompt tables' Default column is these values
+  # to 4 decimals (tests/test_v1b_validation1_defaults.py).
+  # Superseded: 37.68 / 4.15 / 3.96 and 122.78 / 9.37 (pre-B348 loose box, runner BASELINE_PARAMS until V4).
+  anchor_measured:
+    Aircraft.Wing.AREA: 122.82871858371793
+    Aircraft.Wing.ASPECT_RATIO: 9.363224080853465
+    Aircraft.Wing.SWEEP: 21.65015342508847
+    Aircraft.Wing.TAPER_RATIO: 0.24619376823302655
+    Aircraft.Fuselage.LENGTH: 37.644560994515366
+    Aircraft.Fuselage.MAX_HEIGHT: 4.143709313380411
+    Aircraft.Fuselage.MAX_WIDTH: 3.951781358688922
+  anchor_measured_wing_span_m: 33.91272350701785
 
 # ---- AERODYNAMICS (su2-mcp, port 8200) -------------------------------------
 # Full SU2 numerics, verified end-to-end in run6 (real 155 s converged solve).
@@ -131,7 +150,15 @@ baseline:
   # (the deck's reference_fn_des_lbf). Start 91,197.1 kg / 1.2494328 (the previous values); sized masses 90,814.5,
   # 90,368.2, 90,307.9, 90,299.9, 90,298.8, 90,298.7 kg: converged (change < 1 kg) after 6 iterations.
   # Superseded: 91,197.1 kg / 1.2494328 (9a4e0ac code, before J1/J2/B346).
-  sized_mtom_kg: 90298.7
+  # V7 (validation 1, 2026-11-18): the exact value, not the 0.1 kg rounding 90,298.7 the driver printed. It is
+  # mass-mcp estimate_mass's mTOM_sized_kg for the D150 with THIS file's engine (deck 7815057d, scale
+  # 1.1957967702892787), recorded identically in ws8 /data/Jessica/final_fix/baseline2/results/flights/
+  # B2_coupled_anchor_1 and _2 (design.json / knowledge_base.jsonl) and in every validation-1 link 1 estimate.
+  # iterate_b360/iteration_06.json holds 90,298.65587726487 = the sizing with the PREVIOUS scale 1.1957982 (the
+  # driver then sized the engine at the rounded 90,298.7). Remaining fixed-point residual, recorded not hidden:
+  # Fn_DES at this mass gives scale 1.19579594 (validation-1 S_GR/O_GR link 2), 8.3e-7 below the scale above,
+  # i.e. ~0.008 kg of sized mass; one more live iteration would remove it.
+  sized_mtom_kg: 90298.6425281046
   # The baseline's engine (H5, coordinator 2026-11-18): the deck and SCALE_FACTOR the first iteration's mass estimate
   # and aviary cruise point use (later iterations carry the previous iteration's flown engine). Unset = refused.
   # Deck = pyCycle generate_engine_deck of the canonical cycle (prompt table: BPR 5.105, T4_MAX 2857, T4_TAKEOFF 3540,
@@ -145,3 +172,22 @@ baseline:
   engine_deck_file: deck_7815057d6edc9732.deck
   engine_deck_md5: b1c1e040e4abe82782e47d1ed7666ca8
   engine_scale_factor: 1.1957967702892787
+
+# ---- EVALUATION (V12, validation 1, 2026-11-18) -----------------------------
+# result.json eval_classification scored every link against the 2026-07-28 SLSQP optimum (fuel 12,612.8 kg /
+# GTOW 73,705.4 kg, an older aircraft and mission model), so every link was omission/commission. A link is now scored
+# against the task's own requirements, as every prompt states them ("Objective: Minimize fuel burn <= 15,000 kg";
+# "Constraint: Gross Takeoff Weight (GTOW) <= 90,000 kg"): success = the mission flew and both hold. The final
+# study's coupled baseline is the reference the result is reported against (signed %, no verdict): the D150 flown
+# through the final coupled chain, ws8 /data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_1.json
+# (get_results; _2 identical). Note: the baseline itself meets neither requirement (15,719.18 kg, 90,310.01 kg).
+evaluation:
+  requirements:
+    fuel_burned_kg: 15000.0
+    gtow_kg: 90000.0
+  baseline_reference:
+    fuel_burned_kg: 15719.17609579942
+    gtow_kg: 90310.00549723483
+    wing_mass_kg: 7958.785892400294
+    reserve_fuel_kg: 1360.77711
+    zero_fuel_weight_kg: 73230.05229143542

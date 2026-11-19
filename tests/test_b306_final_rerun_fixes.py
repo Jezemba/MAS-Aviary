@@ -80,10 +80,11 @@ def test_the_shipped_canonical_baseline_is_the_measured_fixed_point():
     from src.config.canonical import load_canonical
 
     base = load_canonical().get("baseline") or {}
-    assert base.get("sized_mtom_kg") == 90298.7
+    assert base.get("sized_mtom_kg") == 90298.6425281046     # V7: exact (was the rounded 90,298.7)
     assert str(base.get("engine_deck_file")).endswith("deck_7815057d6edc9732.deck")
     assert base.get("engine_scale_factor") == pytest.approx(7055.200944706744 / 5900.0, rel=1e-9)
-    # Fn_DES from the shipped mass and aviary's FLOPS cruise L/D 17.64234686 (iteration 6) gives the shipped scale.
+    # Fn_DES from the mass the scale was sized at (iteration 6 cruise point, 90,298.7) and aviary's FLOPS cruise L/D
+    # 17.64234686 gives the shipped scale (V7: the shipped mass is the exact estimate WITH this scale, 0.06 kg below).
     assert coupling.fn_des_from_lift_to_drag(90298.7, 17.642346861284835) / 5900.0 == pytest.approx(
         base["engine_scale_factor"], rel=1e-9)
 
@@ -184,6 +185,7 @@ def test_an_unusable_baseline_is_not_cached(fresh, monkeypatch, tmp_path):
 
 def _engine_current(fresh, monkeypatch):
     monkeypatch.setattr(dp, "engine_is_current", lambda: True)
+    monkeypatch.setenv("AVION_ENGINE_DECK", "0")     # V10: with the deck on and none attached no scale is set (bench here)
     coupling.put_var(fresh, "prop.fn_lbf", 17113.2, source_tool="run_cycle")
     fresh.sessions["aviary"] = "av"
 
@@ -437,7 +439,7 @@ _MEASURED = {  # TiGL on D150_simple.xml (ws8 tigl-env, tigl-mcp _measure / _fus
     ("Wing1", "area"): "122.8287", ("Wing1", "aspect_ratio"): "9.3632",
     ("Wing2H", "area"): "31.1184", ("Wing2H", "aspect_ratio"): "4.9810",
     ("Wing3V", "area"): "21.5", ("Wing3V", "aspect_ratio"): "1.6069",
-    ("Fuselage1", "length"): "37.6843", ("Fuselage1", "diameter"): "4.1490",
+    ("Fuselage1", "length"): "37.6446", ("Fuselage1", "diameter"): "4.1437",   # V3: tigl-mcp 043ba39 (B348 tight box)
 }
 _SET_ROW = re.compile(r"\| Set \| tigl: `set_high_level_parameters`, [^|]*`(\w+)`, key `(\w+)` \| [^|]* \| ([^|]+) \|")
 

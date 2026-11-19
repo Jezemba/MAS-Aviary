@@ -12,6 +12,22 @@ from src.logging.eval_classifier import (
     load_aviary_thresholds,
 )
 
+import pytest
+
+import src.logging.eval_classifier as _ec
+
+# V12 (validation 1): the shipped default scores the task's requirements (fuel <= 15,000 kg, GTOW <= 90,000 kg) against
+# the coupled baseline (tests/test_v1b_validation1_defaults.py). These tests exercise the +/- band mode, which a
+# thresholds object without limits still uses: they run with the band around the same reference.
+_LEGACY_BAND = AviaryEvalThresholds(reference=dict(_ec.DEFAULT_AVIARY_THRESHOLDS.reference),
+                                   max_deviation_pct=10.0, converged_required=True)
+DEFAULT_AVIARY_THRESHOLDS = _LEGACY_BAND
+
+
+@pytest.fixture(autouse=True)
+def _band_mode(monkeypatch):
+    monkeypatch.setattr(_ec, "DEFAULT_AVIARY_THRESHOLDS", _LEGACY_BAND)
+
 # ---- Thresholds loading ----------------------------------------------------
 
 

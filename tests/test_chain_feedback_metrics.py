@@ -42,7 +42,7 @@ def test_b71_satisfied_constraint_outside_band_reports_pass():
     fuel = _line(out, "fuel_burned_kg")
     assert "constraint <= 15000: PASS" in fuel
     assert "FAIL" not in fuel
-    assert "14.7% below the F25 reference 12612.8" in fuel
+    assert "31.5% below the coupled baseline 15719.2" in fuel     # V12: the final study's coupled baseline
 
 
 def test_real_violations_still_report_fail():
@@ -91,7 +91,7 @@ def test_live_classifier_output_round_trips():
     # sentinels it writes for metrics it could not find (B72).
     ec = classify_aviary_eval({"fuel_burned_kg": 10763.2, "gtow_kg": 74763.7, "wing_mass_kg": 8539.5})
     out = build_quick_metrics(ec.__dict__)
-    assert ec.fuel_pass is False  # band still fails -- classifier untouched
+    assert ec.fuel_pass is True   # V12: the classifier now scores the task requirement (<= 15,000 kg), not the band
     assert "constraint <= 15000: PASS" in out
 
 

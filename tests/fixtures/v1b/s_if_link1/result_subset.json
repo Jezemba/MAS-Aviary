@@ -1,0 +1,16 @@
+{
+ "chain_end_params": {
+  "Aircraft.Wing.AREA": 122.8287,
+  "Aircraft.Wing.ASPECT_RATIO": 9.3632,
+  "Aircraft.Wing.SWEEP": 21.6502,
+  "Aircraft.Wing.TAPER_RATIO": 0.2462,
+  "Aircraft.Fuselage.LENGTH": 37.6446,
+  "Aircraft.Fuselage.MAX_HEIGHT": 4.1437,
+  "Aircraft.Fuselage.MAX_WIDTH": 3.9518,
+  "Aircraft.Engine.SCALE_FACTOR": 1.1957967702892713
+ },
+ "chain_cpacs_out": "/data/Jessica/final_val/runs/val_seq_iter/MAS-Aviary/logs/stat_results/val_seq_iter/repeat_000/mdo_f25_sequential_iterative_feedback/geometry_end.xml",
+ "chain_cpacs_in": null,
+ "chain_link": 0,
+ "combo_name": null
+}

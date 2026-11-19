@@ -42,11 +42,18 @@ _AVIARY_ISSUE_KEYWORDS = {"RETRY", "CONTINUE", "FAILED"}
 
 @dataclass
 class AviaryEvalThresholds:
-    """Aviary evaluation thresholds — 5 output metrics vs reference benchmark."""
+    """Aviary evaluation thresholds.
+
+    ``limits`` (V12): upper limits the task states (fuel <= 15,000 kg, GTOW <= 90,000 kg). When set, a metric with a
+    limit passes when it is at or below it; metrics without a limit are recorded, not scored; ``reference`` is the
+    final study's coupled baseline, reported as a signed difference. Without limits (an old thresholds file) the
+    legacy +/- max_deviation_pct band around ``reference`` applies.
+    """
 
     reference: dict[str, float]
     max_deviation_pct: float
     converged_required: bool
+    limits: dict[str, float] | None = None
 
 
 def load_aviary_thresholds(
@@ -65,21 +72,24 @@ def load_aviary_thresholds(
     )
 
 
-# DLR-F25 reference optimum — from aviary-mcp/run_reference_benchmark.py (SLSQP,
-# 2026-07-28): 2500 nmi / 239 pax / M0.78 / FL330. Replaces a leftover A320-class
-# reference (fuel 7000.65 / gtow 67365.86) that scored combos against the wrong aircraft.
-# ZFW = gross_mass - fuel_burned - reserve_fuel = 73705.42 - 12612.80 - 1360.78.
-DEFAULT_AVIARY_THRESHOLDS = AviaryEvalThresholds(
-    reference={
-        "fuel_burned_kg": 12612.80,
-        "gtow_kg": 73705.42,
-        "wing_mass_kg": 7975.44,
-        "reserve_fuel_kg": 1360.78,
-        "zero_fuel_weight_kg": 59731.84,
-    },
-    max_deviation_pct=10.0,
-    converged_required=True,
-)
+def study_thresholds() -> AviaryEvalThresholds:
+    """V12: the task's requirements and the final study's coupled baseline (canonical ``evaluation``).
+
+    Replaces the 2026-07-28 SLSQP reference (fuel 12,612.80 / GTOW 73,705.42 / wing 7,975.44 / reserve 1,360.78 /
+    ZFW 59,731.84 kg, scored as a +/-10 % band), which made every link of the final study omission/commission. Raises
+    when the canonical file lacks the section: there is no fallback reference.
+    """
+    from src.config.canonical import load_canonical
+
+    ev = load_canonical().get("evaluation") or {}
+    limits = {k: float(v) for k, v in (ev.get("requirements") or {}).items()}
+    reference = {k: float(v) for k, v in (ev.get("baseline_reference") or {}).items()}
+    if not limits or not reference:
+        raise ValueError("canonical evaluation.requirements / baseline_reference missing: no evaluation reference")
+    return AviaryEvalThresholds(reference=reference, max_deviation_pct=10.0, converged_required=True, limits=limits)
+
+
+DEFAULT_AVIARY_THRESHOLDS = study_thresholds()
 
 
 @dataclass
@@ -171,11 +181,18 @@ def classify_aviary_eval(
                                                   else "no fuel result and Aviary did not converge")),
         )
 
-    # Extract metrics and check deviation from reference.
-    # None means "metric not extracted" — skip that metric in pass/fail.
+    # Extract metrics and check them. None means "metric not extracted".
     def _check(name: str) -> tuple[float, bool, bool]:
         """Returns (actual_value, passed, was_found)."""
         raw = eval_result.get(name)
+        if t.limits is not None:
+            # V12: the task's requirements. A required metric that was not measured does not pass (no silent
+            # default); a metric without a requirement is recorded, not scored.
+            limit = t.limits.get(name)
+            if raw is None:
+                return 0.0, limit is None, False
+            actual = float(raw)
+            return actual, (limit is None or actual <= limit), True
         if raw is None:
             return 0.0, True, False  # Missing → skip (don't penalise)
         actual = float(raw)
@@ -212,7 +229,7 @@ def classify_aviary_eval(
             wing_mass_pass=True,
             reserve_fuel_pass=True,
             zero_fuel_weight_pass=True,
-            reason="All metrics within thresholds" + _warning,
+            reason=("All task requirements met" if t.limits is not None else "All metrics within thresholds") + _warning,
         )
 
     # Failed — determine omission vs commission.
@@ -224,8 +241,17 @@ def classify_aviary_eval(
         ("reserve_fuel_kg", reserve, reserve_pass, reserve_found),
         ("zero_fuel_weight_kg", zfw, zfw_pass, zfw_found),
     ]:
-        if not passed and found:
-            ref = t.reference.get(name, 0.0)
+        if passed:
+            continue
+        ref = t.reference.get(name, 0.0)
+        if t.limits is not None:
+            limit = t.limits.get(name)
+            if not found:
+                failed.append(f"{name} not measured (requirement <= {limit:g})")
+                continue
+            vs = f"; {(actual - ref) / ref * 100.0:+.2f}% vs the coupled baseline {ref:.1f}" if ref else ""
+            failed.append(f"{name} {actual:.1f} > requirement {limit:g}{vs}")
+        elif found:
             dev = abs(actual - ref) / ref * 100.0 if ref else 0.0
             failed.append(f"{name} {actual:.1f} ({dev:.1f}% from ref {ref:.1f})")
     detail = "; ".join(failed)

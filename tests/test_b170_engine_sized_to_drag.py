@@ -73,6 +73,7 @@ def test_without_aviarys_cruise_point_no_thrust_is_assumed_and_an_agent_value_do
 
 
 def test_aviary_gets_pycycles_thrust_as_engine_scale(monkeypatch):
+    monkeypatch.setenv("AVION_ENGINE_DECK", "0")     # V10: the bench reference is for the bench engine (no deck)
     _seed(ld=14.1, fn=11872.0, monkeypatch=monkeypatch)
     resolved = resolve_request("set_aircraft_parameters", {"session_id": "a", "parameters": {
         "Aircraft.Engine.SCALE_FACTOR": 1.0}})

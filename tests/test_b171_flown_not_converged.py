@@ -63,7 +63,9 @@ def test_did_not_fly_is_sim_fail():
 
 def test_unextracted_fuel_keeps_the_old_rule():
     assert classify_aviary_eval({"gtow_kg": 79560.1}, converged=False).result == "sim_fail"
-    assert classify_aviary_eval({"gtow_kg": 73705.42}, converged=True).result == "success"
+    # V12: with the task requirements a flight whose fuel was not extracted cannot meet "fuel <= 15,000 kg".
+    unextracted = classify_aviary_eval({"gtow_kg": 73705.42}, converged=True)
+    assert unextracted.result == "omission" and "fuel_burned_kg not measured" in unextracted.reason
 
 
 def test_stage_completion_uses_the_recorded_result_not_the_word_failed():

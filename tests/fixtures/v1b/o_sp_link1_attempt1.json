@@ -1,0 +1,38 @@
+{
+ "agent_runs_attempt1": [
+  "orchestrator",
+  "geometry_engineer",
+  "orchestrator",
+  "aerodynamics_analyst",
+  "orchestrator",
+  "orchestrator",
+  "orchestrator",
+  "orchestrator",
+  "orchestrator",
+  "orchestrator",
+  "aerodynamics_analyst",
+  "orchestrator",
+  "structures_analyst",
+  "orchestrator",
+  "structures_analyst",
+  "orchestrator",
+  "propulsion_analyst",
+  "orchestrator",
+  "propulsion_analyst"
+ ],
+ "v14_call": {
+  "tool": "set_high_level_parameters",
+  "args": {
+   "session_id": "00a81de3-7c2a-4628-ae8f-56bfeb299767",
+   "component_uid": "Wing1",
+   "updates": {
+    "area": 122.8287,
+    "aspect_ratio": 9.3632,
+    "sweep_angle": 21.65
+   }
+  },
+  "result": "Error calling tool 'set_high_level_parameters': Unknown session_id '00a81de3-7c2a-4628-ae8f-56bfeb299767'"
+ },
+ "aviary_session": "00a81de3-7c2a-4628-ae8f-56bfeb299767",
+ "tigl_session_opened_after": "c78c4b4c-8a21-4055-8983-2d822a8d8abc"
+}

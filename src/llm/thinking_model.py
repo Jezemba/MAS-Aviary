@@ -318,6 +318,23 @@ def _find_tool_call_json(
     raise ValueError("The model output does not contain any JSON blob.")
 
 
+def _meter_local_generation(message) -> None:
+    """V8 (B215/C9): count one local generation (prompt + output tokens) in the run's token meter.
+
+    Every generation of every agent and peer thread goes through ThinkingModel._generate_once (parse retries too:
+    they are real generations), so result.json total_tokens is the link's real token use for all 8 combinations.
+    A reply without token_usage is counted as a call with 0 tokens and logged, never guessed.
+    """
+    from src.llm.cost_meter import METER
+
+    usage = getattr(message, "token_usage", None)
+    prompt = getattr(usage, "input_tokens", None)
+    output = getattr(usage, "output_tokens", None)
+    if prompt is None or output is None:
+        logger.warning("[V8] a local generation reported no token usage; counted as a call with 0 tokens")
+    METER.record_local(prompt or 0, output or 0)
+
+
 class ThinkingModel(TransformersModel):
     """TransformersModel subclass with think-block stripping, robust parsing,
     and CMU-style reliability patterns (retry + strict schemas).
@@ -555,16 +572,19 @@ class ThinkingModel(TransformersModel):
             if response_format is not None:
                 # Same refusal as TransformersModel: batching must not silently drop it.
                 raise ValueError("Transformers does not support structured outputs, use VLLMModel for this.")
-            return submit(self, msgs, stop_sequences=stop_sequences,
-                          tools_to_call_from=tools_to_call_from,
-                          thinking=self._thinking_for_call(), **kwargs)
-        return super().generate(
-            msgs,
-            stop_sequences=stop_sequences,
-            response_format=response_format,
-            tools_to_call_from=tools_to_call_from,
-            **kwargs,
-        )
+            message = submit(self, msgs, stop_sequences=stop_sequences,
+                             tools_to_call_from=tools_to_call_from,
+                             thinking=self._thinking_for_call(), **kwargs)
+        else:
+            message = super().generate(
+                msgs,
+                stop_sequences=stop_sequences,
+                response_format=response_format,
+                tools_to_call_from=tools_to_call_from,
+                **kwargs,
+            )
+        _meter_local_generation(message)
+        return message
 
     # -- B80 prompt budget -----------------------------------------------------
 

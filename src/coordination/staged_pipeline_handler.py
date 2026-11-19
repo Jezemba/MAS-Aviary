@@ -168,6 +168,8 @@ class StagedPipelineHandler(ExecutionHandler):
         # strategy turn with a single assignment).
         self._stage_cursor: int = 0
         self._previous_outputs: list[tuple[str, str, CompletionResult]] = []
+        # V6: names of the stages whose agent has run in this link (the synthetic TASK_COMPLETE needs all of them).
+        self._stages_run: set[str] = set()
 
         # Pre-hook session_id — when set, Stage 1 (mission_architect) is
         # skipped because the session already exists with mission configured.
@@ -219,6 +221,7 @@ class StagedPipelineHandler(ExecutionHandler):
         )
         self._previous_outputs.append(("mission_architect", pre_output, result))
         self._stage_cursor = 1  # skip Stage 1
+        self._stages_run.add("mission_architect")      # V6: the pre-hook did its work
 
     # ------------------------------------------------------------------
     # ExecutionHandler interface
@@ -254,6 +257,7 @@ class StagedPipelineHandler(ExecutionHandler):
         original_task = assignments[0].task if assignments else ""
 
         num_stages = len(pipeline.stages)
+        _stage_by_name = {s.name: s for s in pipeline.stages}
 
         # Reorder assignments to pair each stage with its same-named
         # agent when possible. Order-based pairing was the cause of
@@ -295,7 +299,10 @@ class StagedPipelineHandler(ExecutionHandler):
             # Use persistent cursor so stage advances across execute() calls.
             idx = self._stage_cursor + assign_idx
             turn += 1
-            stage: StageDefinition | None = pipeline.stages[idx] if idx < num_stages else None
+            # V6: a stage is its agent's own (by name) -- a repeated assignment no longer takes the NEXT stage's
+            # name and criteria; an agent with no stage of its name keeps the positional one as before.
+            stage: StageDefinition | None = (_stage_by_name.get(assignment.agent_name)
+                                             or (pipeline.stages[idx] if idx < num_stages else None))
 
             # Early-exit: if the incoming context already signals task
             # completion (e.g. task_complete written to the blackboard by
@@ -421,6 +428,8 @@ class StagedPipelineHandler(ExecutionHandler):
             kb_start = len(_kb.entries) if _kb is not None else None
             start = time.monotonic()
             try:
+                # V6: the stage this agent ran (its own stage by name, else the positional one)
+                self._stages_run.add(stage.name if stage is not None else assignment.agent_name)
                 raw_result = agent.run(context)
                 content = str(raw_result) if raw_result is not None else ""
             except Exception as e:
@@ -512,7 +521,12 @@ class StagedPipelineHandler(ExecutionHandler):
         # If all pipeline stages are done, append TASK_COMPLETE to the
         # last message so the strategy's is_complete() detects termination.
         pipeline = self._resolve_pipeline()
-        if self._stage_cursor >= len(pipeline.stages) and messages:
+        # V6 (validation 1, O_SP link 1 attempt 1): the cursor advances once per ASSIGNMENT, and an orchestrator that
+        # assigns a stage twice (aero 6x, structures 2x, propulsion 2x) pushed it past the last stage after propulsion.
+        # The handler then wrote TASK_COMPLETE into the propulsion analyst's reply and the link ended before
+        # mission_architect (already queued) ran: zero fuel, retry, 18.6 min lost. The keyword is now written only when
+        # every stage of the pipeline has actually run.
+        if self._stage_cursor >= len(pipeline.stages) and messages and self.all_stages_ran():
             last_msg = messages[-1]
             if self._termination_keyword and self._termination_keyword not in last_msg.content:
                 last_msg.content += f"\n{self._termination_keyword}"
@@ -525,6 +539,11 @@ class StagedPipelineHandler(ExecutionHandler):
     # ------------------------------------------------------------------
     # Public accessors (for metrics)
     # ------------------------------------------------------------------
+
+    def all_stages_ran(self) -> bool:
+        """V6: True when every stage of the pipeline has had its agent run in this link (or done by the pre-hook)."""
+        pipeline = self._resolve_pipeline()
+        return all(s.name in self._stages_run for s in pipeline.stages)
 
     @property
     def last_stage_results(self) -> list[StageResult]:
