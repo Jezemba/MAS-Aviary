@@ -520,3 +520,123 @@ def test_b361_three_peers_size_the_engine_at_once(link):
     assert len(sent) == 3 and all(v is not None and _close(v, fn_des) for v in sent), sent
     # The point was asked once for the design (the peers that waited reused it), not once per peer.
     assert len(link.sent("get_cruise_point")) == 1, link.sent("get_cruise_point")
+
+
+# -- B363 (V1): the graph-routed links must REACH THE INTEGRATOR with the real-size replies ---------------------------
+#
+# The recorded run_simulation reply above is the real one (~4.5 kB: engine, climb_start, residuals, constraints,
+# overridden outputs, then summary). B361's links flew it, but nothing here routed on what the knowledge base recorded:
+# the graph router read the fuel from the capped record, never saw a flight, and validation 1's S_GR / O_GR looped
+# mission <-> simulation until the budget (V1). These run the REAL graph handler / board graph on the KB the real
+# middleware wrote.
+
+class GraphAgent:
+    """A graph node's agent: its stage, run against the wrapped fake tools, and its final text."""
+
+    def __init__(self, name, servers, stage, text="DESIGN_STATE: done"):
+        self.name, self.description, self.tools = name, f"ROLE: {name.upper()}", {}
+        self.servers, self.stage, self.text, self.calls = servers, stage, text, []
+
+    def run(self, context):
+        self.calls.append(context)
+        with agent_scope(self.name, self.name):
+            self.stage(self.servers)
+        return self.text
+
+
+def _prepared(s):
+    """What graph pre-init prepares before the SIMPLE walk: geometry, SU2, mass and the sized engine."""
+    for agent, stage in (("geometry", geometry), ("aero", aero), ("structures", structures),
+                         ("propulsion", propulsion)):
+        run_as(agent, stage, s)
+
+
+def _set_mission(s):
+    s.set_reply = call(s, "set_aircraft_parameters", session_id=s.aviary_sid, parameters={})
+
+
+def _fly(s):
+    s.sim = call(s, "run_simulation", session_id=s.aviary_sid, timeout_seconds=600)
+    s.results = call(s, "get_results", session_id=s.aviary_sid)
+
+
+def _graph_agents(s):
+    from src.coordination import graph_router as gr
+
+    return {gr.MISSION: GraphAgent(gr.MISSION, s, _set_mission),
+            gr.SIMULATION: GraphAgent(gr.SIMULATION, s, _fly),
+            gr.REVIEW: GraphAgent(gr.REVIEW, s, lambda _s: None, "VERDICT: COMPLETE")}
+
+
+def _assert_the_recorded_flight_is_seen(s):
+    from src.coordination import graph_router as gr
+
+    reply = s.replies["run_simulation"]
+    assert len(json.dumps(reply)) > kbm._OUTPUTS_CAP_CHARS                      # the real size
+    rec = [e for e in kbm.get_kb().entries if e["tool"] == "run_simulation"][-1]
+    assert rec["result_digest"]["fuel_burned_kg"] == reply["summary"]["fuel_burned_kg"]
+    assert gr._flown(rec) == reply["summary"]["fuel_burned_kg"]
+
+
+def _graph_env(monkeypatch):
+    from src.coordination import prompt_assembly
+
+    monkeypatch.setattr(prompt_assembly, "read_carry_over", lambda: None)
+    monkeypatch.setattr(prompt_assembly, "read_design_json_text", lambda: None)
+
+
+def test_b363_sequential_graph_link_reaches_the_integrator(link, monkeypatch):
+    from src.coordination import conditional_graph_handler as h_mod
+    from src.coordination import graph_router as gr
+    from src.coordination.execution_handler import Assignment
+
+    _graph_env(monkeypatch)
+    _prepared(link)
+    handler = h_mod.ConditionalGraphHandler({"preinit": False})
+    msgs = handler.execute([Assignment(agent_name=gr.MISSION, task="T")], _graph_agents(link), None)
+    path = [(r["node"], r["rule"]) for r in handler.route_log]
+    assert path == [(gr.MISSION, "flow"), (gr.SIMULATION, "flow"), (gr.REVIEW, "complete")], handler.route_log
+    assert msgs[-1].metadata["graph_stop_reason"] == "complete"
+    assert_engine_sized_and_mission_flown(link)
+    _assert_the_recorded_flight_is_seen(link)
+
+
+def test_b363_orchestrated_graph_link_reaches_the_integrator(link, monkeypatch):
+    from types import SimpleNamespace
+
+    from src.coordination import conditional_graph_handler as h_mod
+    from src.coordination import graph_router as gr
+    from src.coordination.execution_handler import Assignment
+
+    _graph_env(monkeypatch)
+    _prepared(link)
+    meta = {"assigned_tasks": {}, "system_text": "", "inbox": {}, "assignments": [],
+            "orchestrator_name": "orchestrator", "ask_orchestrator": lambda sender, message: None}
+    agents = dict(_graph_agents(link), orchestrator=SimpleNamespace(tools={}))
+    handler = h_mod.ConditionalGraphHandler({"preinit": False, "worker_input": "as_given", "decider": "orchestrator"})
+    msgs = handler.execute([Assignment(agent_name=gr.MISSION, task="")], agents, None, action_metadata=meta)
+    path = [(r["node"], r["rule"]) for r in handler.route_log]
+    assert path == [(gr.MISSION, "flow"), (gr.SIMULATION, "flow"), (gr.REVIEW, "complete")], handler.route_log
+    assert msgs[-1].metadata["graph_stop_reason"] == "complete"
+    _assert_the_recorded_flight_is_seen(link)
+
+
+def test_b363_networked_graph_board_completes_on_the_flight(link):
+    """Networked graph: the board graph posts no 'did not fly' suggestion after the flight, and the integrator's
+    COMPLETE ends the link."""
+    from src.coordination.blackboard import Blackboard
+    from src.coordination.board_graph import BoardGraph
+    from src.tools import recommendation_tools as rt
+
+    _prepared(link)
+    board = Blackboard(claiming_mode="hard")
+    bg = BoardGraph(board, preinit=False)
+    bg.start(None)
+    run_as("peer_3", _set_mission, link)
+    run_as("peer_3", _fly, link)
+    assert bg.step() is True
+    assert not [e for e in bg.log if e.get("event") == "suggestion"], bg.log
+    _assert_the_recorded_flight_is_seen(link)
+    with agent_scope("mdo_integrator", "mdo_integrator"):
+        rt.RecordRecommendation().forward("COMPLETE")
+    assert bg.step() is False and bg.stop_reason == "the integrator recorded the verdict COMPLETE"

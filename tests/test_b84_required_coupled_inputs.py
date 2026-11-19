@@ -80,12 +80,21 @@ def _everything_ran():
 
 
 def _morph_the_geometry():
-    """Bump the B81 geometry epoch the way set_high_level_parameters does."""
-    from src.tools.duplicate_guard import _state as guard_state
+    """A morph that changes the wing, observed the way the middleware does (B363: the design is the geometry's content
+    -- tigl's measured before / after -- not the morph count, so the epoch alone no longer moves it)."""
+    import json as _json
 
-    gs = guard_state()
+    from src.tools import duplicate_guard as dg
+
+    gs = dg._state()
     assert gs is not None, "the knowledge base must be configured for the fingerprint to move"
-    gs["geometry_epoch"]["tigl-1"] = gs["geometry_epoch"].get("tigl-1", 0) + 1
+    if "tigl-1" not in gs["geometry_identity"]:
+        dg.observe("open_cpacs", {"source_type": "xml_string", "source": "<cpacs>D150</cpacs>"},
+                   _json.dumps({"session_id": "tigl-1"}), "success", {"seq": 1})
+    n = len(gs["geometry_identity"]["tigl-1"]["shape"].get("Wing1") or {}) + gs["geometry_epoch"].get("tigl-1", 0)
+    dg.observe("set_high_level_parameters", {"session_id": "tigl-1", "component_uid": "Wing1"},
+               _json.dumps({"geometry_morph": {"rebuilt": True, "before": {"span": 33.9 + n},
+                                               "after": {"span": 34.9 + n}}}), "success", {"seq": 2})
 
 
 def _call(tool, **params):
