@@ -58,14 +58,88 @@ SOURCES_20261112 = [
 # the 2026-11-12 copy (already finished then), the two networked runs from /data/avion_study/code, console logs in logs/.
 L20_FINAL = Path("/data/Jessica/l20_final")
 SOURCES_FINAL = [(ds, L20_FINAL / "runs" / root.name, combos) for ds, root, combos in SOURCES_20261112]
-STUDIES = {"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, "final": SOURCES_FINAL}
+# The 2-iteration validation of the final pinned code (MAS-Aviary 140865a, 2026-11-18;
+# .claude/planning/FINAL_RERUN_VALIDATION1_2026-11-18.md). On aipexws8: the ws8 runs in place, the ws5 / ws6 runs as the
+# ws8 copies made by the validation check, the ws3 run (S_IF) as its ws8 copy. O_IF and N_IF were still running when
+# copied/checked (link 2 partial; extract_link marks a link without result.json by run_status).
+FINAL_VAL = Path("/data/Jessica/final_val")
+_VAL_COPIES = FINAL_VAL / "analysis_check" / "copies"
+
+
+def _launcher_results(base: Path, tag: str) -> Path:
+    """A run tag's stat_results folder in the final launch layout: <base>/runs/<tag>/MAS-Aviary/logs/stat_results/<tag>."""
+    return base / "runs" / tag / "MAS-Aviary" / "logs" / "stat_results" / tag
+
+
+SOURCES_FINAL_VAL = [
+    ("val_seq_staged", _launcher_results(_VAL_COPIES / "ws5", "val_seq_staged"), ["mdo_f25_sequential_staged_pipeline"]),
+    ("val_seq_iter", _launcher_results(FINAL_VAL / "ws3_copy", "val_seq_iter"),
+     ["mdo_f25_sequential_iterative_feedback"]),
+    ("val_seq_graph", _launcher_results(_VAL_COPIES / "ws5", "val_seq_graph"), ["mdo_f25_sequential_graph_routed"]),
+    ("val_orch_staged", _launcher_results(_VAL_COPIES / "ws6", "val_orch_staged"),
+     ["mdo_f25_orchestrated_staged_pipeline"]),
+    ("val_orch_iter", _launcher_results(_VAL_COPIES / "ws6", "val_orch_iter"),
+     ["mdo_f25_orchestrated_iterative_feedback"]),
+    ("val_orch_graph", _launcher_results(FINAL_VAL, "val_orch_graph"), ["mdo_f25_orchestrated_graph_routed"]),
+    ("val_net_iter", _launcher_results(FINAL_VAL, "val_net_iter"), ["mdo_f25_networked_iterative_feedback"]),
+    ("val_net_graph", _launcher_results(FINAL_VAL, "val_net_graph"), ["mdo_f25_networked_graph_routed"]),
+]
+
+# The final 20-iteration run: a placeholder until launch. Its root is given at analysis time with
+# LINK20_FINAL_RERUN_ROOT (the folder holding the run tags, e.g. /data/Jessica/final_run or the copy of the runs
+# on aipexws8); the run tags and combinations are discovered there. Unset or empty: the study is refused.
+FINAL_RERUN_ROOT_ENV = "LINK20_FINAL_RERUN_ROOT"
+
+
+def discover_sources(root: Path) -> list:
+    """(dataset, stat_results folder, combinations) for every run tag under root, in the launcher layout
+    (<root>/runs/<tag>/MAS-Aviary/logs/stat_results/<tag>, or <root>/<tag>/MAS-Aviary/logs/stat_results/<tag>) or as
+    plain stat_results folders (<root>/<tag>/repeat_*/<combination>, the l20_final copy layout)."""
+    root = Path(root)
+    found = {}
+    patterns = ("runs/*/MAS-Aviary/logs/stat_results/*", "*/MAS-Aviary/logs/stat_results/*", "runs/*", "*")
+    candidates = [p for pat in patterns
+                  for p in sorted(root.glob(pat)) if p.is_dir()]
+    for d in candidates:
+        combos = sorted({c.name for c in d.glob("repeat_*/mdo_f25_*") if c.is_dir()})
+        if combos and d.name not in found:
+            found[d.name] = (d.name, d, combos)
+    return list(found.values())
+
+
+def _final_rerun_sources() -> list:
+    root = os.environ.get(FINAL_RERUN_ROOT_ENV)
+    if not root:
+        raise SystemExit(f"Study 'final_rerun' needs {FINAL_RERUN_ROOT_ENV} = the final run's root folder (set at launch).")
+    sources = discover_sources(Path(root))
+    if not sources:
+        raise SystemExit(f"{FINAL_RERUN_ROOT_ENV}={root}: no run folder with repeat_*/mdo_f25_* found.")
+    return sources
+
+
+class _Studies(dict):
+    """Study name -> sources. A callable entry (the final run's placeholder) is resolved when it is read."""
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        return value() if callable(value) else value
+
+
+STUDIES = _Studies({"20261028": SOURCES_20261028, "20261112": SOURCES_20261112, "final": SOURCES_FINAL,
+                    "final_val": SOURCES_FINAL_VAL, "final_rerun": _final_rerun_sources})
 # Each study's own baseline mission (the unchanged anchor design, flown once): report scripts compare against this.
 # 20261028: flown 2026-10-22 (~/Jessica/avion_analysis/baseline/baseline_run1.json); re-run: flown 2026-11-12
 # (/data/Jessica/l20_20261112/baseline/baseline_run1.json), same anchor and mission, aviary-mcp a5ef294.
 # A new study needs its own entry here (and in STUDIES); nothing falls back to another study's baseline.
 _BASE_OLD = {"fuel_kg": 18197.0, "gtow_kg": 91660.6, "wing_mass_kg": 8815.2}
 _BASE_NEW = {"fuel_kg": 16390.5, "gtow_kg": 89682.6, "wing_mass_kg": 8664.2}
-BASELINES = {"20261028": _BASE_OLD, "20261112": _BASE_NEW, "final": _BASE_NEW}
+# The final pinned code's coupled baseline (B1 decision: the unchanged anchor flown through the coupled chain), flown
+# twice bit-identically on 2026-11-18: ws8 /data/Jessica/final_fix/baseline2/results/flights/B2_coupled_anchor_{1,2}.json
+# (fuel 15,719.1761 kg, GTOW 90,310.0055 kg, wing 7,958.79 kg, converged). The final run uses the same pinned code;
+# if its pins change, re-fly the baseline and give final_rerun its own entry.
+_BASE_FINAL_CODE = {"fuel_kg": 15719.18, "gtow_kg": 90310.01, "wing_mass_kg": 7958.8}
+BASELINES = {"20261028": _BASE_OLD, "20261112": _BASE_NEW, "final": _BASE_NEW,
+             "final_val": _BASE_FINAL_CODE, "final_rerun": _BASE_FINAL_CODE}
 # Baseline values above are rounded to 0.1 kg; a baseline mission file must agree to within this.
 BASELINE_FILE_TOL_KG = 0.05
 
@@ -98,8 +172,16 @@ def __getattr__(name: str):
 
 
 def baseline_fuel_from_file(path: Path) -> float:
-    """The fuel of a baseline mission file written by baseline_mission.py."""
-    return float(json.loads(Path(path).read_text())["run_simulation"]["summary"]["fuel_burned_kg"])
+    """The fuel of a baseline mission file: baseline_mission.py's (run_simulation.summary.fuel_burned_kg) or the
+    coupled-baseline driver's flight record (top-level fuel_burned_kg, refused unless it converged)."""
+    doc = json.loads(Path(path).read_text())
+    if "run_simulation" in doc:
+        return float(doc["run_simulation"]["summary"]["fuel_burned_kg"])
+    if doc.get("fuel_burned_kg") is not None:
+        if doc.get("converged") is not True:
+            raise SystemExit(f"Baseline flight {path} did not converge (converged={doc.get('converged')!r}).")
+        return float(doc["fuel_burned_kg"])
+    raise SystemExit(f"{path} is not a baseline mission file (no run_simulation summary, no fuel_burned_kg).")
 
 
 def checked_baseline_fuel(path: Path, study: str) -> float:
@@ -491,7 +573,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--study", choices=sorted(STUDIES), required=True,
                     help="20261028 = the first 20-link study; 20261112 = the re-run after the fixes; "
-                         "final = the finished re-run (/data/Jessica/l20_final)")
+                         "final = the finished re-run (/data/Jessica/l20_final); final_val = the 2-iteration "
+                         "validation of the final code; final_rerun = the final 20-iteration run "
+                         "(root from LINK20_FINAL_RERUN_ROOT)")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     df = build_table(STUDIES[args.study], args.study)

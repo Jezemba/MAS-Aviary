@@ -126,3 +126,54 @@ def test_design_params_refuses_a_mismatched_bounds_file(tmp_path):
     assert dp.baseline_refs(log, "final") == {"Aircraft.Wing.AREA": 122.8}
     with pytest.raises(SystemExit, match="does not start with"):
         dp.baseline_refs(log, "20261028")
+
+
+# ---------------------------------------------------------------- V13: the final code's studies
+
+def test_final_is_still_l20_final_and_old_studies_unchanged():
+    assert ex.STUDIES["final"] == ex.SOURCES_FINAL
+    assert all(str(root).startswith("/data/Jessica/l20_final/runs/") for _d, root, _c in ex.STUDIES["final"])
+    assert ex.BASELINES["final"]["fuel_kg"] == 16390.5 and ex.BASELINES["20261112"]["fuel_kg"] == 16390.5
+    assert ex.BASELINES["20261028"]["fuel_kg"] == 18197.0
+
+
+def test_validation_study_has_the_final_codes_baseline():
+    combos = [c for _d, _r, cs in ex.STUDIES["final_val"] for c in cs]
+    assert len(combos) == 8 and len(set(combos)) == 8
+    assert ex.BASELINES["final_val"] == {"fuel_kg": 15719.18, "gtow_kg": 90310.01, "wing_mass_kg": 7958.8}
+    assert ex.BASELINES["final_rerun"] == ex.BASELINES["final_val"]
+
+
+def test_driver_flight_record_is_a_baseline_file(tmp_path):
+    p = tmp_path / "B2_coupled_anchor_1.json"
+    p.write_text(json.dumps({"fuel_burned_kg": 15719.17609579942, "gtow_kg": 90310.0055, "converged": True}))
+    assert ex.checked_baseline_fuel(p, "final_val") == pytest.approx(15719.176, abs=1e-3)
+    with pytest.raises(SystemExit, match="wrong baseline file"):
+        ex.checked_baseline_fuel(p, "final")
+    p.write_text(json.dumps({"fuel_burned_kg": 15719.18, "converged": False}))
+    with pytest.raises(SystemExit, match="did not converge"):
+        ex.checked_baseline_fuel(p, "final_val")
+
+
+def test_final_rerun_needs_its_root_and_discovers_the_runs(tmp_path, monkeypatch):
+    monkeypatch.delenv(ex.FINAL_RERUN_ROOT_ENV, raising=False)
+    with pytest.raises(SystemExit, match="LINK20_FINAL_RERUN_ROOT"):
+        ex.STUDIES["final_rerun"]
+    assert "final_rerun" in ex.STUDIES                       # still a known study (argparse choices)
+    for tag, combo in (("fin_seq_staged", "mdo_f25_sequential_staged_pipeline"),
+                       ("fin_net_graph", "mdo_f25_networked_graph_routed")):
+        (tmp_path / "runs" / tag / "MAS-Aviary" / "logs" / "stat_results" / tag / "repeat_000" / combo).mkdir(
+            parents=True)
+    monkeypatch.setenv(ex.FINAL_RERUN_ROOT_ENV, str(tmp_path))
+    found = {d: (str(r), c) for d, r, c in ex.STUDIES["final_rerun"]}
+    assert found["fin_net_graph"][1] == ["mdo_f25_networked_graph_routed"]
+    assert found["fin_seq_staged"][0].endswith("stat_results/fin_seq_staged")
+    monkeypatch.setenv(ex.FINAL_RERUN_ROOT_ENV, str(tmp_path / "empty"))
+    with pytest.raises(SystemExit, match="no run folder"):
+        ex.STUDIES["final_rerun"]
+
+
+def test_plain_stat_results_layout_is_discovered(tmp_path):
+    (tmp_path / "runs" / "l20_seq_iter" / "repeat_003" / "mdo_f25_sequential_iterative_feedback").mkdir(parents=True)
+    assert [(d, c) for d, _r, c in ex.discover_sources(tmp_path)] == [
+        ("l20_seq_iter", ["mdo_f25_sequential_iterative_feedback"])]
