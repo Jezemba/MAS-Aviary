@@ -23,6 +23,25 @@ def _public(record: dict | None) -> dict:
     return {k: v for k, v in (record or {}).items() if not str(k).startswith("_")}
 
 
+# V9 (validation 2): aviary-mcp 36b3a53 design_space.READONLY_PARAMETER_NAMES -- computed by aviary, refused with
+# READ_ONLY_PARAMETER when sent. Plus any parameter a set reply marked derived (data_plane design_params_derived).
+AVIARY_READ_ONLY = frozenset({"Aircraft.Wing.SPAN", "Aircraft.Engine.SCALED_SLS_THRUST"})
+
+
+def applied_split(store: dict | None) -> tuple[dict, dict]:
+    """(the parameters aviary accepted that can be set, the derived read-only ones it reports with them).
+
+    V9: design.json listed Aircraft.Wing.SPAN in mission_applied next to the settable keys; the mission architect copied
+    that block into set_aircraft_parameters and aviary refused the whole call (READ_ONLY_PARAMETER) -- all 15 such calls
+    of validation 2 had design.json's mission_applied with SPAN in their input, none another source.
+    """
+    store = store or {}
+    derived = AVIARY_READ_ONLY | set(store.get("design_params_derived") or ())
+    applied = _public(store.get("design_params_applied"))
+    return ({k: v for k, v in applied.items() if k not in derived},
+            {k: v for k, v in applied.items() if k in derived})
+
+
 AVIARY_AERO_KEYS = {"LIFT_COEFFICIENT": "Mission.Design.LIFT_COEFFICIENT",
                     "SUBSONIC_DRAG_COEFF_FACTOR": "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR"}
 
@@ -44,6 +63,7 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
         mission = {}
     cycle = store.get("prop_cycle_outputs") or {}
     applied = store.get("design_params_applied") or {}
+    settable, derived_read_only = applied_split(store)
     return {
         "updated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "mission": {k: mission.get(k) for k in ("range_nmi", "num_passengers", "cruise_mach",
@@ -110,7 +130,13 @@ def build_design(store: dict, sessions: dict | None = None) -> dict[str, Any]:
                        "wing_mass_source": store.get("mass_wing_source")},
         "propulsion": {"sfc_cruise": cycle.get("prop.sfc_cruise"), "fn_lbf": cycle.get("prop.fn_lbf"),
                        "cycle_converged": store.get("prop_cycle_converged")},
-        "mission_applied": _public(store.get("design_params_applied")),
+        # V9: settable keys only; the derived values aviary reports (SPAN) apart, marked read-only.
+        "mission_applied": settable,
+        **({"mission_derived_read_only": {
+            "values": derived_read_only,
+            "note": ("Computed by aviary from the parameters in mission_applied (SPAN = sqrt(ASPECT_RATIO x AREA)); "
+                     "read-only. Do not send these in set_aircraft_parameters: aviary refuses the whole call "
+                     "(READ_ONLY_PARAMETER).")}} if derived_read_only else {}),
         "sessions": dict(sessions or {}),
         # B180: the recommendation, the responses to it and complexity requests, as recorded by the agents'
         # tool calls (src/tools/recommendation_tools.py), in order. Carried to the next link with design.json.

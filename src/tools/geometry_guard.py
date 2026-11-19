@@ -37,6 +37,19 @@ _INTERESTING = ("Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.AREA", "Aircraft.Wi
                 "Aircraft.Wing.SPAN", "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH")
 
 
+def _read_only() -> set:
+    """V9: the parameters aviary computes (design_json.AVIARY_READ_ONLY + any a set reply marked derived)."""
+    from src.tools.design_json import AVIARY_READ_ONLY
+
+    try:
+        from src.tools.data_plane import get_design_state
+
+        store = getattr(get_design_state(), "data_store", None) or {}
+    except Exception:      # pragma: no cover
+        store = {}
+    return set(AVIARY_READ_ONLY) | set(store.get("design_params_derived") or ())
+
+
 def _applied_design() -> dict:
     """Design parameters the mission holder has applied, from the data plane."""
     try:
@@ -121,7 +134,8 @@ def stale_geometry(tool_name: str, resolved: dict) -> dict | None:
             f"wing). Then export_cpacs so mass-mcp sizes the morphed file, then {tool_name} again."
         ),
         "session_id": session_id,
-        "design_parameters": applied,
+        # V9: the settable parameters only (aviary refuses a set that names a derived one, READ_ONLY_PARAMETER).
+        "design_parameters": {k: v for k, v in applied.items() if k not in _read_only()},
     }
 
 

@@ -1062,7 +1062,9 @@ def _reapply_source(session_id) -> dict:
     store = _design_state.data_store
     held, _ = aviary_holds(session_id)
     source = held or dict(store.get("design_params_applied") or {})
-    derived = set(store.get("design_params_derived") or ())
+    from src.tools.design_json import AVIARY_READ_ONLY       # V9: also when no set reply has marked them yet
+
+    derived = set(store.get("design_params_derived") or ()) | AVIARY_READ_ONLY
     return {k: v for k, v in source.items() if k not in derived and k not in TAIL_KEYS and k != WING_TC_KEY}
 
 
