@@ -54,6 +54,7 @@ class CostMeter:
             self.output_tokens = 0
             self.cache_read_tokens = 0
             self.cache_creation_tokens = 0
+            self.local_calls = 0          # V8: generations of a local model (transformers), billed $0
 
     def record(self, prompt: int, completion: int, cache_read: int = 0, cache_creation: int = 0) -> None:
         with self._lock:
@@ -62,6 +63,16 @@ class CostMeter:
             self.output_tokens += int(completion or 0)
             self.cache_read_tokens += int(cache_read or 0)
             self.cache_creation_tokens += int(cache_creation or 0)
+
+    def record_local(self, prompt: int, completion: int) -> None:
+        """V8 (B215/C9): one generation of a LOCAL model (src/llm/thinking_model.ThinkingModel), every agent and peer
+        thread. Before this only the LiteLLM wrapper fed the meter, so local runs fell back to summing the
+        coordinator's messages: 0 for S_GR / N_GR, 4 for O_GR, a few hundred elsewhere."""
+        with self._lock:
+            self.calls += 1
+            self.local_calls += 1
+            self.input_tokens += int(prompt or 0)
+            self.output_tokens += int(completion or 0)
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
@@ -72,6 +83,7 @@ class CostMeter:
                 "cache_read_tokens": self.cache_read_tokens,
                 "cache_creation_tokens": self.cache_creation_tokens,
                 "total_tokens": self.input_tokens + self.output_tokens,
+                "local_calls": self.local_calls,
             }
 
 

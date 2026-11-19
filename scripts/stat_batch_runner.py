@@ -122,16 +122,14 @@ def generate_random_params(seed: int) -> dict[str, float]:
 # 37.68 m, taper 0.359 against 0.246, ...). See Avion/.claude/planning/true_cycle_inputs_2026-10-03.md.
 # Aircraft.Wing.SWEEP is the measured quarter-chord sweep (root c/4 -> tip c/4, tigl-mcp
 # feat/planform-measurements), the quantity FLOPS uses; the tigl positioning angle is 27.33.
-BASELINE_PARAMS: dict[str, float] = {
-    "Aircraft.Wing.AREA": 122.78,
-    "Aircraft.Wing.ASPECT_RATIO": 9.37,
-    "Aircraft.Wing.SWEEP": 21.65,
-    "Aircraft.Wing.TAPER_RATIO": 0.246,
-    "Aircraft.Fuselage.LENGTH": 37.68,
-    "Aircraft.Fuselage.MAX_HEIGHT": 4.15,
-    "Aircraft.Fuselage.MAX_WIDTH": 3.96,
-    "Aircraft.Engine.SCALE_FACTOR": 1.0,
-}
+# V4 (validation 1, 2026-11-18): the geometry values are no longer constants here. They were the pre-B348 loose box
+# (fuselage 37.68 / 4.15 / 3.96, wing 122.78 / 9.37), and any link-1 mission nobody had measured the fuselage for
+# flew them (N_IF it1: +20.2 kg on an unchanged design). Now: tigl-mcp's measurement of the D150 recorded in the
+# canonical file (geometry.anchor_measured), to the 4 decimals the geometry authority sends. SCALE_FACTOR is a
+# placeholder the framework replaces before any mission (B170: set from propulsion).
+from src.config.canonical import anchor_geometry_params as _anchor_geometry_params  # noqa: E402
+
+BASELINE_PARAMS: dict[str, float] = {**_anchor_geometry_params(rounded=True), "Aircraft.Engine.SCALE_FACTOR": 1.0}
 ANCHOR_MODES = ("baseline", "random")
 
 
@@ -370,6 +368,7 @@ class AviaryHeartbeat:
 def setup_session_with_params(
     tool_map: dict,
     params: dict[str, float],
+    seed_anchor: bool = False,
 ) -> dict:
     """Create session with initial params and configure mission via MCP.
 
@@ -421,6 +420,14 @@ def setup_session_with_params(
             f"configure_mission REJECTED the canonical mission — refusing to run on a "
             f"corrupted mission. Response: {resp}"
         )
+
+    # V4: a chain's first link (nothing carried: no completed link, no carried CPACS) opens the unmorphed D150; its
+    # geometry record starts as tigl's measurement of it, so a mission nobody measured the fuselage for flies the
+    # measured fuselage. Never for link 2+: those start from the carried design (pre-session = end state).
+    if seed_anchor:
+        from src.tools.data_plane import seed_anchor_geometry
+
+        results["seeded_geometry"] = seed_anchor_geometry()
 
     return results
 
@@ -883,7 +890,7 @@ def build_quick_metrics(ec: dict | None) -> str:
         if ref:
             pct = (value - ref) / ref * 100.0
             where = "below" if pct < 0 else "above"
-            verdict += f"; {abs(pct):.1f}% {where} the F25 reference {ref:.1f}"
+            verdict += f"; {abs(pct):.1f}% {where} the coupled baseline {ref:.1f}"   # V12: canonical evaluation
         lines.append(f"  {name} = {value:.1f} ({verdict})")
     return "\n".join(lines)
 
@@ -1519,6 +1526,10 @@ def run_stat_batch(
             # The pre-validated-pool override is intentionally NOT used — the chain
             # supplies deterministic starting params so every combo's Run 1 is identical.
             params = dict(chain_params)
+            # V4: the measured-anchor geometry seed is for a chain with nothing carried yet ONLY (no completed link, no
+            # carried CPACS, the anchor start). A link 2+ keeps its carried design.
+            first_link = (not chain_design_dir and chain_cpacs is None and anchor == "baseline"
+                          and params == anchor_params)
 
             run_count += 1
             # GPU cleanup between runs
@@ -1544,7 +1555,7 @@ def run_stat_batch(
             from src.tools.data_plane import reset_design_state
             reset_design_state()
             try:
-                setup = setup_session_with_params(tool_map, params)
+                setup = setup_session_with_params(tool_map, params, seed_anchor=first_link)
                 session_id = setup["session_id"]
                 print(f"  Session {session_id[:8]}... params set via MCP")
             except Exception as e:
@@ -1635,7 +1646,7 @@ def run_stat_batch(
                                 # failed attempt may have left partial aero /
                                 # mass / session state (.claude/BUGS.md B8).
                                 reset_design_state()
-                                setup = setup_session_with_params(tool_map, params)
+                                setup = setup_session_with_params(tool_map, params, seed_anchor=first_link)
                                 session_id = setup["session_id"]
                                 base_task = base_task_for(combo.name, chain_cpacs)
                                 task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)
@@ -1952,7 +1963,7 @@ def run_stat_batch(
                         try:
                             # Fresh data plane for the retry too — see B8.
                             reset_design_state()
-                            setup = setup_session_with_params(tool_map, params)
+                            setup = setup_session_with_params(tool_map, params, seed_anchor=first_link)
                             session_id = setup["session_id"]
                             base_task = base_task_for(combo.name, chain_cpacs)
                             task = build_task_with_session(base_task, session_id, params, prior_feedback=chain_feedback)

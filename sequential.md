@@ -32,8 +32,8 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Vertical tail area | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `area` | su2, mass, aviary | 21.5 | not set | m² |
 | Vertical tail aspect ratio | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `aspect_ratio` | su2, mass, aviary | 1.6069 | not set | none |
 | Vertical tail sweep angle | Set | tigl: `set_high_level_parameters`, vertical tail `Wing3V`, key `sweep` | su2 | 37.20 | not set | deg |
-| Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.6843 | 28 to 50 | m |
-| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.1490 | 3 to 5.5 | m |
+| Fuselage length | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `length` | su2, mass, aviary | 37.6446 | 28 to 50 | m |
+| Fuselage max diameter | Set | tigl: `set_high_level_parameters`, fuselage `Fuselage1`, key `diameter` | su2, mass | 4.1437 | 3 to 5.5 | m |
 | Bypass ratio | Set | pycycle: `splitter.BPR` | pycycle | 5.105 | up to 10 | none |
 | Turbine inlet temperature | Set | pycycle: `T4_MAX` | pycycle | 2857 | 2857 and above | °R |
 | Take-off turbine inlet temperature | Set | pycycle: `T4_TAKEOFF` | pycycle | 3540 | up to 3640 | °R |
@@ -51,8 +51,8 @@ The following STARTING parameters have been applied as an initial baseline they 
 | Wing span | Derived | tigl geometry | mass, aviary | 33.91 | follows area and aspect ratio | m |
 | Wing taper ratio | Derived | tigl geometry: aviary `Aircraft.Wing.TAPER_RATIO` | mass, aviary | 0.246 | follows geometry | none |
 | Wing quarter-chord sweep | Derived | tigl geometry: aviary `Aircraft.Wing.SWEEP` | aviary | 21.65 | follows geometry | deg |
-| Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.15 | follows diameter | m |
-| Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.96 | follows diameter | m |
+| Fuselage max height | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_HEIGHT` | mass, aviary | 4.1437 | follows diameter | m |
+| Fuselage max width | Derived | tigl geometry: aviary `Aircraft.Fuselage.MAX_WIDTH` | mass, aviary | 3.9518 | follows diameter | m |
 | Lift coefficient | Derived | framework: cruise lift W/(q·S), SU2 trimmed to it | su2 | ~0.56 | set by framework | none |
 | Drag | Derived | aviary: its own drag model of the current geometry; SU2 results are recorded, not used for drag | aviary | from aviary | set by aviary | none |
 | Wing mass | Derived | framework: mass result to aviary `Aircraft.Wing.MASS` | aviary | from mass | set by framework | kg |

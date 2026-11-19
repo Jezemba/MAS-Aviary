@@ -163,3 +163,22 @@ def substitute_obj(obj: Any, path: str | None = None) -> Any:
     if isinstance(obj, list):
         return [substitute_obj(v, path) for v in obj]
     return obj
+
+
+ANCHOR_GEOMETRY_KEYS = ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO", "Aircraft.Wing.SWEEP",
+                        "Aircraft.Wing.TAPER_RATIO", "Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT",
+                        "Aircraft.Fuselage.MAX_WIDTH")
+
+
+def anchor_geometry_params(rounded: bool = True, path: str | None = None) -> dict[str, float]:
+    """V4: the D150 as tigl-mcp measures it (canonical ``geometry.anchor_measured``), in aviary's keys.
+
+    ``rounded``: to 4 decimals, the precision data_plane._apply_geometry_authority sends a measured value to aviary
+    with, so a first link's pre-session holds exactly what the geometry authority would set. Raises when a key is
+    missing: there is no fallback geometry.
+    """
+    anchor = (load_canonical(path).get("geometry") or {}).get("anchor_measured") or {}
+    missing = [k for k in ANCHOR_GEOMETRY_KEYS if not isinstance(anchor.get(k), (int, float))]
+    if missing:
+        raise ValueError(f"canonical geometry.anchor_measured lacks {missing}: no measured anchor geometry")
+    return {k: (round(float(anchor[k]), 4) if rounded else float(anchor[k])) for k in ANCHOR_GEOMETRY_KEYS}

@@ -1187,7 +1187,13 @@ def run_combination(
         # Token totals from the model wrapper (reliable for ALL combos incl. networked);
         # fall back to the legacy messages-sum only if the meter saw no calls.
         snap = METER.snapshot()
-        if snap["calls"] > 0:
+        if snap["calls"] > 0 and snap.get("local_calls") == snap["calls"]:
+            # V8 (B215/C9): a local model fed the meter (every agent and peer generation); $0, tokens exact.
+            result.cost_usd = 0.0
+            result.total_tokens = snap["total_tokens"]
+            result.token_breakdown = {**snap, "cost_usd": 0.0, "model_id": model_id, "metered": True,
+                                      "local": True}
+        elif snap["calls"] > 0:
             result.cost_usd = billed_cost_usd(snap, model_id)
             result.token_breakdown = {**snap, "cost_usd": result.cost_usd, "model_id": model_id}
             result.total_tokens = snap["total_tokens"]

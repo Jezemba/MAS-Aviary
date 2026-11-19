@@ -196,7 +196,15 @@ def check_geometry_to_mission(link: Link, mission: int) -> tuple:
                                      f"sweep {flown.get('Aircraft.Wing.SWEEP')}")
 
 
+def flops_contract(link: Link) -> bool:
+    """V2: the link ran under the drag model decision of 2026-11-18 (B324): SU2 solved and recorded, not coupled."""
+    aero = link.design.get("aero") or {}
+    return "injected_into_aviary" in aero or "not coupled" in str(aero.get("drag_coupling") or "")
+
+
 def check_su2_to_mission(link: Link, mission: int) -> tuple:
+    if flops_contract(link):
+        return check_su2_recorded(link, mission)
     index, solve = link.last("run_su2_solver", before=mission)
     if solve is None:
         return "SU2 -> aviary", NOT_EXERCISED, "no SU2 solve before the mission (seeded results)"
@@ -214,6 +222,133 @@ def check_su2_to_mission(link: Link, mission: int) -> tuple:
     if problems:
         return "SU2 -> aviary", FAIL, "; ".join(problems)
     return "SU2 -> aviary", PASS, f"CL {cl}, CD {cd}, drag factor {factor}"
+
+
+def check_su2_recorded(link: Link, mission: int) -> tuple:
+    """V2, contract B324 (drag model decision 2026-11-18): a current, converged SU2 solve trimmed to the cruise lift
+    of the trim mass basis, its CL/CD recorded, and nothing of it injected into aviary (FLOPS drag flies)."""
+    name = "SU2 solved + recorded (not coupled)"
+    index, solve = link.last("run_su2_solver", before=mission)
+    aero = link.design.get("aero") or {}
+    if solve is None:
+        if (aero.get("provenance") or {}).get("solved_on_this_link") is False:
+            return name, NOT_EXERCISED, "no SU2 solve in this link (seeded results)"
+        return name, FAIL, "no SU2 solve before the mission"
+    problems = []
+    cl, cd = find(solve["result"], "CL"), find(solve["result"], "cd_reported") or find(solve["result"], "CD")
+    if not close(aero.get("cl_cruise"), cl, 1e-6) or not close(aero.get("cd_cruise"), cd, 1e-6):
+        problems.append(f"recorded CL/CD {aero.get('cl_cruise')}/{aero.get('cd_cruise')}, solved {cl}/{cd}")
+    if aero.get("solve_converged") is not True or aero.get("solve_trimmed") is not True:
+        problems.append(f"solve converged {aero.get('solve_converged')}, trimmed {aero.get('solve_trimmed')}")
+    basis = aero.get("solve_trim_basis") or {}
+    target = aero.get("solve_target_cl")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from src.tools.coupling import cruise_lift_coefficient
+
+        want = cruise_lift_coefficient(float(basis["mass_kg"]), MISSION_MACH, MISSION_ALT_FT, float(basis["wing_area_m2"]))
+        if not close(target, want, 1e-6):
+            problems.append(f"target CL {target}, cruise lift of {basis['mass_kg']} kg on {basis['wing_area_m2']} m^2 "
+                            f"is {want}")
+    except (KeyError, TypeError, ValueError) as exc:
+        problems.append(f"no trim basis recorded ({exc})")
+    flown = link.flown_parameters(mission)
+    injected = {k: flown[k] for k in ("Mission.Design.LIFT_COEFFICIENT", "Aircraft.Design.SUBSONIC_DRAG_COEFF_FACTOR")
+                if flown.get(k) is not None}
+    injected.update({k: v for k, v in (aero.get("injected_into_aviary") or {}).items() if v is not None})
+    if injected:
+        problems.append(f"SU2 values reached aviary {injected}")
+    if problems:
+        return name, FAIL, "; ".join(problems)
+    return name, PASS, f"CL {cl} (target {target}), CD {cd} recorded; aviary flies FLOPS drag"
+
+
+def check_cruise_point_engine(link: Link, mission: int, flight: dict) -> list[tuple]:
+    """V2: the engine is sized on aviary's cruise point of the flown design at the trim mass basis (B340/B360)."""
+    out = []
+    point = link.design.get("aviary_cruise_point") or {}
+    flown_fp = find(flight.get("result"), "flown_design_fingerprint")
+    if not point:
+        return [("cruise point = flown design", FAIL, "no aviary cruise point recorded"),
+                ("cruise point -> Fn_DES", FAIL, "no aviary cruise point recorded")]
+    out.append(("cruise point = flown design", PASS if point.get("design_fingerprint") == flown_fp else FAIL,
+                f"cruise point {point.get('design_fingerprint')}, flown {flown_fp}"))
+    _, inputs = link.last("set_inputs", before=mission)
+    fn_des = find((inputs or {}).get("args"), "Fn_DES")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from src.tools.coupling import fn_des_from_lift_to_drag
+
+        want = fn_des_from_lift_to_drag(float(point["mass_kg"]), float(point["lift_to_drag"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        return out + [("cruise point -> Fn_DES", FAIL, f"cruise point incomplete ({exc})")]
+    if fn_des is None:
+        return out + [("cruise point -> Fn_DES", NOT_EXERCISED, "no set_inputs with Fn_DES before the mission")]
+    out.append(("cruise point -> Fn_DES", PASS if close(fn_des, want, 1e-6) else FAIL,
+                f"Fn_DES {fn_des}, from {point['mass_kg']} kg / L/D {point['lift_to_drag']}: {want}"))
+    return out
+
+
+def check_mass_basis(link: Link, mission: int) -> tuple:
+    """V2 / A8: one mass basis -- the SU2 trim, the cruise point (Fn_DES) and the take-off mass are the same mass."""
+    name = "trim mass basis"
+    basis = ((link.design.get("aero") or {}).get("solve_trim_basis") or {}).get("mass_kg")
+    point = (link.design.get("aviary_cruise_point") or {}).get("mass_kg")
+    _, conf = link.last("configure_mission", before=mission)
+    takeoff = number(((conf or {}).get("args") or {}).get("takeoff_mass_kg"))
+    if basis is None or point is None or takeoff is None:
+        return name, FAIL, f"trim {basis}, cruise point {point}, take-off {takeoff}: one is not recorded"
+    if not close(point, basis, 1e-9):
+        return name, FAIL, f"cruise point mass {point} != trim mass {basis}"
+    if close(takeoff, basis, 1e-9):
+        return name, PASS, f"{basis} kg for trim, cruise point and take-off"
+    if abs(takeoff - float(basis)) <= 0.05 + 1e-9:
+        # Before V7 (MAS-Aviary fix/validation1-defaults) the take-off mass was sent rounded to 0.1 kg.
+        return name, PASS, f"{basis} kg for trim and cruise point; take-off {takeoff} (rounded to 0.1 kg, pre-V7 code)"
+    return name, FAIL, f"take-off mass {takeoff} != trim mass {basis}"
+
+
+def check_tails_tc(link: Link, mission: int) -> tuple:
+    """V2 / G1 / J2: aviary flies mass-mcp's measured tails and wing t/c of this design."""
+    name = "measured tails + wing t/c -> aviary"
+    st = link.design.get("structures") or {}
+    tails = st.get("tails") or {}
+    tc = st.get("wing_thickness_to_chord")
+    if not tails or tc is None:
+        return name, FAIL, f"not recorded (tails {bool(tails)}, t/c {tc}): {st.get('tail_error') or st.get('wing_thickness_to_chord_error')}"
+    flown = link.flown_parameters(mission)
+    want = dict(tails, **{"Aircraft.Wing.THICKNESS_TO_CHORD": tc})
+    wrong = {k: (flown.get(k), v) for k, v in want.items() if not close(flown.get(k), v, 1e-6)}
+    return (name, FAIL, f"flown vs measured {wrong}") if wrong else (name, PASS, f"8 tail inputs + t/c {tc}")
+
+
+def check_fuselage(link: Link, mission: int) -> tuple:
+    """V2 / V4: the flown fuselage is the measured one (start-of-link session values count as flown)."""
+    name = "geometry -> aviary fuselage"
+    measured = None
+    for _, row in link.rows("get_high_level_parameters", "get_fuselage_summary", "set_high_level_parameters",
+                            before=mission):
+        args, res = row["args"] or {}, row["result"]
+        uid = str(args.get("component_uid") or args.get("fuselage_uid") or "Fuselage1")
+        if not uid.lower().startswith("fuselage"):
+            continue
+        if row["tool"] == "get_high_level_parameters":
+            p = find(res, "parameters") or {}
+            if p.get("length") is not None:
+                measured = (p.get("length"), p.get("max_height"), p.get("max_width"))
+        elif row["tool"] == "get_fuselage_summary":
+            measured = (find(res, "length"), find(res, "max_height"), find(res, "max_width"))
+        else:
+            after = find(res, "after") or {}
+            if after.get("length") is not None:
+                measured = (after.get("length"), after.get("height"), after.get("width"))
+    if measured is None:
+        return name, NOT_EXERCISED, "the fuselage was not measured in this link"
+    flown = dict(link.carry_over.get("aviary_session_start") or {})
+    flown.update(link.flown_parameters(mission))
+    keys = ("Aircraft.Fuselage.LENGTH", "Aircraft.Fuselage.MAX_HEIGHT", "Aircraft.Fuselage.MAX_WIDTH")
+    wrong = {k: (flown.get(k), m) for k, m in zip(keys, measured) if not close(flown.get(k), m, 1e-4)}
+    return (name, FAIL, f"flown vs measured {wrong}") if wrong else (name, PASS, f"{measured}")
 
 
 def check_mass(link: Link, mission: int) -> list[tuple]:
@@ -368,6 +503,12 @@ def check_link(link: Link, previous: Link | None) -> list[tuple]:
         checks.append(check_su2_to_mission(link, mission))
         checks += check_mass(link, mission)
         checks += check_propulsion(link, mission, flight)
+        if flops_contract(link):
+            # V2: the contract since B324 / G1 / J2 / A8 / B340 (MAS-Aviary integration/final-rerun-2026-11-18).
+            checks += check_cruise_point_engine(link, mission, flight)
+            checks.append(check_mass_basis(link, mission))
+            checks.append(check_tails_tc(link, mission))
+        checks.append(check_fuselage(link, mission))
     if previous is not None and previous.calls is not None:
         checks += check_chain(link, previous)
         checks.append(check_recommendation(link, previous))

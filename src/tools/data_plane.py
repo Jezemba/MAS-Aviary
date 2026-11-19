@@ -1366,6 +1366,63 @@ def _auto_measure_wing() -> None:
         logger.warning("[B154] could not measure the wing: %s", exc)
 
 
+def _auto_measure_fuselage() -> None:
+    """V4: measure the fuselage through get_high_level_parameters when nobody has this link (as B154 for the wing).
+
+    Called before set_aircraft_parameters applies the geometry. Only with a LIVE tigl session and no unexported morph
+    (the session then IS the geometry the mission is about to fly). The reply goes through the full middleware, whose
+    capture records the fuselage. Never raises; without a session the record stays as it is (the link-start seed or
+    nothing) and _apply_geometry_authority says which.
+    """
+    if _design_state is None:
+        return
+    sid = _design_state.sessions.get("tigl")
+    tool = (_registered_tools or {}).get("get_high_level_parameters")
+    if not sid or tool is None:
+        return
+    uid = "Fuselage1"
+    try:
+        from src.config.canonical import load_canonical
+
+        uid = (load_canonical().get("geometry") or {}).get("fuselage_component_uid") or uid
+    except Exception:      # pragma: no cover
+        pass
+    try:
+        tool.forward(session_id=sid, component_uid=uid)
+        logger.info("[V4] measured %s before the mission (no agent had this link)", uid)
+    except Exception as exc:  # pragma: no cover - never break a run on this
+        logger.warning("[V4] could not measure the fuselage: %s", exc)
+
+
+ANCHOR_SOURCE = "anchor: tigl-measured D150 (canonical geometry.anchor_measured)"
+
+
+def seed_anchor_geometry(anchor: dict | None = None) -> dict:
+    """V4: the FIRST link's geometry record = the measured D150 anchor, before any agent acts.
+
+    Only for a link that opens the unmorphed D150 with nothing carried (stat_batch_runner decides: no completed link
+    and no carried CPACS). A link 2+ never calls this: it starts from the carried design. A later measurement or morph
+    in the link replaces the record as before. Returns what was seeded.
+    """
+    if _design_state is None:
+        return {}
+    if anchor is None:
+        from src.config.canonical import anchor_geometry_params
+
+        anchor = anchor_geometry_params(rounded=False)
+    wing = {k: float(anchor[k]) for k in ("Aircraft.Wing.AREA", "Aircraft.Wing.ASPECT_RATIO",
+                                          "Aircraft.Wing.SWEEP", "Aircraft.Wing.TAPER_RATIO") if k in anchor}
+    fus = {k: float(anchor[k]) for k in _GEOMETRY_FUSELAGE_KEYS if k in anchor}
+    store = _design_state.data_store
+    if wing.get("Aircraft.Wing.AREA") and wing.get("Aircraft.Wing.ASPECT_RATIO"):
+        wing["_span"] = (wing["Aircraft.Wing.AREA"] * wing["Aircraft.Wing.ASPECT_RATIO"]) ** 0.5
+        store["geometry_wing"] = dict(wing, _source=ANCHOR_SOURCE)
+    if len(fus) == len(_GEOMETRY_FUSELAGE_KEYS):
+        store["geometry_fuselage"] = dict(fus, _source=ANCHOR_SOURCE)
+    logger.info("[V4] link-start geometry seeded from the measured anchor: %s", {**wing, **fus})
+    return {**wing, **fus}
+
+
 def _cpacs_design_mtom(path) -> float | None:
     """The design mTOM a CPACS file declares (analyses/massBreakdown/designMasses/mTOM/mass), or None."""
     if not path:
@@ -1657,6 +1714,22 @@ def _capture_geometry_fuselage(tool_name: str, data: dict) -> None:
             return
         _design_state.data_store["geometry_fuselage"] = record
         return
+    if tool_name == "get_fuselage_summary":
+        # V4 (validation 1): tigl's get_fuselage_summary is the same measurement (morph._fuselage_dims, tight box).
+        # N_IF link 1's geometry peer read the fuselage only here, and the mission flew the runner's pre-session
+        # 37.68 / 4.15 / 3.96 instead of the measured 37.6446 / 4.1437 / 3.9518 (+20.2 kg on an unchanged design).
+        # Which fuselage the reply is about: the call's fuselage_uid (the reply does not name it).
+        uid = getattr(_call_ctx, "fuselage_uid", None)
+        if not data.get("measured") or (uid and not str(uid).lower().startswith("fuselage")):
+            return
+        try:
+            record = {"Aircraft.Fuselage.LENGTH": float(data["length"]),
+                      "Aircraft.Fuselage.MAX_HEIGHT": float(data["max_height"]),
+                      "Aircraft.Fuselage.MAX_WIDTH": float(data["max_width"]), "_source": tool_name}
+        except (KeyError, TypeError, ValueError):
+            return
+        _design_state.data_store["geometry_fuselage"] = record
+        return
     if tool_name != "set_high_level_parameters":
         return
     morph = data.get("geometry_morph")
@@ -1680,6 +1753,12 @@ def _apply_geometry_authority(resolved: dict) -> None:
     """set_aircraft_parameters: the wing and fuselage keys come from the geometry, whatever the caller passed."""
     if _design_state is None or design_authority() != "geometry":
         return
+    store = _design_state.data_store
+    # V4: a fuselage nobody measured this link (or only the link-start seed) is measured on the live session, unless
+    # a morph is pending export (then the session holds a geometry the files do not; B108 handles it).
+    fus = store.get("geometry_fuselage") or {}
+    if (not fus or fus.get("_source") == ANCHOR_SOURCE) and not store.get("morph_unexported"):
+        _auto_measure_fuselage()
     wing = dict(_design_state.data_store.get("geometry_wing") or {})
     wing.update(_design_state.data_store.get("geometry_fuselage") or {})
     params = resolved.get("parameters")
@@ -1965,6 +2044,9 @@ def _annotate_geometry_authority(tool_name: str, data: dict) -> None:
     """Tell the caller the wing came from the geometry, and what it asked for instead."""
     if _design_state is None or tool_name != "set_aircraft_parameters" or not isinstance(data, dict):
         return
+    deferred = _call_notes().pop("_engine_scale_deferred", None)
+    if deferred:
+        data["engine_scale"] = deferred           # V10: no interim (bench-referenced) scale is shown
     last = _call_notes().pop("_geometry_authority_last", None)
     if not last or not (last.get("used") or last.get("overrode")):
         return
@@ -3129,7 +3211,9 @@ def _takeoff_mass_kg() -> float | None:
     if _design_state is None:
         return None
     mass, _ = trim_mass_basis()
-    return round(float(mass), 1) if mass is not None else None
+    # V7 (validation 1): the exact basis, as the trim target and Fn_DES use it (it was round(mass, 1): 90,298.6 flown
+    # for a 90,298.6425 basis).
+    return float(mass) if mass is not None else None
 
 
 def _inject_takeoff_mass(resolved: dict) -> None:
@@ -3345,6 +3429,22 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
         # so the session the whole mission depends on is supplied too.
         if not stored_sid and mcp_name in _AUTO_SESSION_TOOLS:
             stored_sid = _auto_create_session(mcp_name)
+        if not stored_sid:
+            # V14 (validation 1, O_SP both links, O_IF link 2): the first geometry call went to tigl with the AVIARY
+            # session id -- the only id the agent's DESIGN_STATE lists under "SESSIONS (already open -- reuse them)"
+            # before any tigl session exists. tigl answered "Unknown session_id '<id>'", which does not say the id
+            # is another server's or what to do. Say both; the call is not sent.
+            provided = resolved.get("session_id")
+            owner = next((srv for srv, sid in (_design_state.sessions or {}).items()
+                          if sid and provided and str(sid) == str(provided) and srv != mcp_name), None)
+            if owner:
+                opener = {"tigl": "open_cpacs", "su2": "create_su2_session", "pycycle": "create_cycle_model",
+                          "aviary": "create_session"}.get(mcp_name, "its own session-creating tool")
+                _refuse_call("SESSION_OF_ANOTHER_SERVER",
+                             f"{tool_name} did not run: session_id '{provided}' is the {owner} session, and each "
+                             f"server has its own sessions. No {mcp_name} session is open yet: create one with "
+                             f"{opener}, then call {tool_name} with the session_id it returns.",
+                             session_owner=owner, server=mcp_name)
 
         if stored_sid:
             provided = resolved.get("session_id")
@@ -4744,6 +4844,20 @@ def _inject_engine_scale(resolved: dict) -> None:
     # re-apply: the 5,900 lbf deck flew a scale computed for 5,936. The reference is now that of the deck actually
     # attached to this session; with no deck attached the bench engine flies, and the bench reference is right.
     reference, basis = engine_scale_reference(sid)
+    if engine_deck_enabled() and basis == "bench deck":
+        # V10 (validation 1): before the designed engine's deck is attached to this session the reference fell back
+        # to the bench 5,936 lbf, and the mission architect's reply showed an interim scale (1.18854 = Fn_DES /
+        # 5,936) that was never flown: run_simulation attaches the deck (_ensure_engine_deck) and re-applies the
+        # scale against the deck's 5,900 lbf (_reapply_current_engine). No scale is set or shown until then; the
+        # reply says why (a typed value is not applied either: the framework sets it).
+        asked = parameters.pop("Aircraft.Engine.SCALE_FACTOR", None)
+        _call_notes()["_engine_scale_deferred"] = (
+            "Aircraft.Engine.SCALE_FACTOR is set by the framework when the designed engine's deck is attached to "
+            "this session, right before run_simulation; it is not set by this call"
+            + (f" (the {asked!r} passed was not applied)" if asked is not None else "") + ".")
+        resolved["parameters"] = parameters
+        logger.info("[V10] SCALE_FACTOR deferred on %s: no engine deck attached yet (set before the mission)", sid)
+        return
     scale = coupling.fn_to_aviary_engine_scale(fn_lbf, reference)
     if "Aircraft.Engine.SCALE_FACTOR" in parameters:
         _note_coupled_override("Aircraft.Engine.SCALE_FACTOR", parameters["Aircraft.Engine.SCALE_FACTOR"], scale)
