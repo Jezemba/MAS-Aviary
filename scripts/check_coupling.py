@@ -414,8 +414,25 @@ def check_mass(link: Link, mission: int) -> list[tuple]:
                      if i > morphed)
         auto = bool(used and sid and closed) and Path(used).name == f"cpacs_autoexport_{sid}.xml"
         copy = copy or auto
-        out.append(("geometry -> mass", PASS if used and (used == path or copy) else FAIL,
-                    f"mass read {used}{' (framework copy)' if copy else ''}, last export {path}"))
+        if used and (used == path or copy):
+            out.append(("geometry -> mass", PASS, f"mass read {used}{' (framework copy)' if copy else ''}, "
+                                                  f"last export {path}"))
+            return out
+        # X1 (validation 3, N_IF): no export (and no auto-exporting close) before the mass, so the framework handed
+        # mass-mcp the CPACS the session was OPENED from (data_plane: morphed export, else the opened file; G1 copy).
+        # When the opened design is the flown design (B377 identity: the reshapes after it were no-ops), the mass is of
+        # the flown design. A reshape that changed the wing before the mass changes the identity and still FAILs.
+        any_close = any(find(r["result"], "auto_exported") for _, r in link.rows("close_cpacs", before=index))
+        o_idx, opened = link.last("open_cpacs", before=index)
+        src = ((opened or {}).get("args") or {}).get("source") if opened else None
+        of_opened = bool(used and src) and (used == src or (Path(used).name == Path(src).name
+                                                            and Path(used).parent.name.startswith("avion_mass_")))
+        if exported is None and not any_close and of_opened and link.design_after(o_idx) == link.design_after(mission - 1):
+            out.append(("geometry -> mass", PASS,
+                        f"mass read {used} (framework copy of the opened {src}); no export before it, and the opened "
+                        f"design #{o_idx} is the flown design {link.design_after(mission - 1)} (later reshapes no-ops)"))
+            return out
+        out.append(("geometry -> mass", FAIL, f"mass read {used}, last export {path}"))
     return out
 
 
