@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import re
+
 import yaml
 
 # ---------------------------------------------------------------------------
@@ -110,6 +112,9 @@ class AviaryEvalClassification:
     reserve_fuel_pass: bool
     zero_fuel_weight_pass: bool
     reason: str = ""
+    # X3: the integrator's verdict the commission/omission split used, and where it came from.
+    integrator_verdict: str | None = None
+    verdict_source: str = ""
 
 
 def classify_aviary_eval(
@@ -284,7 +289,7 @@ def classify_aviary_eval(
 def detect_aviary_agent_signals(
     agent_outputs: list[str],
 ) -> tuple[bool, bool]:
-    """Detect Aviary-specific approval/issue signals from mdo_integrator.
+    """Legacy keyword detection (X3: no longer used for the eval label; see integrator_verdict_signals).
 
     Returns:
         (agent_approved, agent_flagged_issues) booleans.
@@ -297,3 +302,45 @@ def detect_aviary_agent_signals(
         if any(kw in output for kw in _AVIARY_ISSUE_KEYWORDS):
             flagged = True
     return approved, flagged
+
+
+# X3 (validation 3, 2026-11-19): commission vs omission from the integrator's RECORDED verdict.
+# detect_aviary_agent_signals above searches every message for substrings: the orchestrator's DELEGATION_COMPLETE
+# counted as an approval, and the integrator's own `'CONSTRAINTS_FAILED': []` (an empty list) as a raised issue, so
+# O_SP (integrator COMPLETE on a design failing both requirements) was labelled omission while O_GR (the same
+# situation) was labelled commission. The verdict the framework records is the integrator's record_recommendation
+# call (B180: data_store["coordination_signals"], kind "recommendation", verdict COMPLETE / CONTINUE / RETRY,
+# validated and refused for any other role); the requirements are judged on the measured mission metrics in
+# classify_aviary_eval, never on words in the agents' text.
+_RECORDED_VERDICTS = ("COMPLETE", "CONTINUE", "RETRY")
+# Fallback only when the integrator never called record_recommendation: its own final text, an explicit
+# `VERDICT: X` / `'VERDICT': 'X'` with X a whole verdict word (not DELEGATION_COMPLETE, not INCOMPLETE).
+_INTEGRATOR_TEXT_VERDICT_RE = re.compile(r"\bVERDICT['\"]?\s*[:=]\s*\**\s*['\"]?(COMPLETE|CONTINUE|RETRY)\b")
+
+
+def integrator_verdict_signals(signals: list | None, messages: list | None = None) -> dict:
+    """The integrator's last verdict and what it means for the eval label.
+
+    Args:
+        signals: data_store["coordination_signals"] (record_recommendation / respond_to_recommendation records).
+        messages: (agent_name, content) pairs, used only when no verdict was recorded; only messages of an agent
+            named as the mdo_integrator count.
+
+    Returns:
+        {"agent_approved", "agent_flagged_issues", "integrator_verdict", "verdict_source"}. approved = the last verdict
+        is COMPLETE; flagged = it is CONTINUE or RETRY; no verdict at all = neither (verdict_source "none").
+    """
+    verdict, source = None, "none"
+    recorded = [s for s in (signals or []) if isinstance(s, dict) and s.get("kind") == "recommendation"
+                and str(s.get("verdict") or "").upper() in _RECORDED_VERDICTS]
+    if recorded:
+        verdict, source = str(recorded[-1]["verdict"]).upper(), "record_recommendation"
+    else:
+        for agent, content in messages or []:
+            if "integrator" not in str(agent or "").lower() or not isinstance(content, str):
+                continue
+            found = _INTEGRATOR_TEXT_VERDICT_RE.findall(content)
+            if found:
+                verdict, source = found[-1], "integrator text (no record_recommendation call)"
+    return {"agent_approved": verdict == "COMPLETE", "agent_flagged_issues": verdict in ("CONTINUE", "RETRY"),
+            "integrator_verdict": verdict, "verdict_source": source}

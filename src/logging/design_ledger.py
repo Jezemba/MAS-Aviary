@@ -418,9 +418,15 @@ def build_record(result_dict: dict[str, Any], traces: dict[str, Any]) -> dict[st
             # now ends the run, this is the run's quality signal rather than a
             # routing key. None = the review stage was never reached, which is a
             # different outcome from a failing verdict.
-            "integrator_verdict": _integrator_verdict(traces),
+            # X3: the verdict the integrator RECORDED (record_recommendation) when there is one; the trace text
+            # only when it never called the tool (verdict source says which).
+            "integrator_verdict": (ec.get("integrator_verdict") if ec.get("verdict_source") == "record_recommendation"
+                                   else _integrator_verdict(traces)),
             "integrator_verdict_class": _VERDICT_NORMAL.get(
-                _integrator_verdict(traces) or "", None),
+                (ec.get("integrator_verdict") if ec.get("verdict_source") == "record_recommendation"
+                 else _integrator_verdict(traces)) or "", None),
+            "integrator_verdict_source": ("record_recommendation" if ec.get("verdict_source") == "record_recommendation"
+                                          else "trace text"),
             "design_touched": bool(design),
             "fuel_delta_vs_start": _fuel_delta_vs_start(result_dict, ec),
             # B84: a fuel figure produced on aviary's DEFAULT drag polar / internal FLOPS

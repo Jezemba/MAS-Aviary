@@ -30,7 +30,7 @@ from src.coordination.history import AgentMessage
 from src.logging.cross_strategy_metrics import compute_cross_strategy_metrics
 from src.logging.eval_classifier import (
     classify_aviary_eval,
-    detect_aviary_agent_signals,
+    integrator_verdict_signals,
 )
 from src.logging.org_theory_metrics import compute_org_theory_metrics
 from src.logging import step_log
@@ -1217,17 +1217,26 @@ def run_combination(
         )
         result.cross_strategy_metrics = cs_metrics
 
-        # Detect agent approval/issue signals.
-        outputs = [m.content for m in messages]
-        approved, flagged = detect_aviary_agent_signals(outputs)
+        # X3: approval / raised issues = the integrator's RECORDED verdict (record_recommendation), not keywords
+        # anywhere in any message (DELEGATION_COMPLETE was an approval, 'CONSTRAINTS_FAILED': [] an issue).
+        try:
+            from src.tools.data_plane import get_design_state
+
+            _ds = get_design_state()
+            _signals = list((_ds.data_store or {}).get("coordination_signals") or []) if _ds is not None else []
+        except Exception:
+            _signals = []
+        verdict_info = integrator_verdict_signals(_signals, [(m.agent_name, m.content) for m in messages])
         eval_result = _extract_aviary_eval_from_messages(messages)
         converged = eval_result.get("converged", True) if eval_result else True
         classification = classify_aviary_eval(
             eval_result,
             converged=converged,
-            agent_approved=approved,
-            agent_flagged_issues=flagged,
+            agent_approved=verdict_info["agent_approved"],
+            agent_flagged_issues=verdict_info["agent_flagged_issues"],
         )
+        classification.integrator_verdict = verdict_info["integrator_verdict"]
+        classification.verdict_source = verdict_info["verdict_source"]
         result.eval_classification = _safe_dict(classification)
 
         # Compute org theory metrics.
