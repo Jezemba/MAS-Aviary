@@ -481,8 +481,56 @@ def refusals_so_far(agent: str | None = None) -> int:
                if e.get("status") == "refused" and (not name or e.get("agent") == name))
 
 
+def snapshot_flown_coupling() -> None:
+    """X2: record the coupling status of the design a converged mission just flew (called by the data plane).
+
+    The last such snapshot is the counted mission's (the runner counts the last converged mission, B102/B306).
+    """
+    from src.tools.data_plane import get_design_state
+
+    state = get_design_state()
+    if state is None:
+        return
+    snap = _coupling_status_now()
+    wing = (state.data_store or {}).get("geometry_wing")
+    snap["geometry_wing"] = {k: v for k, v in wing.items() if not str(k).startswith("_")} if isinstance(
+        wing, dict) else None
+    state.data_store["flown_coupling_status"] = snap
+
+
 def coupling_status() -> dict:
-    """What actually reached each solver, for result.json."""
+    """What actually reached each solver for the COUNTED mission, for result.json.
+
+    X2 (validation 3, 2026-11-19): this used to judge the design current at the END of the link. S_GR (val2 and val3)
+    flew AR 11.0 fully coupled, then the geometry engineer reshaped to AR 11.5 and the link ended on its budget: the
+    status said aero/mass "stale", "propulsion ran: False", mission_coupled False, the ledger marked the link not
+    scoreable and analyze_sweep dropped it from fuel ranking, although the fuel figure is the AR-11.0 design's. The
+    status is now the one recorded when the counted (last converged) mission flew. The end-of-link status is kept under
+    ``end_of_link``, and ``unflown_later_design`` says whether the link ended on a design that never flew -- a record,
+    not a failure. With no converged mission there is nothing counted: the end-of-link status is reported as before
+    (``judged_on`` says which).
+    """
+    from src.tools.data_plane import get_design_state
+
+    end = _coupling_status_now()
+    state = get_design_state()
+    flown = (state.data_store or {}).get("flown_coupling_status") if state is not None else None
+    if not isinstance(flown, dict):
+        out = dict(end)
+        out.update(judged_on="end_of_link (no converged mission)", end_of_link=None, unflown_later_design=None,
+                   flown_design_fingerprint=None)
+        return out
+    out = {k: v for k, v in flown.items() if k != "geometry_wing"}
+    out["judged_on"] = "counted_mission"
+    out["flown_design_fingerprint"] = flown.get("design_fingerprint")
+    out["flown_geometry_wing"] = flown.get("geometry_wing")
+    out["end_of_link"] = end
+    out["unflown_later_design"] = end.get("design_fingerprint") != flown.get("design_fingerprint")
+    return out
+
+
+def _coupling_status_now() -> dict:
+    """What reached each solver, judged against the design current NOW."""
     out: dict[str, Any] = {
         "aero_status": status(AERO_SOLVE),
         "mass_status": status(WING_MASS),

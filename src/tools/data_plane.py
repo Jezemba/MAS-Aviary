@@ -922,6 +922,14 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
         return
     import shutil
 
+    # X2: the coupling status of THIS flown design (result.json judges the counted mission on it, not the design the
+    # link ends on).
+    try:
+        from src.tools.coupling_contract import snapshot_flown_coupling
+
+        snapshot_flown_coupling()
+    except Exception as exc:  # pragma: no cover - a status record must never break a run
+        logger.warning("[X2] could not record the flown mission's coupling status: %s", exc)
     store = _design_state.data_store
     src = store.get("morphed_cpacs_path")
     if not src or not os.path.isfile(str(src)):

@@ -1762,6 +1762,14 @@ def run_stat_batch(
                     for _k in ("aero_status", "mass_status", "propulsion_status",
                                "propulsion_ran", "propulsion_coupled", "mission_coupled"):
                         result_dict[_k] = _cs.get(_k)
+                    # X2: the status above is the COUNTED mission's flown design; a design the link ended on that
+                    # never flew is recorded beside it (not a failure).
+                    _end = _cs.get("end_of_link") if isinstance(_cs.get("end_of_link"), dict) else {}
+                    result_dict["coupling_judged_on"] = _cs.get("judged_on")
+                    result_dict["unflown_later_design"] = _cs.get("unflown_later_design")
+                    result_dict["end_of_link_coupling"] = {
+                        _k: _end.get(_k) for _k in ("aero_status", "mass_status", "propulsion_status",
+                                                    "mission_coupled", "design_fingerprint")} if _end else None
                     _mdr = dict(_kbm.get("missing_data_refusals") or {})
                     result_dict["missing_data_refusals"] = _mdr
                     _n = {k: sum(v.values()) for k, v in _mdr.items()} if _mdr else {}
@@ -1776,6 +1784,10 @@ def run_stat_batch(
                     if _cs.get("mission_coupled") is False:
                         print("  [B84] WARNING: this run's fuel figure is NOT this design's "
                               "aero/mass -- excluded from fuel ranking")
+                    if _cs.get("unflown_later_design"):
+                        print(f"  [X2] the link ended on a design that never flew (end of link: aero "
+                              f"{_end.get('aero_status')}, mass {_end.get('mass_status')}); the fuel figure is the "
+                              f"counted mission's design {_cs.get('flown_design_fingerprint')} -- recorded, not a failure")
                     # B86: claiming is what stops three peers doing the same discipline.
                     _cl = dict(_store.get("_claim_stats") or {})
                     for _k in ("claims_made", "claims_made_count", "first_call_refusals",
@@ -1838,10 +1850,18 @@ def run_stat_batch(
                             "final morph never exported; next link inherits the last exported geometry")
                         print("  [B108] WARNING: the final morph was never exported -- the next link "
                               "inherits the last exported geometry, not the wing this link ended on")
-                    result_dict["geometry_wing"] = {k: v for k, v in (_store.get("geometry_wing") or {}).items()
-                                                    if not str(k).startswith("_")}
+                    _wing_end = {k: v for k, v in (_store.get("geometry_wing") or {}).items()
+                                 if not str(k).startswith("_")}
+                    # X2: the wing of the counted mission (what the next link opens, B263), not an unflown later
+                    # reshape; the end-of-link wing is kept beside it.
+                    _wing_flown = (_store.get("_coupling_status") or {}).get("flown_geometry_wing")
+                    result_dict["geometry_wing"] = _wing_flown if isinstance(_wing_flown, dict) else _wing_end
+                    result_dict["geometry_wing_end_of_link"] = _wing_end
                     print(f"  [geometry] next link opens {chain_cpacs or 'the D150 baseline'}; "
-                          f"wing {result_dict['geometry_wing'] or 'not read this link'}")
+                          f"wing {result_dict['geometry_wing'] or 'not read this link'}"
+                          + (" (flown)" if isinstance(_wing_flown, dict) else "")
+                          + (f"; end of link (never flown): {_wing_end}"
+                             if isinstance(_wing_flown, dict) and _wing_end and _wing_end != _wing_flown else ""))
                     _fuel_now = (result_dict.get("eval_classification") or {}).get("fuel_burned_kg")
                     if _fuel_now is not None and not infeasible:   # an infeasible link has no fuel figure
                         chain_start_fuel = _fuel_now
