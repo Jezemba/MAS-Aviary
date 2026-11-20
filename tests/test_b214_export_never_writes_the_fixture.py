@@ -22,7 +22,12 @@ def test_an_export_to_the_fixture_is_redirected_and_stays_redirected():
     assert again["output_path"] == out["output_path"]          # the same per-run file every time
 
 
-def test_any_other_export_path_is_left_alone(tmp_path):
+def test_any_other_export_path_goes_to_a_private_folder_of_the_link(tmp_path):
+    # X4 (2026-11-19): every path outside this link's private folders is redirected, not only the fixture.
     target = str(tmp_path / "wing_v2.xml")
     out = dp.resolve_request("export_cpacs", {"session_id": "s1", "output_path": target})
-    assert out["output_path"] == target
+    assert out["output_path"] != target and os.path.basename(out["output_path"]) == "wing_v2.xml"
+    assert dp._is_private_cpacs_path(out["output_path"])
+    # an export into that private file again is left where it is
+    assert dp.resolve_request("export_cpacs", {"session_id": "s1", "output_path": out["output_path"]})[
+        "output_path"] == out["output_path"]

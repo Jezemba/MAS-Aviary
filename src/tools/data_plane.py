@@ -921,7 +921,6 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
     if fuel <= _ZERO_FUEL_FLOOR_KG:
         return
     import shutil
-    import tempfile
 
     store = _design_state.data_store
     src = store.get("morphed_cpacs_path")
@@ -930,7 +929,7 @@ def _snapshot_flown_geometry(tool_name: str, data: dict) -> None:
         _write_flown_design()
         return
     try:
-        dst = os.path.join(tempfile.mkdtemp(prefix="avion_flown_"), "flown_geometry.xml")
+        dst = os.path.join(_new_private_dir("avion_flown_"), "flown_geometry.xml")
         shutil.copyfile(str(src), dst)
     except OSError as exc:  # pragma: no cover - the runner then falls back to the last export
         logger.warning("[B263] could not keep the flown geometry %s: %s", src, exc)
@@ -3032,7 +3031,7 @@ def _auto_export_morph() -> str | None:
     if not sid or tool is None:
         return None
     try:
-        out = os.path.join(tempfile.mkdtemp(prefix="avion_morph_"), "morphed_design.xml")
+        out = os.path.join(_new_private_dir("avion_morph_"), "morphed_design.xml")
         tool.forward(session_id=sid, output_path=out)
     except Exception as exc:  # pragma: no cover - never break a run on this
         logger.warning("[B108] auto-export of the morph failed: %s", exc)
@@ -3345,6 +3344,104 @@ def _restore_aviary_session(session_id: str) -> None:
             logger.warning("[B113] could not re-apply design parameters to %s: %s", session_id, exc)
 
 
+# X4 (validation 3, 2026-11-19): CPACS files are written only into folders that belong to ONE link of ONE run.
+# runs/<tag>/mass-mcp is a symlink to the machine's single code/mass-mcp checkout (B251 layout), so an agent's
+# export_cpacs(output_path=<run>/mass-mcp/geometry/x.xml) wrote a file every combination on the machine shares (O_SP and
+# S_IF in val3); with three combinations at once on ws8, one combination's mass estimate or carried geometry could
+# read another's wing. B214/B258 only covered tests/fixtures/, logs/stat_results/ and geometry_end.xml. Now every
+# export whose (symlink-resolved) target is not a private folder of this link goes to a per-link temporary folder
+# (same file name), and every later read of the typed path is pointed at that file. Private folders: the ones the data
+# plane itself makes for this link (mkdtemp, recorded in data_store["_private_cpacs_dirs"]), and folders a framework
+# caller registered for its own process (register_private_cpacs_dir, e.g. the optimizer's per-evaluation folder).
+_FRAMEWORK_PRIVATE_CPACS_DIRS: set[str] = set()
+
+
+def register_private_cpacs_dir(path) -> None:
+    """X4: declare a folder this process alone writes CPACS files into; exports there are not redirected."""
+    _FRAMEWORK_PRIVATE_CPACS_DIRS.add(os.path.realpath(os.path.abspath(str(path))))
+
+
+def _new_private_dir(prefix: str) -> str:
+    """X4: a new temporary folder that belongs to this link (recorded so exports into it are not redirected)."""
+    import tempfile
+
+    path = tempfile.mkdtemp(prefix=prefix)
+    if _design_state is not None:
+        dirs = _design_state.data_store.setdefault("_private_cpacs_dirs", [])
+        real = os.path.realpath(path)
+        if real not in dirs:
+            dirs.append(real)
+    return path
+
+
+def _is_private_cpacs_path(path) -> bool:
+    """X4: True when ``path`` (after resolving symlinks) lies inside a folder that belongs to this link/process."""
+    if not isinstance(path, str) or not path or not os.path.isabs(os.path.expanduser(path)):
+        return False                     # a relative path resolves against the tigl SERVER's working folder
+    real = os.path.realpath(os.path.expanduser(path))
+    roots = list(_FRAMEWORK_PRIVATE_CPACS_DIRS)
+    if _design_state is not None:
+        roots += list(_design_state.data_store.get("_private_cpacs_dirs") or [])
+    return any(real == r or real.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def _redirect_key(path: str) -> str:
+    """X4: one key for every spelling of the same target (a run-folder symlink and the checkout it points into)."""
+    expanded = os.path.expanduser(path)
+    return os.path.realpath(expanded) if os.path.isabs(expanded) else path
+
+
+def _redirected_cpacs(path) -> str | None:
+    """X4: the per-link file this link's export of ``path`` was redirected to, else None."""
+    if _design_state is None or not isinstance(path, str) or not path:
+        return None
+    redirects = _design_state.data_store.get("_export_redirects") or {}
+    return redirects.get(path) or redirects.get(_redirect_key(path))
+
+
+def _in_code_checkout(real: str) -> str | None:
+    """X4: the git checkout (folder holding .git) that contains ``real``, else None."""
+    d = os.path.dirname(real)
+    while d and d != os.path.dirname(d):
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        d = os.path.dirname(d)
+    return None
+
+
+def _shared_cpacs_read_refusal(tool_name: str, arg: str, path) -> bool:
+    """X4: refuse reading a CPACS file some OTHER run left in a shared code checkout. True when refused.
+
+    After the X4 redirect no run of this code writes into a checkout; a file there that is not a tracked fixture or a
+    runner chain file (logs/stat_results/.../geometry_end.xml) is a leftover of an earlier run or another combination
+    (val2/val3 left code/mass-mcp/geometry/updated_D150_simple.xml and code/mass-mcp/updated_D150_simple.xml), and
+    opening it would start this run from that run's wing.
+    """
+    if _design_state is None or not isinstance(path, str) or not path or not os.path.isfile(path):
+        return False
+    real = os.path.realpath(path)
+    posix = real.replace("\\", "/")
+    if "/tests/fixtures/" in posix or "/logs/stat_results/" in posix or _is_private_cpacs_path(path):
+        return False
+    store = _design_state.data_store
+    known = {store.get("morphed_cpacs_path"), store.get("flown_cpacs_path"),
+             getattr(_design_state, "cpacs_file_path", None), *(store.get("_export_redirects") or {}).values()}
+    if real in {os.path.realpath(str(k)) for k in known if k}:
+        return False
+    checkout = _in_code_checkout(real)
+    if not checkout:
+        return False
+    store.setdefault("_shared_cpacs_refusals", []).append({"tool": tool_name, "path": path, "resolved": real})
+    _refuse_call("CPACS_SOURCE_SHARED",
+                 f"{tool_name} did not run: {arg} '{path}' is a file inside the shared code folder {checkout} that "
+                 f"this run did not write (it is left over from another run or combination). Use the CPACS file named "
+                 f"in your task, or a file this run exported (the path in the export_cpacs response).",
+                 path=path, resolved_path=real)
+    logger.warning("[X4] refused %s on %s (%s): a CPACS file in the shared checkout %s that this run did not write",
+                   tool_name, path, real, checkout)
+    return True
+
+
 _MASS_WORKING_COPY_TOOLS = frozenset({"estimate_mass", "validate_cpacs_inputs", "get_cpacs_mass_breakdown"})
 
 
@@ -3353,11 +3450,10 @@ def _mass_working_copy(source: str, *, create: bool) -> str | None:
 
     Keyed by the source's absolute path. Re-copied when the source's size or
     mtime changed since the copy was taken. Returns None when no copy exists and
-    ``create`` is False, or when copying failed (the call then proceeds on the
-    original path, as before -- a failure here must never break a run).
+    ``create`` is False, or when copying failed (X4: estimate_mass is then refused, CPACS_WRITEBACK_UNSAFE,
+    rather than writing its breakdown into the original, possibly shared, file).
     """
     import shutil
-    import tempfile
 
     if _design_state is None:
         return None
@@ -3381,7 +3477,7 @@ def _mass_working_copy(source: str, *, create: bool) -> str | None:
     if not create:
         return entry["copy"] if entry and os.path.isfile(entry["copy"]) else None
     try:
-        workdir = tempfile.mkdtemp(prefix="avion_mass_")
+        workdir = _new_private_dir("avion_mass_")
         dst = os.path.join(workdir, os.path.basename(src))
         shutil.copy2(src, dst)
     except Exception as exc:  # pragma: no cover - never break a run on this
@@ -3522,6 +3618,15 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # current design's geometry) so structural mass is geometry-coupled; else fall back
     # to the captured input path. A morphed export ALWAYS wins over a stale/baseline
     # path the agent may pass, since the whole point is mass-on-the-current-design.
+    # X4: a path this link exported to was redirected to a per-link file; a read of the typed path reads that file
+    # (val2 O_IF it2 #31: re-opening its own redirected export answered "File not found").
+    if _design_state is not None:
+        for _arg in ("cpacs_file_path",) if tool_name in _CPACS_PATH_TOOLS | _MASS_WORKING_COPY_TOOLS else (
+                ("source",) if tool_name == "open_cpacs" and resolved.get("source_type", "path") == "path" else ()):
+            _target = _redirected_cpacs(resolved.get(_arg))
+            if _target and _target != resolved.get(_arg):
+                logger.info("[X4] %s reads %s, which this link exported to %s", tool_name, resolved.get(_arg), _target)
+                resolved[_arg] = _target
     if tool_name in _CPACS_PATH_TOOLS and _design_state:
         cpacs_arg = resolved.get("cpacs_file_path", "")
         morphed = _design_state.data_store.get("morphed_cpacs_path")
@@ -3552,6 +3657,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                         cpacs_arg, real_path, tool_name,
                     )
                 resolved["cpacs_file_path"] = real_path
+        # X4: whatever path is used now must not be another run's file in the shared checkout.
+        _shared_cpacs_read_refusal(tool_name, "cpacs_file_path", resolved.get("cpacs_file_path"))
 
     # B214 (2026-10-15): export_cpacs must never write into a tests/fixtures/ file. A geometry agent that
     # exports "back to the file it opened" overwrote the git-tracked D150 baseline with its morphed design
@@ -3561,22 +3668,34 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     # the file it opened", which was link 1's logs/stat_results/.../geometry_end.xml: link 1's archived end-geometry
     # was replaced, and a retried link would have reopened the wrong wing. The runner writes geometry_end.xml with a
     # file copy (carry_geometry_forward), never through export_cpacs, so redirecting every such export is safe.
+    # X4 (2026-11-19): the same for EVERY path outside this link's private folders (see _is_private_cpacs_path):
+    # <run>/mass-mcp/... is the machine's shared checkout, /tmp/<name>.xml is shared by every combination on the
+    # machine (geometry_guard even suggests /tmp/morphed_design.xml), a relative path lands in the tigl server's
+    # working folder. The export goes to a per-link folder under the same file name, and morphed_cpacs_path (what mass,
+    # SU2 and the carried geometry read) is captured from the response, i.e. that per-link file.
     if tool_name == "export_cpacs" and _design_state is not None:
         out = resolved.get("output_path") or resolved.get("cpacs_file_path")
         key = "output_path" if resolved.get("output_path") else "cpacs_file_path"
-        posix = out.replace("\\", "/") if isinstance(out, str) else ""
-        if isinstance(out, str) and ("tests/fixtures/" in posix or "logs/stat_results/" in posix
-                                     or os.path.basename(posix) == "geometry_end.xml"):
-            import tempfile
-
+        if isinstance(out, str) and out.strip() and not _is_private_cpacs_path(out):
             redirects = _design_state.data_store.setdefault("_export_redirects", {})
-            dst = redirects.get(out)
+            dst = redirects.get(out) or redirects.get(_redirect_key(out))
             if not dst:
-                dst = os.path.join(tempfile.mkdtemp(prefix="avion_export_"), os.path.basename(out))
-                redirects[out] = dst
-            logger.warning("B214/B258: export_cpacs to the tracked fixture or recorded result %s redirected to %s",
-                           out, dst)
-            resolved[key] = dst
+                name = os.path.basename(out.replace("\\", "/").rstrip("/")) or "exported.xml"
+                try:
+                    dst = os.path.join(_new_private_dir("avion_export_"), name)
+                except OSError as exc:
+                    dst = None
+                    _refuse_call("CPACS_EXPORT_PATH_SHARED",
+                                 f"export_cpacs did not run: '{out}' is not a folder of this run alone, and no private "
+                                 f"folder could be made for the export ({exc}). Nothing was written.",
+                                 output_path=out)
+                if dst:
+                    redirects[out] = dst
+                    redirects[_redirect_key(out)] = dst
+            if dst:
+                logger.warning("B214/B258/X4: export_cpacs to %s (not a private folder of this link) redirected to %s",
+                               out, dst)
+                resolved[key] = dst
 
     # B111: the aero solve must be trimmed to the lift this aircraft has to make. After the path
     # injection above (B146), so a weight read from the CPACS comes from the file SU2 will mesh.
@@ -3629,6 +3748,14 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
                     copy = _mass_working_copy(target, create=True)
                     if copy:
                         resolved["cpacs_file_path"] = copy
+                    else:
+                        # X4: without the per-link copy the breakdown would be written into the file itself, which
+                        # may be the shared fixture or another run's file. Refuse instead of writing there.
+                        _refuse_call("CPACS_WRITEBACK_UNSAFE",
+                                     f"estimate_mass did not run: its mass breakdown is written back into the CPACS "
+                                     f"file, and no private copy of '{target}' could be made, so it would have been "
+                                     f"written into that file. Call it again; if this repeats, call it with "
+                                     f"write_back_to_cpacs=false.", cpacs_file_path=target)
             else:
                 copy = _mass_working_copy(target, create=False)
                 if copy:
@@ -3638,6 +3765,8 @@ def resolve_request(tool_name: str, kwargs: dict) -> dict:
     if tool_name == "open_cpacs" and _design_state:
         source = resolved.get("source", "")
         source_type = resolved.get("source_type", "")
+        if source_type == "path" and _shared_cpacs_read_refusal("open_cpacs", "source", source):
+            source = ""                  # X4: refused; the call does not run, so nothing is captured
         if source_type == "path" and isinstance(source, str) and os.path.isfile(source):
             _design_state.cpacs_file_path = source
             logger.info("Captured CPACS path from open_cpacs request: %s", source)

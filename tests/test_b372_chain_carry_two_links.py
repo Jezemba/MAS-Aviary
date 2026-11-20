@@ -183,8 +183,9 @@ def geometry_reshaped(s):
     morph = h.call(s, "set_high_level_parameters", session_id=sid, component_uid="Wing1",
                    updates={"aspect_ratio": NEW_AR})
     assert morph["geometry_morph"]["after"]["aspect_ratio"] == NEW_AR, morph
-    s.exported = str(s.root / "export" / f"reshaped_{sid}.xml")
-    assert h.call(s, "export_cpacs", session_id=sid, output_path=s.exported).get("status") == "success"
+    exported = h.call(s, "export_cpacs", session_id=sid, output_path=str(s.root / "export" / f"reshaped_{sid}.xml"))
+    assert exported.get("status") == "success"
+    s.exported = exported["cpacs_file_path"]       # X4: the per-link file the export was redirected to
     mesh = h.call(s, "generate_volume_mesh", session_id=sid, output_format="su2")
     assert "error_code" not in mesh, mesh
 

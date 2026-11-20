@@ -29,10 +29,12 @@ def test_any_geometry_end_file_is_protected_wherever_it_is(tmp_path):
     assert dp.resolve_request("export_cpacs", {"session_id": "s1", "output_path": target})["output_path"] != target
 
 
-def test_an_ordinary_export_is_left_alone(tmp_path):
+def test_an_ordinary_export_goes_to_a_private_folder_of_the_link(tmp_path):
+    # X4 (2026-11-19): was "left alone"; every export outside the link's private folders is now redirected.
     dp.init_data_plane(DesignState(), {})
     target = str(tmp_path / "D150_simple_modified.xml")
-    assert dp.resolve_request("export_cpacs", {"session_id": "s1", "output_path": target})["output_path"] == target
+    out = dp.resolve_request("export_cpacs", {"session_id": "s1", "output_path": target})["output_path"]
+    assert out != target and os.path.basename(out) == "D150_simple_modified.xml" and dp._is_private_cpacs_path(out)
 
 
 # -- B259: the engine deck survives the agent closing its pycycle session -----------------------------------

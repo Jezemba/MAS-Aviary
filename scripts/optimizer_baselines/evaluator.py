@@ -49,6 +49,11 @@ class CoupledEvaluator:
         self.sbr = sbr
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        # X4: this evaluator's own CPACS folder; its exports there are kept where it asks (not redirected).
+        from src.tools.data_plane import register_private_cpacs_dir
+
+        (self.out_dir / "cpacs").mkdir(parents=True, exist_ok=True)
+        register_private_cpacs_dir(self.out_dir / "cpacs")
         config = load_config(config_path)
         if port_offset:
             # A separate set of MCP servers (e.g. 9500/9200/...), so the baselines never load the study's servers.
